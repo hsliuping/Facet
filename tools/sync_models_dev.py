@@ -251,6 +251,32 @@ def preserve_manual(models_out: dict, existing: Path) -> None:
         print(f"preserved {carried} manual annotation value(s) from previous table")
 
 
+def apply_overrides(models_out: dict, overrides: dict) -> int:
+    """Apply manual additions/corrections from manual-overrides.json.
+
+    Keys are '<provider>/<model_id>' just like the table. A key missing from
+    the table adds a fully manual entry (vendors upstream sources ignore,
+    e.g. Baidu ERNIE); a key already present is patched field-by-field and
+    the manual value wins — it represents a verified correction. Keys
+    starting with '_' (documentation) are skipped. Returns entries touched.
+    """
+    applied = 0
+    for key, patch in overrides.items():
+        if key.startswith("_") or not isinstance(patch, dict):
+            continue
+        if key not in models_out:
+            models_out[key] = prune(patch)
+        else:
+            rec = models_out[key]
+            for f, v in patch.items():
+                if v is None:
+                    rec.pop(f, None)
+                else:
+                    rec[f] = v
+        applied += 1
+    return applied
+
+
 def fetch(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": f"{GENERATOR} (+https://github.com)"})
     with urllib.request.urlopen(req, timeout=120) as resp:
@@ -425,6 +451,8 @@ def main(argv=None) -> int:
     ap.add_argument("--offline", help="path to a local raw api.json snapshot (no network)")
     ap.add_argument("--skip-openrouter", action="store_true",
                     help="do not merge the OpenRouter secondary source")
+    ap.add_argument("--overrides", default="registry/manual-overrides.json",
+                    help="path to manual additions/corrections (skipped if missing)")
     ap.add_argument("--out", default="registry/model-registry.json", help="output table path")
     ap.add_argument("--cny-rate", type=float, default=7.2, help="CNY->USD rate for price normalization")
     args = ap.parse_args(argv)
@@ -456,18 +484,33 @@ def main(argv=None) -> int:
     table, stats = build_table(raw, args.cny_rate)
     out = Path(args.out)
     preserve_manual(table["models"], out)  # manual annotations survive re-sync
+
+    ov_path = Path(args.overrides)
+    if ov_path.exists():
+        try:
+            overrides = json.loads(ov_path.read_text(encoding="utf-8"))
+            n = apply_overrides(table["models"], overrides)
+            table["models"] = dict(sorted(table["models"].items()))
+            print(f"applied {n} manual override entrie(s) from {ov_path}")
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"ERROR: cannot read overrides {ov_path}: {e}", file=sys.stderr)
+            return 1
+    else:
+        print(f"no manual overrides file at {ov_path} (skipped)")
+
+    n_models = len(table["models"])
     payload = json.dumps(table, ensure_ascii=False, indent=None, separators=(",", ":"))
     size = len(payload.encode("utf-8"))
 
     print(f"providers={stats['providers']} raw_models={stats['raw_models']} "
-          f"identities={stats['identities']} emitted={stats['models']} size={size / 1024:.1f} KB")
+          f"identities={stats['identities']} emitted={n_models} size={size / 1024:.1f} KB")
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(payload + "\n", encoding="utf-8")
     print(f"wrote {out}")
 
-    if stats["models"] < 500:
-        print(f"WARNING: only {stats['models']} models (< 500 target)", file=sys.stderr)
+    if n_models < 500:
+        print(f"WARNING: only {n_models} models (< 500 target)", file=sys.stderr)
     if size > MAX_TABLE_BYTES:
         print(f"ERROR: table is {size} bytes, exceeds {MAX_TABLE_BYTES} budget", file=sys.stderr)
         return 1

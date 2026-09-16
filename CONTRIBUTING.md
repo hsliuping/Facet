@@ -18,6 +18,7 @@ python tools/sync_models_dev.py        # refresh from models.dev (network)
 ```
 schema/model-registry.schema.json   field standard (JSON Schema 2020-12)
 registry/model-registry.json        the table (generated, single file < 1 MB)
+registry/manual-overrides.json      manual additions & corrections (survive sync)
 tools/sync_models_dev.py            fetch -> normalize -> dedup -> emit
 tools/validate_registry.py          quality gate for the table
 examples/pick_model.py              reference consumer (read -> filter -> rank)
@@ -35,12 +36,22 @@ tests/                              stdlib unittest
    `schema_version`.
 6. Consumers ignore unknown fields.
 
-## Manual annotations
+## Manual data
 
-`quota_tier` (free tier info) and `quality_hint` (1-5 subjective prior) are
-maintained by hand on the winning record in `registry/model-registry.json`.
-`tools/sync_models_dev.py` preserves them across weekly refreshes — edit the
-JSON directly and open a PR. Sync never writes these fields.
+Two mechanisms, both applied after the upstream sync and never clobbered
+by weekly refreshes:
+
+1. **Annotations** — `quota_tier` (free tier info) and `quality_hint`
+   (1-5 subjective prior) on the winning record in
+   `registry/model-registry.json`. Edit directly and open a PR; sync
+   preserves them automatically.
+2. **Additions & corrections** — `registry/manual-overrides.json`:
+   - vendors the upstream sources ignore (Baidu ERNIE, InternLM, Kunlun...)
+     get full manual entries
+   - verified corrections to synced fields (manual value wins)
+   - every value must be checked against the vendor's official
+     docs/console before committing — facts only, USD per MTok, absent
+     == unknown.
 
 ## Pull requests
 

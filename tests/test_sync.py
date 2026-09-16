@@ -228,5 +228,32 @@ class OpenRouterSourceTests(unittest.TestCase):
         self.assertFalse(table["models"]["openai/gpt-x"]["reasoning"])
 
 
+class OverrideTests(unittest.TestCase):
+    def test_new_vendor_entry_added_and_pruned(self):
+        models = {"openai/gpt-x": {"provider": "openai", "tool_call": True}}
+        n = sync.apply_overrides(models, {
+            "_readme": "docs are skipped",
+            "baidu/ernie-5.0": {
+                "provider": "baidu", "context_window": 128000,
+                "tool_call": None,  # absent == unknown: null must be dropped
+            },
+        })
+        self.assertEqual(n, 1)
+        self.assertEqual(models["baidu/ernie-5.0"],
+                         {"provider": "baidu", "context_window": 128000})
+
+    def test_correction_wins_and_null_deletes(self):
+        models = {"openai/gpt-x": {"provider": "openai", "context_window": 100,
+                                    "family": "wrong"}}
+        sync.apply_overrides(models, {"openai/gpt-x": {
+            "context_window": 400000,   # correction wins
+            "family": None,             # explicit removal
+        }})
+        rec = models["openai/gpt-x"]
+        self.assertEqual(rec["context_window"], 400000)
+        self.assertNotIn("family", rec)
+        self.assertEqual(rec["provider"], "openai")
+
+
 if __name__ == "__main__":
     unittest.main()
