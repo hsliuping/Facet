@@ -7,9 +7,11 @@ provider、约 2,400 个模型的能力、限制与价格——外加保持表�
 工具和一个示例消费方。你的项目读表、套自己的业务规则、自己决定用谁。
 
 ```
-models.dev（上游事实源）
-        │  每周同步（tools/sync_models_dev.py）
-        ▼
+models.dev（主源，217 个 provider）   OpenRouter /api/v1/models（辅源）
+        │                                        │
+        └──────────── 每周同步 ──────────────────┘
+                        │  tools/sync_models_dev.py
+                        ▼
 registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依赖
         │
         ├── 你的服务（拉取 JSON → 过滤 → 决策）
@@ -89,8 +91,11 @@ python -m unittest discover -s tests       # 26 个单元测试
 
 GitHub Action（`sync.yml`）每周自动刷新表格并开 PR。人工标注
 （`quota_tier`、`quality_hint`）在刷新时自动保留。数据来源：
-[models.dev](https://models.dev)（不含 benchmark 分数——那是评价不是事实；
-如有需要，通过 `quality_hint` 自行补充）。
+[models.dev](https://models.dev)（主源，provider 覆盖最广）+
+[OpenRouter](https://openrouter.ai/api/v1/models)（辅源，补能力标注缺口，
+尤其是 `structured_output`）。能力字段可跨渠道借用（只补缺、永不覆盖）；
+价格永不跨渠道借用，因为各渠道定价确实不同。不含 benchmark 分数——那是
+评价不是事实；如有需要，通过 `quality_hint` 自行补充。
 
 ## 非目标
 

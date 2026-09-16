@@ -154,5 +154,79 @@ class PreserveManualTests(unittest.TestCase):
         self.assertNotIn("quota_tier", table["models"]["openai/gpt-9"])
 
 
+class OpenRouterSourceTests(unittest.TestCase):
+    def test_conversion_shape_and_units(self):
+        or_data = {"data": [{
+            "id": "deepseek/deepseek-v4-pro-0813",
+            "context_length": 1024000,
+            "top_provider": {"max_completion_tokens": 384000},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+            "pricing": {"prompt": "0.00000066", "completion": "0.00000198",
+                        "input_cache_read": "0.000000022"},
+            "supported_parameters": ["tools", "structured_outputs", "reasoning", "temperature"],
+        }]}
+        out = sync.openrouter_to_modelsdev(or_data)
+        rec = out["openrouter"]["models"]["deepseek/deepseek-v4-pro-0813"]
+        self.assertEqual(rec["limit"]["context"], 1024000)
+        self.assertEqual(rec["limit"]["output"], 384000)
+        self.assertEqual(rec["cost"]["input"], 0.66)      # per-token -> per-MTok
+        self.assertEqual(rec["cost"]["output"], 1.98)
+        self.assertEqual(rec["cost"]["cache_read"], 0.022)
+        self.assertTrue(rec["tool_call"])
+        self.assertTrue(rec["structured_output"])
+        self.assertTrue(rec["reasoning"])
+        self.assertEqual(rec["modalities"]["input"], ["text"])
+
+    def test_negative_price_becomes_unknown(self):
+        self.assertIsNone(sync._or_price_per_mtok("-0.000001"))
+        self.assertIsNone(sync._or_price_per_mtok(None))
+        self.assertEqual(sync._or_price_per_mtok("0"), 0.0)
+
+    def test_merge_source_fills_gaps_only(self):
+        raw = {"openrouter": {"models": {
+            "x": {"limit": {"context": 100}, "tool_call": True, "family": "keep"},
+        }}}
+        extra = {"openrouter": {"models": {
+            "x": {"limit": {"context": 999, "output": 50}, "cost": {"input": 1.0}},
+            "y": {"tool_call": True},
+        }}}
+        added = sync.merge_source(raw, extra)
+        self.assertEqual(added, 1)
+        x = raw["openrouter"]["models"]["x"]
+        self.assertEqual(x["limit"]["context"], 100)   # existing wins
+        self.assertEqual(x["limit"]["output"], 50)     # gap filled (nested)
+        self.assertEqual(x["cost"]["input"], 1.0)      # gap filled
+        self.assertEqual(x["family"], "keep")
+        self.assertIn("y", raw["openrouter"]["models"])
+
+    def test_cross_provider_fill_for_capability_fields(self):
+        # winner (openai) lacks structured_output + release_date; sibling copy has them
+        raw = {
+            "openai": {"models": {"gpt-x": {
+                "limit": {"context": 100, "output": 10},
+                "tool_call": True, "modalities": {"input": ["text"], "output": ["text"]},
+            }}},
+            "mirror": {"models": {"gpt-x": {
+                "limit": {"context": 100, "output": 10},
+                "tool_call": True, "structured_output": True,
+                "release_date": "2026-01-01", "family": "gpt",
+                "cost": {"input": 5, "output": 5},
+            }}},
+        }
+        table, _ = sync.build_table(raw, cny_rate=7.2)
+        rec = table["models"]["openai/gpt-x"]
+        self.assertTrue(rec["structured_output"])     # borrowed from sibling
+        self.assertEqual(rec["release_date"], "2026-01-01")
+        self.assertNotIn("cost", rec)                 # cost is never borrowed
+
+    def test_cross_provider_fill_never_overwrites(self):
+        raw = {
+            "openai": {"models": {"gpt-x": {"reasoning": False, "limit": {"context": 100}}}},
+            "mirror": {"models": {"gpt-x": {"reasoning": True}}},
+        }
+        table, _ = sync.build_table(raw, cny_rate=7.2)
+        self.assertFalse(table["models"]["openai/gpt-x"]["reasoning"])
+
+
 if __name__ == "__main__":
     unittest.main()

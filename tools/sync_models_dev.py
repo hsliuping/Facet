@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Facet sync tool: models.dev -> registry/model-registry.json.
+"""Facet sync tool: upstream sources -> registry/model-registry.json.
 
-Pipeline: fetch (or --offline file) -> identity grouping (dedup across
-providers) -> winner selection (first-party priority, completeness) ->
-alias collection -> currency/unit normalization -> emit table.
+Primary source: models.dev (widest provider coverage).
+Secondary source: OpenRouter /api/v1/models (public, no auth) — merged in
+to fill gaps models.dev leaves open (notably structured_output support).
+
+Pipeline: fetch sources (or --offline files) -> merge -> identity grouping
+(dedup across providers) -> winner selection (first-party priority,
+completeness) -> alias collection -> currency/unit normalization -> emit table.
 
 stdlib only. Usage:
-    python tools/sync_models_dev.py                    # live fetch
-    python tools/sync_models_dev.py --offline raw.json # from cached file
+    python tools/sync_models_dev.py                     # live fetch (both sources)
+    python tools/sync_models_dev.py --skip-openrouter   # models.dev only
+    python tools/sync_models_dev.py --offline raw.json  # cached models.dev snapshot;
+                                                       # OpenRouter cache is read from
+                                                       # .cache/openrouter_models.json
     python tools/sync_models_dev.py --out registry/model-registry.json
 """
 
@@ -22,7 +29,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SOURCE_URL = "https://models.dev/api.json"
-GENERATOR = "sync_models_dev@0.1.0"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+OPENROUTER_CACHE = Path(".cache/openrouter_models.json")
+GENERATOR = "sync_models_dev@0.2.0"
 MAX_TABLE_BYTES = 1024 * 1024  # table-level hard rule: single file < 1 MB
 
 # Tier 0 = model vendor's own endpoint. Everything else (aggregators,
@@ -123,6 +132,15 @@ FACT_FIELDS = (
     "context_window", "max_output", "tool_call", "reasoning",
     "structured_output", "modalities", "attachment", "open_weights",
     "cost_input", "cost_output",
+)
+
+# Capability/metadata fields a winner record may borrow from sibling copies
+# of the same model identity (fill-only, never overwrite). Cost fields are
+# deliberately excluded: channel pricing genuinely differs.
+FILLABLE_FIELDS = (
+    "context_window", "max_output", "tool_call", "reasoning",
+    "structured_output", "modalities", "attachment", "open_weights",
+    "release_date", "family",
 )
 
 
@@ -239,6 +257,83 @@ def fetch(url: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _or_price_per_mtok(value) -> float | None:
+    """OpenRouter prices are USD per token as strings; convert to USD/MTok.
+    Negative prices (subsidies) are treated as unknown to satisfy the
+    non-negative cost contract."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v < 0:
+        return None
+    return round(v * 1_000_000, 6)
+
+
+def openrouter_to_modelsdev(or_data: dict) -> dict:
+    """OpenRouter /api/v1/models -> models.dev-shaped {openrouter: {models: {...}}}."""
+    models: dict[str, dict] = {}
+    for entry in or_data.get("data", []):
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        arch = entry.get("architecture") or {}
+        top = entry.get("top_provider") or {}
+        pricing = entry.get("pricing") or {}
+        params = entry.get("supported_parameters") or []
+        rec: dict = {
+            "id": entry["id"],
+            "limit": {
+                "context": entry.get("context_length") or top.get("context_length"),
+                "output": top.get("max_completion_tokens"),
+            },
+            "cost": {
+                "input": _or_price_per_mtok(pricing.get("prompt")),
+                "output": _or_price_per_mtok(pricing.get("completion")),
+                "cache_read": _or_price_per_mtok(pricing.get("input_cache_read")),
+            },
+        }
+        if arch.get("input_modalities") or arch.get("output_modalities"):
+            rec["modalities"] = {
+                "input": arch.get("input_modalities") or [],
+                "output": arch.get("output_modalities") or [],
+            }
+        if "tools" in params:
+            rec["tool_call"] = True
+        if "structured_outputs" in params:
+            rec["structured_output"] = True
+        if "reasoning" in params:
+            rec["reasoning"] = True
+        models[entry["id"]] = rec
+    return {"openrouter": {"models": models}}
+
+
+def _merge_into(existing: dict, rec: dict) -> None:
+    """Deep-merge rec into existing; existing values win, rec fills gaps."""
+    for k, v in rec.items():
+        if isinstance(v, dict) and isinstance(existing.get(k), dict):
+            _merge_into(existing[k], v)
+        elif existing.get(k) is None:
+            existing[k] = v
+
+
+def merge_source(raw: dict, extra: dict) -> int:
+    """Merge a converted source into raw. Field-level: existing values win,
+    the extra source only fills gaps and adds unseen model ids. Returns the
+    number of newly added model entries."""
+    added = 0
+    for provider, pdata in extra.items():
+        slot = raw.setdefault(provider, {"models": {}})
+        models = slot.setdefault("models", {})
+        for mid, rec in pdata.get("models", {}).items():
+            existing = models.get(mid)
+            if existing is None:
+                models[mid] = rec
+                added += 1
+            else:
+                _merge_into(existing, rec)
+    return added
+
+
 def build_table(raw: dict, cny_rate: float) -> tuple[dict, dict]:
     """Group -> dedup -> emit. Returns (table, stats)."""
     groups: dict[str, dict[str, dict]] = {}  # identity -> {provider: record}
@@ -260,7 +355,19 @@ def build_table(raw: dict, cny_rate: float) -> tuple[dict, dict]:
 
     models_out: dict[str, dict] = {}
     for ident, copies in groups.items():
-        provider, rec = sorted(copies.items(), key=winner_sort_key)[0]
+        ranked = sorted(copies.items(), key=winner_sort_key)
+        provider, rec = ranked[0]
+        # Cross-provider gap fill for capability fields: a model's
+        # capabilities are the same on every channel, so a missing fact on
+        # the winning copy may be borrowed from other copies (most trusted
+        # first). Cost is NEVER borrowed — channel pricing genuinely differs.
+        # Fill-only: an existing value is never overwritten.
+        for field in FILLABLE_FIELDS:
+            if rec.get(field) is None:
+                for _, other in ranked[1:]:
+                    if other.get(field) is not None:
+                        rec[field] = other[field]
+                        break
         # aliases: every other spelling seen for this identity + date-stripped base names
         aliases: list[str] = []
         seen = {rec["bare_id"]}
@@ -313,9 +420,11 @@ def build_table(raw: dict, cny_rate: float) -> tuple[dict, dict]:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Sync models.dev into the Facet model registry table.")
+    ap = argparse.ArgumentParser(description="Sync upstream sources into the Facet model registry table.")
     ap.add_argument("--source", default=SOURCE_URL, help="URL of the models.dev api.json")
     ap.add_argument("--offline", help="path to a local raw api.json snapshot (no network)")
+    ap.add_argument("--skip-openrouter", action="store_true",
+                    help="do not merge the OpenRouter secondary source")
     ap.add_argument("--out", default="registry/model-registry.json", help="output table path")
     ap.add_argument("--cny-rate", type=float, default=7.2, help="CNY->USD rate for price normalization")
     args = ap.parse_args(argv)
@@ -326,6 +435,23 @@ def main(argv=None) -> int:
     else:
         raw = fetch(args.source)
         print(f"fetched {args.source}")
+
+    if not args.skip_openrouter:
+        or_data = None
+        if args.offline:
+            if OPENROUTER_CACHE.exists():
+                or_data = json.loads(OPENROUTER_CACHE.read_text(encoding="utf-8"))
+                print(f"loaded offline OpenRouter snapshot: {OPENROUTER_CACHE}")
+        else:
+            try:
+                or_data = fetch(OPENROUTER_URL)
+                print(f"fetched {OPENROUTER_URL}")
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"WARNING: OpenRouter source unavailable ({e}); continuing without it",
+                      file=sys.stderr)
+        if or_data is not None:
+            added = merge_source(raw, openrouter_to_modelsdev(or_data))
+            print(f"merged OpenRouter source: {added} new model entries + gap fills")
 
     table, stats = build_table(raw, args.cny_rate)
     out = Path(args.out)

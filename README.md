@@ -8,9 +8,11 @@ plus the tools that keep the table fresh and a demo consumer. Your project
 reads the table, applies its own business rules, and picks a model.
 
 ```
-models.dev (upstream facts)
-        │  weekly sync (tools/sync_models_dev.py)
-        ▼
+models.dev (primary, 217 providers)   OpenRouter /api/v1/models (secondary)
+        │                                        │
+        └──────────── weekly sync ───────────────┘
+                        │  tools/sync_models_dev.py
+                        ▼
 registry/model-registry.json   ← the deliverable: one file, < 1 MB, zero deps
         │
         ├── your service (fetch the JSON, filter, decide)
@@ -96,8 +98,13 @@ python -m unittest discover -s tests       # 26 unit tests
 
 A GitHub Action (`sync.yml`) refreshes the table weekly and opens a PR.
 Manual annotations (`quota_tier`, `quality_hint`) survive refreshes
-automatically. Data source: [models.dev](https://models.dev) (no benchmark
-scores — those are judgments, not facts; add your own via `quality_hint`).
+automatically. Sources: [models.dev](https://models.dev) (primary, widest
+provider coverage) + [OpenRouter](https://openrouter.ai/api/v1/models)
+(secondary, fills capability gaps — notably `structured_output`). Capability
+fields may be borrowed across channels of the same model (fill-only, never
+overwritten); prices are never borrowed since channel pricing differs. No
+benchmark scores — those are judgments, not facts; add your own via
+`quality_hint`.
 
 ## Non-goals
 
