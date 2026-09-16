@@ -1,0 +1,38 @@
+name: sync
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: refresh table from models.dev
+        # preserve_manual() keeps quota_tier / quality_hint from the checked-out table
+        run: python tools/sync_models_dev.py
+      - name: validate refreshed table
+        run: python tools/validate_registry.py
+      - name: open PR if the table changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "sync: refresh model registry from models.dev"
+          title: "sync: refresh model registry"
+          body: |
+            Automated weekly refresh from models.dev (`tools/sync_models_dev.py`).
+
+            Review the diff for: winner flips across providers, new models,
+            price changes. Manual `quota_tier` / `quality_hint` annotations are
+            carried over automatically.
+          branch: sync/weekly-refresh
+          delete-branch: true
+          labels: sync

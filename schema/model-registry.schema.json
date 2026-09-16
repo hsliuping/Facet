@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Facet Model Registry",
+  "description": "Facts-first model registry table. Encoding rule: an ABSENT field is exactly null (unknown) — it is never filled with a default. Costs are USD per million tokens. Unknown fields must be ignored by consumers.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Table schema version. Semantics of existing fields never change within a version; breaking changes bump this."
+    },
+    "updated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Date the table was last generated (UTC)."
+    },
+    "generator": {
+      "type": "string",
+      "description": "Tool name and version that generated the table."
+    },
+    "models": {
+      "type": "object",
+      "description": "Model facts keyed by canonical '<provider>/<model_id>'.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9@~][A-Za-z0-9._/:@~-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/modelFacts"
+      }
+    }
+  },
+  "required": ["schema_version", "updated_at", "generator", "models"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "modelFacts": {
+      "type": "object",
+      "description": "Facts for one model. An ABSENT field is exactly null (unknown): it must never be filled with a default. Only 'provider' is mandatory. quality_hint is the only non-factual (subjective) field. Unknown extra fields must be ignored by consumers.",
+      "required": ["provider"],
+      "additionalProperties": true,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Normalized provider identifier (e.g. openai, volcengine)."
+        },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Alternative names, including aggregator channel naming (e.g. 'openai/gpt-4' -> 'gpt-4')."
+        },
+        "context_window": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum context window in tokens. Null when unknown."
+        },
+        "max_output": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Maximum single-response output tokens. Null when unknown."
+        },
+        "tool_call": {
+          "type": ["boolean", "null"],
+          "description": "Supports tool/function calling."
+        },
+        "reasoning": {
+          "type": ["boolean", "null"],
+          "description": "Is a reasoning model (or exposes reasoning options)."
+        },
+        "structured_output": {
+          "type": ["boolean", "null"],
+          "description": "Supports structured/JSON-schema output."
+        },
+        "modalities": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "properties": {
+                "input": { "type": "array", "items": { "type": "string" } },
+                "output": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["input", "output"],
+              "additionalProperties": false
+            }
+          ],
+          "description": "Input/output modalities, e.g. {\"input\":[\"text\",\"image\"],\"output\":[\"text\"]}."
+        },
+        "attachment": {
+          "type": ["boolean", "null"],
+          "description": "Accepts file/attachment input."
+        },
+        "open_weights": {
+          "type": ["boolean", "null"],
+          "description": "Weights are publicly available."
+        },
+        "cost": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "properties": {
+                "input_per_mtok": { "type": ["number", "null"], "minimum": 0 },
+                "output_per_mtok": { "type": ["number", "null"], "minimum": 0 },
+                "cache_read_per_mtok": { "type": ["number", "null"], "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "Price in USD per million tokens. Other currencies/units are forbidden in the table."
+        },
+        "quota_tier": {
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["free_forever", "free_daily", "paid"] }
+          ],
+          "description": "Free-tier annotation for free model access. Maintained manually; sync never guesses it."
+        },
+        "release_date": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$" }
+          ],
+          "description": "Model release date (YYYY-MM-DD, or YYYY-MM when the day is unknown upstream), for freshness hints."
+        },
+        "last_updated": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^\\d{4}-\\d{2}(-\\d{2})?$" }
+          ],
+          "description": "Date the upstream record was last updated (YYYY-MM-DD, or YYYY-MM when the day is unknown)."
+        },
+        "family": {
+          "type": ["string", "null"],
+          "description": "Model family, aids alias normalization."
+        },
+        "quality_hint": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 1, "maximum": 5 }
+          ],
+          "description": "Subjective quality prior (1-5). The ONLY non-factual field; consumers must be able to ignore it. Filled manually, never auto-generated."
+        }
+      }
+    }
+  }
+}
