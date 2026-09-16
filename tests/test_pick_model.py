@@ -54,6 +54,11 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(demo.resolve(table, "gpt.9"), "openai/gpt-9")
         self.assertEqual(demo.resolve(table, "GPT-9"), "openai/gpt-9")
 
+    def test_resolve_tolerates_spelling_variants(self):
+        # missing hyphens, case, dots, provider prefixes: all the same model
+        for spelling in ("gpt9", "GPT9", "gpt 9", "OpenAI/GPT-9"):
+            self.assertEqual(demo.resolve(make_table(), spelling), "openai/gpt-9", spelling)
+
     def test_resolve_miss(self):
         self.assertIsNone(demo.resolve(make_table(), "gpt-8"))
 

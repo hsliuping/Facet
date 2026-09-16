@@ -30,7 +30,7 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
 | 字段 | 含义 | 说明 |
 |---|---|---|
 | `provider` | 端点归属（如 `openai`、`volcengine`） | 唯一必填字段 |
-| `aliases` | 同一模型的其他写法，含聚合渠道命名 | `claude-sonnet-4.5` ↔ `claude-sonnet-4-5` |
+| `aliases` | 同一模型的其他写法，含聚合渠道命名 | 名称匹配忽略大小写、点、连字符：`glm-5.3` = `glm5.3` = `GLM5.3` |
 | `context_window`、`max_output` | token 限制 | |
 | `tool_call`、`reasoning`、`structured_output`、`attachment` | 能力布尔位 | |
 | `modalities` | `{"input": [...], "output": [...]}` | |

@@ -37,23 +37,29 @@ FIRST_PARTY = frozenset({
 
 # Some providers mirror a first-party one under a suffix
 # (e.g. volcengine-coding-plan); they never outrank the base provider.
-_PROVIDER_STRIP_RE = re.compile(r"^[a-z0-9_-]+/")
+# '~' prefixes (kilo's '~vendor/') mark unofficial channel copies.
+_PROVIDER_STRIP_RE = re.compile(r"^[a-z0-9_~-]+/")
 _DATE_SUFFIX_RE = re.compile(r"-(\d{8}|\d{6})$")
 
 
 def strip_provider_prefix(model_id: str) -> str:
     """'anthropic/claude-sonnet-4.5' -> 'claude-sonnet-4.5'."""
-    return _PROVIDER_STRIP_RE.sub("", model_id)
+    return _PROVIDER_STRIP_RE.sub("", model_id.lower())
+
+
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
 def identity(model_id: str) -> str:
     """Canonical identity used to group copies of the same model.
 
-    Aggregator naming differs from vendor naming ('claude-sonnet-4.5' vs
-    'claude-sonnet-4-5'), so we lowercase and fold '.' into '-'. Case and
-    punctuation are presentation; they never distinguish capabilities.
+    Aggregator naming differs from vendor naming in case, punctuation and
+    hyphenation ('claude-sonnet-4.5' vs 'claude-sonnet-4-5', 'glm-5.3' vs
+    'glm5.3' vs 'GLM5.3'). We lowercase and drop every non-alphanumeric
+    character: case, dots and hyphens are presentation, they never
+    distinguish capabilities.
     """
-    return strip_provider_prefix(model_id).lower().replace(".", "-")
+    return _NON_ALNUM_RE.sub("", strip_provider_prefix(model_id).lower())
 
 
 def base_alias(model_id: str) -> str | None:

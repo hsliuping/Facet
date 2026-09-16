@@ -34,7 +34,7 @@ first-party ones; ties prefer richer records).
 | Field | Meaning | Notes |
 |---|---|---|
 | `provider` | endpoint owner (e.g. `openai`, `volcengine`) | the only mandatory field |
-| `aliases` | other names for the same model, incl. aggregator spellings | `claude-sonnet-4.5` ↔ `claude-sonnet-4-5` |
+| `aliases` | other names for the same model, incl. aggregator spellings | name matching ignores case, dots, hyphens: `glm-5.3` = `glm5.3` = `GLM5.3` |
 | `context_window`, `max_output` | token limits | |
 | `tool_call`, `reasoning`, `structured_output`, `attachment` | capability booleans | |
 | `modalities` | `{"input": [...], "output": [...]}` | |

@@ -24,6 +24,11 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(sync.identity("Claude-Sonnet-4.5"), sync.identity("claude-sonnet-4-5"))
         self.assertEqual(sync.identity("openai/gpt-9"), sync.identity("GPT.9"))
 
+    def test_identity_tolerates_missing_hyphens(self):
+        # 'glm5.3' (no hyphen before 5) must group with 'glm-5.3'
+        for spelling in ("glm-5.3", "glm5.3", "GLM5.3", "glm5-3", "GLM-5.3", "zhipuai/glm5.3"):
+            self.assertEqual(sync.identity(spelling), "glm53", spelling)
+
     def test_base_alias_strips_date_suffix(self):
         self.assertEqual(sync.base_alias("doubao-seed-1-6-251015"), "doubao-seed-1-6")
         self.assertEqual(sync.base_alias("gpt-5-20260101"), "gpt-5")

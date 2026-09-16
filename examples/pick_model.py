@@ -25,14 +25,15 @@ from pathlib import Path
 
 DEFAULT_TABLE = Path(__file__).resolve().parent.parent / "registry" / "model-registry.json"
 
-# Same normalization as tools/sync_models_dev.py: case and '.' vs '-' are
-# presentation, they never distinguish capabilities.
-_PREFIX_RE = re.compile(r"^[a-z0-9_-]+/")
+# Same normalization as tools/sync_models_dev.py: case, dots and hyphens are
+# presentation, they never distinguish capabilities ('glm-5.3' == 'glm5.3').
+_PREFIX_RE = re.compile(r"^[a-z0-9_~-]+/")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
 def identity(name: str) -> str:
-    """'OpenRouter/Anthropic/Claude-Sonnet-4.5' -> 'claude-sonnet-4-5'."""
-    return _PREFIX_RE.sub("", name.strip()).lower().replace(".", "-")
+    """'OpenRouter/Anthropic/Claude-Sonnet-4.5' -> 'claudesonnet45'."""
+    return _NON_ALNUM_RE.sub("", _PREFIX_RE.sub("", name.strip().lower()))
 
 
 def load_table(path: Path) -> dict:
