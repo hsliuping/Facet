@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "facet-models"
+dynamic = ["version"]
+description = "Thin fact client for the Facet model registry: load the table, resolve names, find candidates. Zero runtime dependencies."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Facet contributors" }]
+keywords = ["llm", "model-registry", "model-selection", "ai", "facts"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+[project.urls]
+# Homepage = "https://github.com/<org>/Facet"   # uncomment once the repo has a public home
+
+[project.scripts]
+facet = "facet.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+facet = ["py.typed", "data/model-registry.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "facet._version.__version__" }
