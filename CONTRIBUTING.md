@@ -13,6 +13,15 @@ python tools/validate_registry.py      # check the committed table
 python tools/sync_models_dev.py        # refresh from models.dev (network)
 ```
 
+Package development (the `facet-models` pip package, stdlib only — thin fact
+client, integration contract documented in the README):
+
+```bash
+python tools/build_package.py --skip-build   # snapshot table + derive version
+pip install -e .                             # editable install
+facet "glm-5.3"                              # CLI smoke test
+```
+
 ## Repo layout
 
 ```
@@ -21,8 +30,12 @@ registry/model-registry.json        the table (generated, single file < 1 MB)
 registry/manual-overrides.json      manual additions & corrections (survive sync)
 tools/sync_models_dev.py            fetch -> normalize -> dedup -> emit
 tools/validate_registry.py          quality gate for the table
+tools/verify_claims.py              live-verify declared capabilities (optional)
+tools/build_package.py              validate -> snapshot -> version -> build
+src/facet/                          the pip package (load / resolve / find)
 examples/pick_model.py              reference consumer (read -> filter -> rank)
 tests/                              stdlib unittest
+reports/                            verify_claims output (local, gitignored)
 ```
 
 ## The hard rules ( enforced by tools/validate_registry.py )
@@ -52,6 +65,10 @@ by weekly refreshes:
    - every value must be checked against the vendor's official
      docs/console before committing — facts only, USD per MTok, absent
      == unknown.
+
+Live verification results (`tools/verify_claims.py`) never flow into the
+table automatically: attach the report to an issue or PR, and after human
+review apply corrections through `manual-overrides.json`.
 
 ## Pull requests
 

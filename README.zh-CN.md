@@ -81,12 +81,67 @@ python examples/pick_model.py --min-context 200000 --tools --image-input --limit
 python examples/pick_model.py claude-sonnet-4.5      # 按名称/别名解析单个模型
 ```
 
+## 安装（pip）
+
+同一套 读表 → 解析 → 过滤 逻辑已打包发布，**零运行时依赖**（纯标准库）：
+
+```bash
+pip install facet-models
+```
+
+```python
+import facet
+
+t = facet.load()                      # 包内捆绑快照（包版本号 = 表日期）
+t = facet.load("path/to/table.json")  # 显式本地路径
+t = facet.load(refresh=True)          # 拉取最新表（见下）
+
+facet.resolve(t, "glm-5.3")           # -> "alibaba-cn/glm-5.3"
+facet.find(t, tool_call=True, min_context=200_000, image_input=True,
+           max_output_price=2.0, provider="zhipuai", limit=10)
+```
+
+- wheel 里捆绑一份表的快照，**包版本号就是快照日期**（`2026.9.0` = 2026 年
+  9 月的表）。装完即用、离线可用；要新鲜度就升级包或 `load(refresh=True)`。
+- refresh 的 URL 优先级：`url=` 参数 → `FACET_TABLE_URL` 环境变量 → 内置
+  默认地址（仓库还没有公开主页前不设置）。拉取失败直接报错，绝不静默回退
+  到旧事实。
+- 直接拉 JSON 的用法（上文）继续支持——包只是便利层，不是锁定。
+
+CLI：`facet "glm-5.3"`、`facet --tools --min-context 200000 --limit 5`。
+
+### 集成契约：三套名字，各归其位
+
+模型在你的全栈里有三套名字，别混用：
+
+| 名字 | 例子 | 用在哪 |
+|---|---|---|
+| facet key | `zhipuai/glm-5.3` | 调度层：选型、日志、配额、审计的贯穿 ID |
+| 线名（wire name） | `rec.model_id`（请求体 `model` 字段） | 接入层 |
+| 网关名 | 你 one-api/new-api 部署里 `/v1/models` 列出的名字 | 启动时自动推导，不落配置 |
+
+表记录就是**交接物**：调度层把（key、provider、model_id、aliases）递给接入
+层；接入层按 `provider` 选适配器和凭据，`model_id` 进请求体。
+
+经网关的渠道**不需要任何映射配置**——网关自己会告诉你它叫什么
+（`GET /v1/models`），用已有的 `resolve()` 在启动时推导即可（它天生容忍
+拼写漂移）：
+
+```python
+names = [m["id"] for m in get(f"{GW_URL}/v1/models").json()["data"]]
+wire = {name: facet.resolve(t, name) for name in names}   # 网关名 -> facet key
+```
+
+让这套方案成立的约定只有一条：网关侧保留厂商原始名（one-api/new-api
+加渠道时默认就是原始名）。某个名字 `resolve` 返回 `None`，说明是网关
+管理员自创的叫法——在网关侧改回原名即可，不是加配置的理由。
+
 ## 怎么维护
 
 ```bash
 python tools/sync_models_dev.py            # models.dev -> 表（每周或按需）
 python tools/validate_registry.py          # 质量门（体积、null、结构、数量）
-python -m unittest discover -s tests       # 26 个单元测试
+python -m unittest discover -s tests       # 单元测试
 ```
 
 GitHub Action（`sync.yml`）每周自动刷新表格并开 PR。人工标注
@@ -96,6 +151,33 @@ GitHub Action（`sync.yml`）每周自动刷新表格并开 PR。人工标注
 尤其是 `structured_output`）。能力字段可跨渠道借用（只补缺、永不覆盖）；
 价格永不跨渠道借用，因为各渠道定价确实不同。不含 benchmark 分数——那是
 评价不是事实；如有需要，通过 `quality_hint` 自行补充。
+
+## 实测验证（可选）
+
+表里的能力字段全部是上游的**声明**，不是实测。
+`tools/verify_claims.py` 真实调用模型，验证声明是否成立——工具调用、
+结构化输出、推理痕迹、图片输入四项探针。结果写入
+`reports/verify-results.json`（match / mismatch / discovery / inconclusive），
+**绝不回写主表**：表保持"上游声明聚合"的单一语义，矛盾怎么处理由人来定。
+
+```bash
+python tools/verify_claims.py gpt-5 --dry-run        # 只打印计划，不发网
+python tools/verify_claims.py gpt-5                  # 按名称/别名解析
+python tools/verify_claims.py --provider zhipuai     # 便宜的模型优先
+python tools/verify_claims.py --base-url http://localhost:1234/v1 --api-key ... local-model
+```
+
+表内每个模型身份只保留一条记录（去重赢家），但同一个模型往往由多家厂商
+提供——且各渠道能力表现可能不同。用**厂商限定名**钉死要测的渠道：
+`volcengine/glm-5.3`、`zhipuai/glm-5.3`、`alibaba-cn/glm-5.3` 测的是同一
+模型在不同厂商端点上的实际表现（声明字段取自表记录，报告中经 `table_key`
+溯源）。裸名测的是赢家渠道。
+
+API key 自备（环境变量——`OPENAI_API_KEY`、`ZHIPU_API_KEY`、`ARK_API_KEY`
+等，或 `--api-key`），key 永不落报告。一线厂商端点已内置，其余用
+`--base-url --protocol` 指定。每个探针只花几百 token；`--max-models`
+（默认 20）为 `--provider` 扫描兜底。发现 mismatch？带着报告开 issue，
+或走 `manual-overrides.json` 修正对应行。
 
 ## 非目标
 

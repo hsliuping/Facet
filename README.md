@@ -88,12 +88,72 @@ python examples/pick_model.py --min-context 200000 --tools --image-input --limit
 python examples/pick_model.py claude-sonnet-4.5      # resolve one model + aliases
 ```
 
+## Install (pip)
+
+The same read → resolve → find logic ships as a tiny package with **zero
+runtime dependencies** (stdlib only):
+
+```bash
+pip install facet-models
+```
+
+```python
+import facet
+
+t = facet.load()                      # bundled snapshot (package version = table date)
+t = facet.load("path/to/table.json")  # explicit local path
+t = facet.load(refresh=True)          # fetch the latest table (see below)
+
+facet.resolve(t, "glm-5.3")           # -> "alibaba-cn/glm-5.3"
+facet.find(t, tool_call=True, min_context=200_000, image_input=True,
+           max_output_price=2.0, provider="zhipuai", limit=10)
+```
+
+- The wheel bundles a snapshot of the table; **the package version is the
+  snapshot date** (`2026.9.0` = the September 2026 table). Install and use
+  offline; upgrade the package or `load(refresh=True)` for freshness.
+- Refresh URL resolution: `url=` argument → `FACET_TABLE_URL` env var →
+  built-in default (unset until this repo has a public home). Failures raise —
+  never a silent fallback to stale facts.
+- Fetching the JSON directly (below) stays fully supported — the package is a
+  convenience, not a lock-in.
+
+CLI: `facet "glm-5.3"`, `facet --tools --min-context 200000 --limit 5`.
+
+### Integration contract: three names, three layers
+
+A model carries three different names across your stack. Keep them apart:
+
+| Name | Example | Lives in |
+|---|---|---|
+| facet key | `zhipuai/glm-5.3` | your scheduler: selection, logs, quota, audit |
+| wire name | `rec.model_id` (request body `model`) | the access layer |
+| gateway name | whatever your one-api/new-api deployment lists in `/v1/models` | derived at startup, never configured |
+
+The table record **is the handoff**: pass (key, provider, model_id, aliases)
+from the scheduler to the access layer. The access layer picks the adapter and
+credentials by `provider`, and `model_id` goes into the request body.
+
+Gateway channels need **no mapping config** — the gateway already knows its
+own names (`GET /v1/models`); derive the mapping at startup with the resolver
+you already have (it tolerates spelling drift by design):
+
+```python
+names = [m["id"] for m in get(f"{GW_URL}/v1/models").json()["data"]]
+wire = {name: facet.resolve(t, name) for name in names}   # gateway name -> facet key
+```
+
+The one convention that makes this work: keep the vendor's original model
+names on the gateway (one-api/new-api do by default). A name that resolves to
+`None` was invented by the gateway admin — fix it on the gateway side, not
+with config.
+
 ## Maintain it
 
 ```bash
 python tools/sync_models_dev.py            # models.dev -> table (weekly, or on demand)
 python tools/validate_registry.py          # quality gate (size, nulls, shapes, counts)
-python -m unittest discover -s tests       # 26 unit tests
+python -m unittest discover -s tests       # unit tests
 ```
 
 A GitHub Action (`sync.yml`) refreshes the table weekly and opens a PR.
@@ -105,6 +165,38 @@ fields may be borrowed across channels of the same model (fill-only, never
 overwritten); prices are never borrowed since channel pricing differs. No
 benchmark scores — those are judgments, not facts; add your own via
 `quality_hint`.
+
+## Verify claims (optional)
+
+Everything in the table is an upstream *claim*, never a measurement.
+`tools/verify_claims.py` calls a model for real and checks whether its declared
+capabilities hold — tool calling, structured output, reasoning traces, and
+image input. Results land in `reports/verify-results.json` (match / mismatch /
+discovery / inconclusive) and are **never written back to the table**: the
+registry stays a pure claims aggregation, and humans decide what to do with
+contradictions.
+
+```bash
+python tools/verify_claims.py gpt-5 --dry-run        # plan only, no network
+python tools/verify_claims.py gpt-5                  # resolve by name or alias
+python tools/verify_claims.py --provider zhipuai     # cheapest models first
+python tools/verify_claims.py --base-url http://localhost:1234/v1 --api-key ... local-model
+```
+
+The table keeps ONE record per model identity (the dedup winner), but the
+same model is often served by several vendors — and capability differs per
+channel. Qualify the vendor to pin the endpoint: `volcengine/glm-5.3`,
+`zhipuai/glm-5.3` and `alibaba-cn/glm-5.3` test the same identity at
+different vendors' endpoints (declared facts come from the table record and
+are traced via `table_key` in the report). A bare name tests the winner's
+channel.
+
+Bring your own API key (environment variables — `OPENAI_API_KEY`,
+`ZHIPU_API_KEY`, `ARK_API_KEY`, ...; or `--api-key`). Keys are never stored in
+reports. First-party providers are built in; anything else takes
+`--base-url --protocol`. Probes cost a few hundred tokens per model;
+`--max-models` (default 20) caps `--provider` scans. Found a mismatch? Open an
+issue with the report attached, or fix the row via `manual-overrides.json`.
 
 ## Non-goals
 
