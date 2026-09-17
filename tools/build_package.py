@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -29,16 +30,31 @@ DATA_DIR = REPO / "src" / "facet" / "data"
 VERSION_PY = REPO / "src" / "facet" / "_version.py"
 
 
-def derive_version(table: dict) -> str:
-    """'2026-09-16' -> '2026.9.0'. The package version IS the snapshot date."""
+_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+
+def derive_version(table: dict, from_tag: str | None = None) -> str:
+    """'2026-09-16' -> '2026.9.0'. The package version IS the snapshot date.
+
+    from_tag ('v2026.9.1') pins the patch level (docs-only re-releases); its
+    calendar part must match the table date or we refuse to build.
+    """
     y, m = table["updated_at"].split("-")[:2]
-    return f"{int(y)}.{int(m)}.0"
+    base = f"{int(y)}.{int(m)}"
+    if from_tag:
+        mm = _TAG_RE.match(from_tag)
+        if not mm or f"{int(mm.group(1))}.{int(mm.group(2))}" != base:
+            raise SystemExit(f"tag {from_tag!r} must match the table date: v{base}.<patch>")
+        return f"{base}.{int(mm.group(3))}"
+    return f"{base}.0"
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Validate, snapshot and build the facet-models package.")
     ap.add_argument("--skip-build", action="store_true",
                     help="stop after copying the table and writing _version.py")
+    ap.add_argument("--from-tag", default=None,
+                    help="release tag (vYYYY.M.P); pins the patch level, calendar part must match the table")
     args = ap.parse_args(argv)
 
     if not REGISTRY.exists():
@@ -57,7 +73,7 @@ def main(argv=None) -> int:
             print(f"  - {e}", file=sys.stderr)
         return 1
 
-    version = derive_version(table)
+    version = derive_version(table, args.from_tag)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(REGISTRY, DATA_DIR / REGISTRY.name)
     VERSION_PY.write_text(

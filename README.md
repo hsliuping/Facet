@@ -1,8 +1,10 @@
 # Facet
 
-**English** | [简体中文](README.zh-CN.md)
+**English** | [简体中文](https://github.com/hsliuping/Facet/blob/main/README.zh-CN.md)
 
 **Facet answers one question for your application: "for this task, which model should I use?"**
+
+**Facet 回答你应用里最常见的问题："这个任务该用哪个模型？"**——一张覆盖 217 个 provider、约 2,400 个模型能力/限制/价格的事实表，加一个零依赖的 pip 包（`pip install facet-models`）。
 
 It is not a router. It is a **facts table** — a single JSON file describing
 the capabilities, limits, and prices of ~2,400 models across 217 providers —
@@ -61,7 +63,7 @@ first-party ones; ties prefer richer records).
    `schema_version`; breaking changes bump it. Consumers ignore unknown
    fields.
 
-The full standard: [schema/model-registry.schema.json](schema/model-registry.schema.json).
+The full standard: [schema/model-registry.schema.json](https://github.com/hsliuping/Facet/blob/main/schema/model-registry.schema.json).
 
 ## Consume it
 
@@ -207,5 +209,5 @@ benchmark aggregation. If you need those, build them on the table.
 
 ## Governance
 
-MIT licensed. Contributions under the CLA in [CLA.md](CLA.md). Process in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+MIT licensed. Contributions under the CLA in [CLA.md](https://github.com/hsliuping/Facet/blob/main/CLA.md). Process in
+[CONTRIBUTING.md](https://github.com/hsliuping/Facet/blob/main/CONTRIBUTING.md).

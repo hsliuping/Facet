@@ -1,6 +1,6 @@
 # Facet
 
-[English](README.md) | **简体中文**
+[English](https://github.com/hsliuping/Facet/blob/main/README.md) | **简体中文**
 
 **Facet 回答你的应用里最常见的一个问题："这个任务该用哪个模型？"**
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "facet-models"
 dynamic = ["version"]
-description = "Thin fact client for the Facet model registry: load the table, resolve names, find candidates. Zero runtime dependencies."
+description = "Thin fact client for the Facet model registry: load the table, resolve names, find candidates. Zero runtime dependencies. / Facet 模型事实表客户端：装载表、解析名称、查找候选模型，零运行时依赖。"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
