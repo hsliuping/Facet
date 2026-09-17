@@ -1,5 +1,7 @@
 # Facet
 
+[English](README.md) | **简体中文**
+
 **Facet 回答你的应用里最常见的一个问题："这个任务该用哪个模型？"**
 
 它不是路由器，而是一张**模型事实表**——单个 JSON 文件，覆盖 217 个
@@ -187,4 +189,4 @@ API key 自备（环境变量——`OPENAI_API_KEY`、`ZHIPU_API_KEY`、`ARK_API
 ## 治理
 
 MIT 许可。贡献须接受 [CLA.md](CLA.md) 中的协议，流程见
-[CONTRIBUTING.md](CONTRIBUTING.md)。English docs: [README.md](README.md).
+[CONTRIBUTING.md](CONTRIBUTING.md)。

@@ -1,5 +1,7 @@
 # Facet
 
+**English** | [简体中文](README.zh-CN.md)
+
 **Facet answers one question for your application: "for this task, which model should I use?"**
 
 It is not a router. It is a **facts table** — a single JSON file describing
@@ -206,4 +208,4 @@ benchmark aggregation. If you need those, build them on the table.
 ## Governance
 
 MIT licensed. Contributions under the CLA in [CLA.md](CLA.md). Process in
-[CONTRIBUTING.md](CONTRIBUTING.md). 中文文档：[README.zh-CN.md](README.zh-CN.md).
+[CONTRIBUTING.md](CONTRIBUTING.md).
