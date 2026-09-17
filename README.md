@@ -70,7 +70,7 @@ then decide with your own rules:
 import json, urllib.request
 
 table = json.load(urllib.request.urlopen(
-    "https://raw.githubusercontent.com/<org>/Facet/main/registry/model-registry.json"))
+    "https://raw.githubusercontent.com/hsliuping/Facet/main/registry/model-registry.json"))
 
 candidates = [
     (key, rec) for key, rec in table["models"].items()
@@ -113,7 +113,7 @@ facet.find(t, tool_call=True, min_context=200_000, image_input=True,
   snapshot date** (`2026.9.0` = the September 2026 table). Install and use
   offline; upgrade the package or `load(refresh=True)` for freshness.
 - Refresh URL resolution: `url=` argument → `FACET_TABLE_URL` env var →
-  built-in default (unset until this repo has a public home). Failures raise —
+  built-in default (the raw table on this repo's main). Failures raise —
   never a silent fallback to stale facts.
 - Fetching the JSON directly (below) stays fully supported — the package is a
   convenience, not a lock-in.

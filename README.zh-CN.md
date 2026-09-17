@@ -63,7 +63,7 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
 import json, urllib.request
 
 table = json.load(urllib.request.urlopen(
-    "https://raw.githubusercontent.com/<org>/Facet/main/registry/model-registry.json"))
+    "https://raw.githubusercontent.com/hsliuping/Facet/main/registry/model-registry.json"))
 
 candidates = [
     (key, rec) for key, rec in table["models"].items()
@@ -104,7 +104,7 @@ facet.find(t, tool_call=True, min_context=200_000, image_input=True,
 - wheel 里捆绑一份表的快照，**包版本号就是快照日期**（`2026.9.0` = 2026 年
   9 月的表）。装完即用、离线可用；要新鲜度就升级包或 `load(refresh=True)`。
 - refresh 的 URL 优先级：`url=` 参数 → `FACET_TABLE_URL` 环境变量 → 内置
-  默认地址（仓库还没有公开主页前不设置）。拉取失败直接报错，绝不静默回退
+  默认地址（本仓库 main 分支的原始表）。拉取失败直接报错，绝不静默回退
   到旧事实。
 - 直接拉 JSON 的用法（上文）继续支持——包只是便利层，不是锁定。
 

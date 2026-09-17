@@ -11,8 +11,10 @@ from pathlib import Path
 #: Snapshot shipped inside the wheel (copied at build time by tools/build_package.py).
 BUNDLED_TABLE = Path(__file__).resolve().parent / "data" / "model-registry.json"
 
-#: Set once this repo has a public home; until then refresh needs an explicit URL.
-DEFAULT_TABLE_URL: str | None = None
+#: Default refresh source: this repo's raw table on main.
+DEFAULT_TABLE_URL: str | None = (
+    "https://raw.githubusercontent.com/hsliuping/Facet/main/registry/model-registry.json"
+)
 
 #: Environment variable consulted by load(refresh=True), between url= and the default.
 TABLE_URL_ENV = "FACET_TABLE_URL"
@@ -44,9 +46,8 @@ def load(source: str | Path | None = None, *, refresh: bool = False, url: str | 
         target = url or os.environ.get(TABLE_URL_ENV) or DEFAULT_TABLE_URL
         if not target:
             raise RuntimeError(
-                f"refresh requested but no table URL: pass url=..., set the "
-                f"{TABLE_URL_ENV} environment variable, or upgrade the package "
-                f"(no default URL is configured yet)"
+                f"refresh requested but no table URL: pass url=... or set the "
+                f"{TABLE_URL_ENV} environment variable"
             )
         try:
             with urllib.request.urlopen(target, timeout=30) as resp:

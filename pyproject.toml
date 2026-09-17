@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.urls]
-# Homepage = "https://github.com/<org>/Facet"   # uncomment once the repo has a public home
+Homepage = "https://github.com/hsliuping/Facet"
 
 [project.scripts]
 facet = "facet.cli:main"
