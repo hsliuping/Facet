@@ -1,0 +1,59 @@
+{
+  "_readme": "示例订阅数据。请复制为 subscriptions.json 后在控制台「套餐订阅」页签里改成真实值，或直接在界面里新增/删除。同一厂家可以有多个账号、多个套餐；channels 填渠道名称（逗号分隔），可留空。expires_at 前 remind_days 天会在页面顶部横幅、GET /health、CLI 和 webhook 中提醒续费；settings.block_expired_channels 控制过期套餐是否自动停用其关联渠道。",
+  "settings": {
+    "block_expired_channels": true,
+    "notify_enabled": false,
+    "webhook_url": "",
+    "interval_minutes": 60
+  },
+  "subscriptions": [
+    {
+      "id": "sub-volcengine-a-coding",
+      "vendor": "火山引擎",
+      "account": "账号 A",
+      "plan": "coding plan",
+      "tier": "Pro",
+      "price": 199,
+      "currency": "CNY",
+      "billing_cycle": "monthly",
+      "started_at": "2026-10-07",
+      "expires_at": "2026-11-10",
+      "auto_renew": false,
+      "remind_days": 7,
+      "channels": [],
+      "note": "示例数据：快要到期，用来演示续费提醒"
+    },
+    {
+      "id": "sub-volcengine-b-coding",
+      "vendor": "火山引擎",
+      "account": "账号 B",
+      "plan": "coding plan",
+      "tier": "Pro",
+      "price": 199,
+      "currency": "CNY",
+      "billing_cycle": "monthly",
+      "started_at": "2026-10-15",
+      "expires_at": "2026-11-15",
+      "auto_renew": true,
+      "remind_days": 7,
+      "channels": [],
+      "note": "示例数据：第二个账号"
+    },
+    {
+      "id": "sub-volcengine-agent",
+      "vendor": "火山引擎",
+      "account": "账号 A",
+      "plan": "agent plan",
+      "tier": "标准版",
+      "price": 299,
+      "currency": "CNY",
+      "billing_cycle": "monthly",
+      "started_at": "2026-11-01",
+      "expires_at": "2026-12-01",
+      "auto_renew": false,
+      "remind_days": 7,
+      "channels": [],
+      "note": "示例数据：同一账号下的另一个套餐"
+    }
+  ]
+}

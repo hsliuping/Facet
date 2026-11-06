@@ -29,6 +29,7 @@ Homepage = "https://github.com/hsliuping/Facet"
 
 [project.scripts]
 facet = "facet.cli:main"
+planrouter = "planrouter.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -38,6 +39,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 facet = ["py.typed", "data/model-registry.json"]
+planrouter = ["static/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "facet._version.__version__" }

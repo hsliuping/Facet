@@ -11,3 +11,10 @@ dist/
 .coverage
 reports/
 .trae/
+
+# PlanRouter local runtime data (contains account/pricing details)
+subscriptions.json
+router.state.json
+usage.json
+notifications.json
+*.tmp

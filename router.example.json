@@ -1,0 +1,86 @@
+{
+  "_readme": "PlanRouter config. Pure stdlib, Python 3.10+, no runtime dependencies. Run: pip install -e . && planrouter --config router.example.json --check ; then planrouter --config router.example.json . Point your coding agent at http://127.0.0.1:8787/v1 (OpenAI) or /v1/messages (Anthropic) with listen.api_key as the bearer token. Secrets use env:VAR so nothing lands in this file or in logs. A channel is any OpenAI- or Anthropic-compatible endpoint: a direct API key, a free tier, or a local bridge (one-api / new-api / CLIProxyAPI) that exposes a coding-plan subscription. Protocols are NEVER converted: /v1/chat/completions only reaches openai channels, /v1/messages only reaches anthropic channels. If a plan speaks a different protocol, put a bridge in front of it. On 429 / quota errors the channel is cooled for the upstream reset time (Retry-After, *-reset headers) or cooldown_minutes (default 300 = 5h, matching typical plan windows); the next healthy channel serves the request automatically. Transient 5xx/network errors cool for 30s with a half-open probe. Add X-Session-Id (or body.user) for 30-minute session stickiness so prefix caches survive; X-Route: cheap or model=auto:cheap selects a cheaper chain. Responses carry X-Routed-Via and X-Failover-Count. GET /health shows remaining cooldowns, GET /stats shows per-channel usage. For personal use with credentials you are entitled to; each provider's terms still apply.",
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "api_key": "env:ROUTER_API_KEY"
+  },
+  "defaults": {
+    "cooldown_minutes": 300,
+    "max_failover": 3,
+    "sticky_minutes": 30,
+    "max_cooldown_hours": 168,
+    "timeout": 120
+  },
+  "channels": [
+    {
+      "name": "claude-plan",
+      "protocol": "anthropic",
+      "base_url": "http://127.0.0.1:8080",
+      "api_key": "env:CLAUDE_PLAN_KEY",
+      "models": {
+        "claude-sonnet-4-5": "claude-sonnet-4-5",
+        "auto": "claude-sonnet-4-5"
+      },
+      "priority": 10,
+      "cooldown_minutes": 300,
+      "rate": { "rpm": 40 }
+    },
+    {
+      "name": "codex-plan",
+      "protocol": "openai",
+      "base_url": "http://127.0.0.1:8081",
+      "api_key": "env:CODEX_PLAN_KEY",
+      "models": {
+        "gpt-5": "gpt-5",
+        "auto": "gpt-5"
+      },
+      "priority": 20,
+      "cooldown_minutes": 300,
+      "rate": { "rpm": 40 }
+    },
+    {
+      "name": "glm-plan",
+      "protocol": "openai",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key": "env:GLM_PLAN_KEY",
+      "models": {
+        "glm-4.6": "glm-4.6",
+        "auto": "glm-4.6"
+      },
+      "priority": 30,
+      "cooldown_minutes": 60,
+      "rate": { "rpm": 60 }
+    },
+    {
+      "name": "free-tier",
+      "protocol": "openai",
+      "base_url": "https://api.openrouter.ai/api/v1",
+      "api_key": "env:FREE_TIER_KEY",
+      "models": {
+        "*": "*",
+        "auto": "REPLACE_WITH_A_FREE_MODEL_ID"
+      },
+      "priority": 40,
+      "cooldown_minutes": 1440,
+      "rate": { "rpm": 20, "rpd": 1000 }
+    }
+  ],
+  "routes": [
+    {
+      "name": "default",
+      "protocol": "openai",
+      "channels": ["codex-plan", "glm-plan", "free-tier"]
+    },
+    {
+      "name": "cheap",
+      "protocol": "openai",
+      "channels": ["free-tier", "glm-plan"]
+    },
+    {
+      "name": "default",
+      "protocol": "anthropic",
+      "channels": ["claude-plan"]
+    }
+  ]
+}
