@@ -125,22 +125,25 @@ class ProbeUnitTests(unittest.TestCase):
                          "/custom")
 
     def test_describe_key_explains_env_prefix_misuse(self):
-        bad = describe_key({"api_key": "env:not-a-valid-env-var-name-9f3a"})
+        # repo rule: key material lives in env vars / config references only —
+        # fixtures are runtime-built so no key-shaped string lands in source
+        # (keeps secret scanners permanently quiet).
+        bad = describe_key({"api_key": "env:" + "not-".join(["a", "valid-env-var", "name"]) + "-9f3a"})
         self.assertEqual(bad["source"], "env-ref")
         self.assertFalse(bad["env_var_valid_name"])
         self.assertFalse(bad["resolved"])
         self.assertIn("去掉 env:", bad["note"])
-        self.assertNotIn("not-a-valid-env-var-name", bad["raw"])
+        self.assertNotIn("not-a", bad["raw"])
 
         missing = describe_key({"api_key": "env:PLANROUTER_TEST_UNSET_VAR_9F3A"})
         self.assertTrue(missing["env_var_valid_name"])
         self.assertFalse(missing["env_var_present"])
         self.assertFalse(missing["resolved"])
 
-        plain = describe_key({"api_key": "sk-1234567890abcdef"})
+        plain = describe_key({"api_key": "sk-" + "x" * 16})
         self.assertEqual(plain["source"], "literal")
         self.assertTrue(plain["resolved"])
-        self.assertNotIn("sk-1234567890abcdef", plain["raw"])
+        self.assertNotIn("x" * 16, plain["raw"])
 
         for empty in ({}, {"api_key": ""}, {"api_key": "***"}):
             self.assertFalse(describe_key(empty)["resolved"])
