@@ -25,7 +25,14 @@ def capture(store, now: float | None = None) -> dict:
         entry["tok_events"] = [[t, n] for t, n in state.tok_events
                                if 0 <= now - t < WINDOW_SECONDS]
         channels[name] = entry
-    return {"saved_at": now, "channels": channels}
+    catalogs = {
+        name: dict(entry) for name, entry in getattr(store, "catalogs", {}).items()
+    }
+    rr_cursor = {
+        key: int(offset) for key, offset in getattr(store, "rr_cursor", {}).items()
+    }
+    return {"saved_at": now, "channels": channels, "catalogs": catalogs,
+            "rr_cursor": rr_cursor}
 
 
 def restore(store, data: dict, now: float | None = None) -> int:
@@ -55,6 +62,23 @@ def restore(store, data: dict, now: float | None = None) -> int:
             state.reason = ""
             state.half_open = False
         restored += 1
+    if hasattr(store, "catalogs"):
+        for name, entry in (data.get("catalogs") or {}).items():
+            if not isinstance(entry, dict) or not isinstance(entry.get("models"), list):
+                continue
+            changes = entry.get("changes")
+            store.catalogs[name] = {
+                "fetched_at": float(entry.get("fetched_at") or 0),
+                "endpoint": str(entry.get("endpoint") or ""),
+                "models": [str(m) for m in entry["models"]],
+                "changes": dict(changes) if isinstance(changes, dict) else {},
+            }
+    if hasattr(store, "rr_cursor"):
+        restored_cursor = {}
+        for key, offset in (data.get("rr_cursor") or {}).items():
+            if isinstance(key, str) and isinstance(offset, int):
+                restored_cursor[key] = offset
+        store.rr_cursor = restored_cursor
     return restored
 
 
@@ -89,14 +113,15 @@ class StatePersistence:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             restore(self._get_store(), data)
-            self._last = json.dumps(capture(self._get_store())["channels"], sort_keys=True)
+            snap = capture(self._get_store())
+            self._last = json.dumps(self._fingerprint(snap), sort_keys=True)
         except (OSError, ValueError, TypeError):
             return
 
     def flush(self) -> None:
         with self._lock:
             snapshot = capture(self._get_store())
-            compare = json.dumps(snapshot["channels"], sort_keys=True)
+            compare = json.dumps(self._fingerprint(snapshot), sort_keys=True)
             if compare == self._last:
                 return
             tmp = self.path.with_name(self.path.name + ".tmp")
@@ -107,3 +132,9 @@ class StatePersistence:
                 self._last = compare
             except OSError:
                 pass
+
+    @staticmethod
+    def _fingerprint(snapshot: dict) -> dict:
+        return {"channels": snapshot.get("channels", {}),
+                "catalogs": snapshot.get("catalogs", {}),
+                "rr_cursor": snapshot.get("rr_cursor", {})}

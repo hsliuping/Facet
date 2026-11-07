@@ -59,6 +59,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  unknown model names: "
               f"{'auto-scheduled on ' + config.models.fallback_route if config.models.fallback_unknown else 'rejected'}")
         print(f"  preemptive quota: {'on' if config.defaults.preempt_quota else 'off'}")
+        print(f"  model catalog: refresh every {config.defaults.catalog_refresh_hours}h"
+              if config.defaults.catalog_refresh_hours else
+              "  model catalog: background refresh disabled")
+        print(f"  self-maintenance: every {config.defaults.maintenance_hours}h"
+              + (f", LLM analysis via {config.defaults.maintenance_model}"
+                 if config.defaults.maintenance_model else
+                 ", rules only (set defaults.maintenance_model for LLM analysis)")
+              if config.defaults.maintenance_hours else
+              "  self-maintenance: disabled")
         print(f"  state file: {state_path}")
         print(f"  audit log: {audit_path}")
         missing = [c.name for c in config.channels if not c.api_key]

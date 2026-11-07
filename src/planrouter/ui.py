@@ -234,6 +234,23 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, payload)
         return True
 
+    if path == "/api/probe/models" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        try:
+            result = app.probe_channel_models(incoming.get("channel"))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        _json(h, 200, result)
+        return True
+
     if path == "/api/reload" and method == "POST":
         try:
             config = app.reload_from_disk()
@@ -241,6 +258,31 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": str(exc)}})
             return True
         _json(h, 200, {"ok": True, "channels": len(config.channels)})
+        return True
+
+    if path == "/api/maintenance" and method == "GET":
+        _json(h, 200, app.maintenance_payload())
+        return True
+
+    if path == "/api/maintenance/run" and method == "POST":
+        _json(h, 200, app.run_maintenance("manual"))
+        return True
+
+    if path == "/api/maintenance/apply" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            result = app.apply_maintenance_suggestion(incoming)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write config: {exc}"}})
+            return True
+        _json(h, 200, result)
         return True
 
     if path.startswith("/api/channels/") and path.endswith("/reset") and method == "POST":

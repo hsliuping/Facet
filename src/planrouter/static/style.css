@@ -169,6 +169,8 @@ tr:last-child td { border-bottom: none; }
 .pick-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .test-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 15px; }
 .test-row input { flex: 1; min-width: 180px; }
+.catalog-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.catalog-row .hint { flex: 1; min-width: 160px; }
 .test-hint { flex: 1; color: var(--muted); font-size: 12px; }
 .test-result { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); font-size: 12px; }
 .test-result[hidden] { display: none; }
@@ -255,6 +257,14 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .interval-field { display: flex; align-items: center; gap: 8px; }
 .interval-field input { width: 90px; }
 #notify-history { margin-top: 12px; line-height: 1.7; }
+
+#maintenance-body { margin-top: 6px; }
+.maint-report { padding: 12px 0; border-top: 1px solid var(--border); }
+.maint-report:first-child { border-top: 0; padding-top: 2px; }
+.maint-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.maint-item { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 4px 0; font-size: 13px; }
+.maint-item .tag { flex-shrink: 0; transform: translateY(-1px); }
+.maint-item .btn { padding: 2px 10px; }
 
 @media (max-width: 760px) {
   .shell { padding: 18px 14px 30px; }

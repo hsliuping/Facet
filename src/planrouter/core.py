@@ -209,6 +209,11 @@ class Defaults:
     timeout: int = 120
     track_stream_usage: bool = True
     preempt_quota: bool = True
+    catalog_refresh_hours: int = 24  # 0 disables the background catalog sweep
+    maintenance_hours: int = 24  # 0 disables the daily self-maintenance sweep
+    # Model name routed through (preferably free) channels for the LLM part of
+    # self-maintenance; empty disables LLM analysis, deterministic rules still run.
+    maintenance_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -387,6 +392,9 @@ def parse_config(raw: dict) -> Config:
         timeout=int(d.get("timeout", 120)),
         track_stream_usage=track_stream_usage,
         preempt_quota=preempt_quota,
+        catalog_refresh_hours=int(d.get("catalog_refresh_hours", 24)),
+        maintenance_hours=int(d.get("maintenance_hours", 24)),
+        maintenance_model=str(d.get("maintenance_model") or "").strip(),
     )
 
     channels: list[Channel] = []
@@ -572,6 +580,54 @@ class StateStore:
         self.lock = threading.RLock()
         self.states = {c.name: ChannelState(c.name) for c in config.channels}
         self.sessions: dict[str, tuple[str, float]] = {}
+        # name -> {"fetched_at", "endpoint", "models": [...], "changes": {...}}
+        self.catalogs: dict[str, dict] = {}
+        # f"{protocol}:{route}" -> next round-robin offset for new sessions
+        self.rr_cursor: dict[str, int] = {}
+
+    def record_catalog(self, name: str, models, endpoint: str,
+                       now: float | None = None) -> dict:
+        """Store an upstream model catalog and diff it against the last one."""
+        now = time.time() if now is None else now
+        fresh = sorted({str(m) for m in (models or []) if m})
+        with self.lock:
+            previous = self.catalogs.get(name) or {}
+            old = set(previous.get("models") or ())
+            changes = {
+                "added": sorted(set(fresh) - old),
+                "removed": sorted(old - set(fresh)),
+            }
+            if old:
+                changes["at"] = now
+            self.catalogs[name] = {
+                "fetched_at": now,
+                "endpoint": endpoint,
+                "models": fresh,
+                "changes": changes,
+            }
+            return changes
+
+    def catalog_view(self, name: str) -> dict:
+        """Summary of one recorded catalog (full model list included)."""
+        with self.lock:
+            catalog = self.catalogs.get(name) or {}
+            return {
+                "fetched_at": catalog.get("fetched_at", 0),
+                "endpoint": catalog.get("endpoint", ""),
+                "models": list(catalog.get("models") or []),
+                "count": len(catalog.get("models") or []),
+                "changes": dict(catalog.get("changes") or {}),
+            }
+
+    def catalog_knows(self, model: str) -> bool:
+        """True when any channel's catalog lists this model name."""
+        if not model:
+            return False
+        with self.lock:
+            for catalog in self.catalogs.values():
+                if model in (catalog.get("models") or []):
+                    return True
+        return False
 
     def session_channel(self, session_id: str | None, now: float) -> str | None:
         if not session_id:
@@ -588,6 +644,36 @@ class StateStore:
     def bind_session(self, session_id: str | None, name: str, now: float) -> None:
         if session_id:
             self.sessions[session_id] = (name, now + self.config.defaults.sticky_minutes * 60)
+
+    def _rotate_tier(self, protocol: str, route: Route, ordered: list[str]) -> list[str]:
+        """Round-robin the starting point among a route's top-priority tier.
+
+        Sticky sessions are untouched (the caller keeps them in front). A brand
+        new session starts at the next channel of the tier so free quota is
+        spread instead of everyone hammering the first channel until it cools.
+        Lower-priority channels keep their tail positions as fallback.
+        """
+        if len(ordered) < 2:
+            return ordered
+        head = self.config.channel(ordered[0])
+        if head is None:
+            return ordered
+        positions = [i for i, name in enumerate(ordered)
+                     if (c := self.config.channel(name)) is not None
+                     and c.priority == head.priority]
+        if len(positions) < 2:
+            return ordered
+        key = f"{protocol}:{route.name}"
+        offset = self.rr_cursor.get(key, 0) % len(positions)
+        self.rr_cursor[key] = offset + 1
+        if not offset:
+            return ordered
+        tier = [ordered[i] for i in positions]
+        rotated = tier[offset:] + tier[:offset]
+        result = list(ordered)
+        for pos, name in zip(positions, rotated):
+            result[pos] = name
+        return result
 
     def pick(
         self,
@@ -620,6 +706,8 @@ class StateStore:
             if sticky in ordered:
                 ordered.remove(sticky)
                 ordered.insert(0, sticky)
+            else:
+                ordered = self._rotate_tier(protocol, route, ordered)
             exact: list[tuple[Channel, str]] = []
             scheduled: list[tuple[Channel, str]] = []
             for name in ordered:

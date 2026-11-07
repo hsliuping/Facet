@@ -14,7 +14,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .core import (ANTHROPIC, OPENAI, PROTOCOLS, resolve_secret,
+from .core import (ANTHROPIC, OPENAI, PROTOCOLS, VERSIONED_BASE, resolve_secret,
                    upstream_path_for)
 
 DEFAULT_TIMEOUT = 8.0
@@ -254,3 +254,89 @@ def probe_channel(raw, model: str | None = None,
                       error=repr(exc)[:200], hint="探测失败")
         result["debug"]["response"] = {"exception": repr(exc)[:200]}
     return result
+
+
+def models_path_for(base_url: str, upstream_path: str | None) -> str:
+    """Path of the upstream model listing (GET) for a channel."""
+    if upstream_path:
+        stem = re.sub(r"/(?:chat/completions|messages|responses)$", "", upstream_path)
+        return stem + "/models"
+    if VERSIONED_BASE.search(base_url.rstrip("/")):
+        return "/models"
+    return "/v1/models"
+
+
+def parse_model_list(payload) -> list[str]:
+    """Extract model ids from the many shapes /models endpoints return."""
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = payload.get("data")
+        if not isinstance(items, list):
+            items = payload.get("models")
+        if not isinstance(items, list):
+            return []
+    else:
+        return []
+    ids = set()
+    for item in items:
+        if isinstance(item, str):
+            ids.add(item)
+        elif isinstance(item, dict):
+            name = item.get("id") or item.get("name") or item.get("model")
+            if isinstance(name, str) and name:
+                ids.add(name)
+    return sorted(ids)
+
+
+def probe_models(raw, timeout: float = DEFAULT_TIMEOUT) -> dict:
+    """Fetch one channel's upstream model catalog (GET .../models).
+
+    Read-only: sends no completion, touches no cooldown/usage/audit state.
+    """
+    fallback_name = str(raw.get("name") or "") if isinstance(raw, dict) else ""
+    try:
+        channel = validate_channel(raw)
+    except ValueError as exc:
+        return {"ok": False, "name": fallback_name, "error": str(exc),
+                "hint": "请先补齐渠道配置"}
+
+    name = channel["name"]
+    protocol = channel["protocol"]
+    path = models_path_for(channel["base_url"], channel["upstream_path"])
+    url = channel["base_url"] + path
+
+    headers = {}
+    if channel["api_key"]:
+        if protocol == OPENAI:
+            headers["Authorization"] = "Bearer " + channel["api_key"]
+        else:
+            headers["x-api-key"] = channel["api_key"]
+    if protocol == ANTHROPIC:
+        headers["anthropic-version"] = "2023-06-01"
+
+    started = time.monotonic()
+    try:
+        req = Request(url, headers=headers, method="GET")
+        with urlopen(req, timeout=timeout) as resp:
+            models = parse_model_list(json.loads(resp.read(2_000_000)))
+            return {"ok": True, "name": name, "endpoint": url, "path": path,
+                    "http_status": resp.status,
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                    "models": models, "count": len(models)}
+    except HTTPError as exc:
+        text = _error_excerpt(exc.read(4096))
+        return {"ok": False, "name": name, "endpoint": url, "path": path,
+                "http_status": exc.code,
+                "latency_ms": round((time.monotonic() - started) * 1000),
+                "error": text, "hint": hint_for(exc.code)}
+    except (URLError, TimeoutError, OSError) as exc:
+        return {"ok": False, "name": name, "endpoint": url, "path": path,
+                "latency_ms": round((time.monotonic() - started) * 1000),
+                "error": str(exc)[:200],
+                "hint": "无法连接或超时，检查 base_url、网络与代理"}
+    except Exception as exc:  # keep the console alive on unexpected upstream shapes
+        return {"ok": False, "name": name, "endpoint": url, "path": path,
+                "latency_ms": round((time.monotonic() - started) * 1000),
+                "error": repr(exc)[:200],
+                "hint": "上游响应不是可解析的模型清单"}

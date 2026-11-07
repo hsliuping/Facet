@@ -37,6 +37,7 @@ const state = {
   usageRange: 30,
   notify: null,
   report: null,
+  maintenance: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -219,6 +220,7 @@ async function loadState() {
   state.snapshot = await api('/api/state');
   renderSummary();
   renderStatus();
+  renderChannels();
   const badge = $('conn-badge');
   badge.textContent = '已连接';
   badge.className = 'badge ok';
@@ -255,6 +257,17 @@ function parseModels(text) {
   return out;
 }
 
+function catalogSummary(name) {
+  const snap = (state.snapshot?.channels || []).find((c) => c.name === name);
+  const cat = snap && snap.catalog;
+  if (!cat || !cat.fetched_at) return '未拉取';
+  const when = new Date(cat.fetched_at * 1000).toLocaleString();
+  const changes = cat.changes || {};
+  const diff = (changes.added?.length || changes.removed?.length)
+    ? `（较上次 新增 ${changes.added?.length || 0} / 移除 ${changes.removed?.length || 0}）` : '';
+  return `${cat.count} 个模型 · 检查于 ${when}${diff}`;
+}
+
 function channelCard(c, i) {
   const models = Object.entries(c.models || {}).map(([k, v]) => k + ' → ' + v).join(' · ');
   return `<article class="card">
@@ -268,10 +281,12 @@ function channelCard(c, i) {
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
       <div><dt>模型映射</dt><dd class="wrap">${esc(models) || '未配置'}</dd></div>
+      <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
     </dl>
     <div class="card-actions">
       <button class="btn small" data-action="edit" data-index="${i}">编辑</button>
+      <button class="btn small ghost" data-action="catalog" data-index="${i}" data-name="${esc(c.name)}">拉取模型</button>
       <button class="btn small ghost" data-action="toggle" data-index="${i}">${c.enabled === false ? '启用' : '停用'}</button>
       <button class="btn small ghost" data-action="reset" data-name="${esc(c.name)}">解除冷却</button>
       <button class="btn small danger" data-action="delete" data-index="${i}">删除</button>
@@ -340,7 +355,9 @@ function renderSummary() {
 function renderStatus() {
   const s = state.snapshot;
   if (!s) return;
-  $('status-meta').textContent = `粘性会话 ${s.sticky_sessions} · 每 5 秒自动刷新 · 更新于 ${new Date().toLocaleTimeString()}`;
+  const catalogText = s.catalog_refresh_hours
+    ? `模型目录每 ${s.catalog_refresh_hours} 小时自动检查` : '模型目录自动检查已停用';
+  $('status-meta').textContent = `粘性会话 ${s.sticky_sessions} · ${catalogText} · 每 5 秒自动刷新 · 更新于 ${new Date().toLocaleTimeString()}`;
   $('status-body').innerHTML = s.channels.map((c) => {
     const kind = c.blocked ? 'bad' : (c.cooling ? 'warn' : 'ok');
     const label = c.blocked ? '已停用' : (c.cooling ? '冷却中' : '可用');
@@ -438,6 +455,7 @@ function switchTab(name) {
     loadState().catch(() => {});
     loadUsage().catch((e) => toast(e.message, 'bad'));
     loadRequests().catch(() => {});
+    loadMaintenance().catch(() => {});
   }
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
@@ -941,6 +959,107 @@ function renderRequests() {
 }
 
 $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));
+
+async function loadMaintenance() {
+  state.maintenance = await api('/api/maintenance');
+  renderMaintenance();
+}
+
+const MAINT_TRIGGER = { manual: '手动运行', scheduled: '定时运行', first_run: '启动后首次运行' };
+
+function maintItem(tag, cls, html) {
+  return `<div class="maint-item"><span class="tag ${cls}">${tag}</span><span>${html}</span></div>`;
+}
+
+function renderMaintenance() {
+  const data = state.maintenance;
+  if (!data) return;
+  const llm = data.llm_model
+    ? esc(data.llm_model) + (data.llm_available ? '' : '（暂无可用渠道承担）')
+    : '未配置';
+  $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
+    + ` · LLM 分析：${llm} · 由 defaults.maintenance_hours / maintenance_model 控制`;
+  const reports = data.reports || [];
+  const body = $('maintenance-body');
+  if (!reports.length) {
+    body.innerHTML = '<p class="sub-note">还没有运维报告。点「立即运行」会拉取各渠道模型目录，'
+      + '把目录确证的变更（下架模型清理、auto 重指）自动应用到配置（先备份），'
+      + '新模型与限流建议留给你一键采纳，密钥失效只报告。</p>';
+    return;
+  }
+  body.innerHTML = reports.map((r) => {
+    const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString() : '';
+    const head = `<div class="maint-head"><strong>${esc(when)}</strong>`
+      + `<span class="sub-note">${esc(MAINT_TRIGGER[r.trigger] || r.trigger || '')}`
+      + ` · ${esc(r.channels_total ?? 0)} 个渠道</span></div>`;
+    const rows = [];
+    (r.applied || []).forEach((a) => {
+      const detail = a.action === 'repoint_auto'
+        ? `auto：<code>${esc(a.from)}</code> → <code>${esc(a.to)}</code>`
+        : (a.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
+      rows.push(maintItem('自动应用', 'active',
+        `<strong>${esc(a.channel)}</strong> ${esc(a.reason || '')}：${detail}`));
+    });
+    (r.suggestions || []).forEach((s) => {
+      const btn = s.kind === 'add_model' && (s.models || []).length
+        ? ` <button class="btn small" data-apply="${esc(JSON.stringify(s.models))}"`
+          + ` data-channel="${esc(s.channel)}">一键采纳</button>` : '';
+      rows.push(maintItem(s.source === 'llm' ? 'AI 建议' : '建议', 'unknown',
+        `${s.channel ? `<strong>${esc(s.channel)}</strong> ` : ''}${esc(s.message)}${btn}`));
+    });
+    (r.alerts || []).forEach((a) => {
+      rows.push(maintItem('注意', 'expired',
+        `${a.channel ? `<strong>${esc(a.channel)}</strong> ` : ''}${esc(a.message)}`));
+    });
+    (r.llm_notes || []).forEach((n) => {
+      rows.push(maintItem('AI', 'active', `<span class="sub-note">${esc(n)}</span>`));
+    });
+    if (r.llm_error) {
+      rows.push(maintItem('AI', 'expired', `LLM 分析失败：${esc(r.llm_error)}`));
+    }
+    return `<div class="maint-report">${head}`
+      + (rows.length ? rows.join('') : '<p class="sub-note">本次运行未发现需要处理的变更。</p>')
+      + '</div>';
+  }).join('');
+}
+
+$('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+
+$('btn-run-maintenance').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '运行中…';
+  try {
+    await api('/api/maintenance/run', { method: 'POST' });
+    await loadMaintenance();
+    toast('运维分析完成');
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
+
+$('maintenance-body').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-apply]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const models = JSON.parse(b.dataset.apply);
+    const r = await api('/api/maintenance/apply',
+      { method: 'POST', body: { channel: b.dataset.channel, models } });
+    toast(`已为渠道 ${r.channel} 添加 ${r.models.length} 个模型映射`);
+    await loadConfig();
+    await loadState();
+    await loadMaintenance();
+  } catch (err) {
+    toast(err.message, 'bad');
+    b.disabled = false;
+  }
+});
+
 $('btn-admin-key').onclick = async () => {
   const answer = await askText({
     title: '管理密钥',
@@ -1096,6 +1215,66 @@ function testChannelEditor() {
   return runProbe($('editor-test'), [draftChannelFromEditor()], model);
 }
 
+async function fetchChannelModels() {
+  const button = $('editor-fetch-models');
+  const list = $('catalog-list');
+  if (!button || !list) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '拉取中…';
+  list.hidden = true;
+  list.innerHTML = '';
+  try {
+    const result = await api('/api/probe/models',
+      { method: 'POST', body: { channel: draftChannelFromEditor() } });
+    if (!result.ok) {
+      throw new Error((result.error || '拉取失败') + (result.hint ? ' — ' + result.hint : ''));
+    }
+    renderCatalogList(result.models || []);
+    toast(`拉取成功：${result.count} 个模型`);
+  } catch (err) {
+    list.hidden = false;
+    list.innerHTML = `<div class="hint">${esc(err.message)}</div>`;
+    toast(err.message, 'bad');
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function renderCatalogList(models) {
+  const list = $('catalog-list');
+  if (!list) return;
+  if (!models.length) {
+    list.hidden = false;
+    list.innerHTML = '<div class="hint">上游返回了空清单，请确认该密钥有模型权限</div>';
+    return;
+  }
+  const current = parseModels($('editor-form').elements.namedItem('models').value);
+  list.hidden = false;
+  list.innerHTML = models.map((m) => {
+    const checked = m in current && current[m] === m;
+    return `<label class="pick"><input type="checkbox" value="${esc(m)}" ${checked ? 'checked' : ''}><span><strong>${esc(m)}</strong></span></label>`;
+  }).join('') +
+  `<div class="test-row"><button type="button" class="btn small" id="catalog-apply">把勾选写入模型映射</button><span class="hint">保留 auto=、*=* 与别名映射，勾选的模型按原名写入</span></div>`;
+  $('catalog-apply').onclick = applyCatalogSelection;
+}
+
+function applyCatalogSelection() {
+  const f = $('editor-form');
+  const modelsField = f.elements.namedItem('models');
+  const current = parseModels(modelsField.value);
+  const keep = Object.entries(current).filter(([k, v]) =>
+    k === 'auto' || k === '*' || k !== v);
+  const picked = Array.from(
+    $('catalog-list').querySelectorAll('input[type="checkbox"]:checked'),
+    (node) => node.value);
+  const merged = Object.fromEntries(keep);
+  picked.forEach((m) => { merged[m] = m; });
+  modelsField.value = serializeModels(merged);
+  toast(`已写入 ${picked.length} 个模型，记得保存渠道`);
+}
+
 function testSubscriptionEditor() {
   const f = $('sub-form');
   const names = pickedChannels(f);
@@ -1131,6 +1310,11 @@ function openChannelEditor(index) {
         ${field('TPM', 'tpm', rate.tpm ?? '', { type: 'number' })}
         ${field('TPD', 'tpd', rate.tpd ?? '', { type: 'number' })}
         ${field('模型映射（每行 exposed=wire，*=* 表示透传）', 'models', serializeModels(c.models), { wide: true, textarea: true })}
+        <div class="field wide catalog-row">
+          <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
+          <small class="hint">按密钥请求上游 /models；勾选要暴露的模型后写入模型映射</small>
+        </div>
+        <div id="catalog-list" class="channel-picker" hidden></div>
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
       </div>
       <div class="test-row">
@@ -1145,6 +1329,7 @@ function openChannelEditor(index) {
     </form>`);
   $('editor-cancel').onclick = closeModal;
   $('editor-test').onclick = testChannelEditor;
+  $('editor-fetch-models').onclick = fetchChannelModels;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
 }
 
@@ -1301,6 +1486,24 @@ function bindEvents() {
     const i = Number(b.dataset.index);
     const action = b.dataset.action;
     if (action === 'edit') openChannelEditor(i);
+    if (action === 'catalog') {
+      const name = b.dataset.name;
+      const label = b.textContent;
+      b.disabled = true; b.textContent = '拉取中…';
+      try {
+        const r = await api('/api/probe/models',
+          { method: 'POST', body: { channel: { name } } });
+        if (!r.ok) throw new Error((r.error || '拉取失败') + (r.hint ? ' — ' + r.hint : ''));
+        const ch = r.changes || {};
+        const diff = (ch.added?.length || ch.removed?.length)
+          ? `（新增 ${ch.added?.length || 0} / 移除 ${ch.removed?.length || 0}）` : '';
+        toast(`已拉取 ${r.count} 个模型${diff}`);
+        await loadState();
+      } catch (err) {
+        toast(err.message, 'bad');
+        b.disabled = false; b.textContent = label;
+      }
+    }
     if (action === 'toggle') {
       state.config.channels[i].enabled = state.config.channels[i].enabled === false;
       markDirty(); renderChannels();
@@ -1411,6 +1614,7 @@ async function boot() {
     await loadUsage();
     await loadNotifications();
     await loadRequests();
+    await loadMaintenance().catch(() => {});
     $('report-month').value = todayISO().slice(0, 7);
     await loadReport();
   } catch (err) {

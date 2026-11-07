@@ -173,6 +173,19 @@
             </table>
           </div>
         </div>
+        <div class="card settings-card" style="margin-top:18px">
+          <div class="card-top">
+            <div>
+              <h3>自动运维</h3>
+              <p class="sub-note" id="maintenance-note">每日分析渠道模型目录变化：目录确证的变更自动应用，新模型与限流建议一键采纳，密钥失效只报告</p>
+            </div>
+            <div class="actions">
+              <button class="btn small ghost" id="btn-refresh-maintenance">刷新</button>
+              <button class="btn small" id="btn-run-maintenance">立即运行</button>
+            </div>
+          </div>
+          <div id="maintenance-body"></div>
+        </div>
       </section>
 
       <section class="panel" id="panel-subscriptions">

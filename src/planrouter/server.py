@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ from urllib.request import Request, urlopen
 
 from . import subscriptions as subs
 from . import ui
+from . import maintenance as maint
 from .audit import RequestLog
 from .core import (
     ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
@@ -24,7 +26,7 @@ from .core import (
 )
 from .notifier import ReminderService
 from .persistence import StatePersistence
-from .probe import MAX_CHANNELS, probe_channel
+from .probe import MAX_CHANNELS, probe_channel, probe_models
 from .quota import parse_quota, quota_exhaustion_wait
 from .report import build_report
 from .responses import ResponsesAdapter, to_chat_request
@@ -143,6 +145,87 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     return merged
 
 
+class CatalogRefresher:
+    """Background sweep: re-fetch every channel's upstream model catalog.
+
+    Runs once shortly after startup, then every
+    defaults.catalog_refresh_hours (re-read each cycle so hot-reloaded
+    config takes effect; 0 still means enabled — the sweep simply uses the
+    default interval until restart disables it).
+    """
+
+    FIRST_SWEEP_DELAY = 30.0
+
+    def __init__(self, app: "App"):
+        self.app = app
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="planrouter-catalog")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
+
+    def _interval(self) -> float:
+        hours = self.app.config.defaults.catalog_refresh_hours
+        return max(1.0, float(hours or 24)) * 3600.0
+
+    def _loop(self) -> None:
+        if self._stop.wait(self.FIRST_SWEEP_DELAY):
+            return
+        self.app.refresh_all_catalogs()
+        while not self._stop.wait(self._interval()):
+            self.app.refresh_all_catalogs()
+
+
+class MaintenanceRunner:
+    """Daily self-maintenance: catalog-confirmed auto-fixes + free-quota LLM analysis.
+
+    Runs once shortly after startup (after the first catalog sweep), then
+    every defaults.maintenance_hours. One run = refresh catalogs, apply
+    catalog-confirmed changes (with a config backup), optionally ask the
+    maintenance LLM for advisory notes, and record a report.
+    """
+
+    FIRST_RUN_DELAY = 120.0
+    MAX_REPORTS = 20
+
+    def __init__(self, app: "App"):
+        self.app = app
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="planrouter-maintenance")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
+
+    def _interval(self) -> float:
+        hours = self.app.config.defaults.maintenance_hours
+        return max(1.0, float(hours or 24)) * 3600.0
+
+    def _loop(self) -> None:
+        if self._stop.wait(self.FIRST_RUN_DELAY):
+            return
+        try:
+            self.app.run_maintenance("scheduled")
+        except Exception:  # maintenance must never kill the gateway
+            pass
+        while not self._stop.wait(self._interval()):
+            try:
+                self.app.run_maintenance("scheduled")
+            except Exception:
+                pass
+
+
 class App:
     def __init__(
         self,
@@ -174,6 +257,10 @@ class App:
             lambda: self.subscriptions, lambda: self.subscription_settings,
         ) if notifications_file else None
         self.audit = RequestLog(audit_file) if audit_file else None
+        self.catalog_refresher: CatalogRefresher | None = None
+        self.maintenance_runner: "MaintenanceRunner | None" = None
+        self.maintenance_reports: list[dict] = []
+        self.maintenance_lock = threading.Lock()
 
     def log_request(self, **fields) -> None:
         if self.audit:
@@ -197,8 +284,18 @@ class App:
             self.usage.start()
         if self.notifier:
             self.notifier.start()
+        if self.config.defaults.catalog_refresh_hours:
+            self.catalog_refresher = CatalogRefresher(self)
+            self.catalog_refresher.start()
+        if self.config.defaults.maintenance_hours:
+            self.maintenance_runner = MaintenanceRunner(self)
+            self.maintenance_runner.start()
 
     def stop_background(self) -> None:
+        if self.maintenance_runner:
+            self.maintenance_runner.stop()
+        if self.catalog_refresher:
+            self.catalog_refresher.stop()
         if self.notifier:
             self.notifier.stop()
         if self.usage:
@@ -360,6 +457,8 @@ class App:
                 if name in new.states:
                     new.states[name] = state
             new.sessions = old.sessions
+            new.catalogs = old.catalogs
+            new.rr_cursor = old.rr_cursor
             self.config = config
             self.store = new
 
@@ -412,12 +511,12 @@ class App:
                     "不计入冷却、用量与审计，可能产生极少量费用",
         }
 
-    def _append_probe_log(self, results: list[dict]) -> None:
-        """Persist one JSON line per probe batch; secrets are already masked."""
+    def _append_probe_log(self, results: list[dict], kind: str = "probe") -> None:
+        """Persist one JSON line per probe/catalog batch; secrets are masked."""
         if not self.config_path:
             return
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
-                 "results": results}
+                 "kind": kind, "results": results}
         try:
             path = self.config_path.parent / "probe.jsonl"
             with path.open("a", encoding="utf-8") as fh:
@@ -425,12 +524,222 @@ class App:
         except OSError:
             pass  # logging must never break the console
 
+    def probe_channel_models(self, channel) -> dict:
+        """Fetch one channel's upstream model list for the console.
+
+        `channel` may be a full draft (unsaved form) or a bare name. Secrets
+        marked *** are merged from the saved config; a successful fetch for a
+        saved channel name is recorded in the channel's catalog.
+        """
+        if not isinstance(channel, dict):
+            raise ValueError("channel 必须是对象")
+        name = channel.get("name")
+        saved = {
+            c.get("name"): c for c in (self.raw.get("channels") or [])
+            if isinstance(c, dict)
+        }
+        base = saved.get(name, {}) if isinstance(name, str) else {}
+        if isinstance(name, str) and name and name not in saved and not base.get("base_url") \
+                and not channel.get("base_url"):
+            return {"ok": False, "name": name,
+                    "error": "本地配置中找不到该渠道",
+                    "hint": "请先保存渠道，或在表单里填好 base_url 后再拉取"}
+        merged = merge_secrets({"channels": [{**base, **channel}]}, self.raw)["channels"][0]
+        if not merged.get("models"):
+            merged["models"] = {"auto": "*"}  # catalog fetch does not need a mapping
+        result = probe_models(merged)
+        if result.get("ok") and isinstance(name, str) and self.config.channel(name):
+            self.store.record_catalog(name, result["models"], result["endpoint"])
+            view = self.store.catalog_view(name)
+            result["catalog"] = view
+            result["changes"] = view["changes"]
+        self._append_probe_log([result], kind="catalog")
+        return result
+
+    def refresh_all_catalogs(self) -> list[dict]:
+        """Re-fetch every enabled channel's upstream model catalog."""
+        results = []
+        for channel in list(self.config.channels):
+            if not channel.enabled or not channel.api_key:
+                continue
+            try:
+                results.append(self.probe_channel_models({"name": channel.name}))
+            except Exception as exc:  # one broken channel must not stop the sweep
+                results.append({"ok": False, "name": channel.name,
+                                "error": repr(exc)[:200]})
+        return results
+
+    # ---------------------------------------------------------- maintenance
+    def run_maintenance(self, trigger: str = "manual") -> dict:
+        """One maintenance pass: refresh catalogs, auto-fix, analyse, report.
+
+        Only catalog-confirmed changes are applied automatically (after a
+        config backup); LLM output and quota heuristics become suggestions
+        for the console. Never raises: failures land in the report.
+        """
+        refresh = self.refresh_all_catalogs()
+        with self.store.lock:
+            catalogs = {name: dict(entry) for name, entry in self.store.catalogs.items()}
+            states = self.store.snapshot()["channels"]
+        report = maint.analyze(self.config, catalogs, states, refresh)
+
+        if report["patch"]:
+            self._backup_config("maintenance")
+            raw = copy.deepcopy(self.raw)
+            for channel in raw.get("channels") or []:
+                if isinstance(channel, dict) and channel.get("name") in report["patch"]:
+                    channel["models"] = report["patch"][channel["name"]]
+            try:
+                self.apply_config(raw)
+            except (ValueError, OSError) as exc:
+                report["patch"] = {}
+                report["alerts"].append({
+                    "channel": "", "kind": "apply_failed",
+                    "message": f"自动应用变更失败，配置已回读未提交：{exc}",
+                })
+
+        model = self.config.defaults.maintenance_model
+        if model:
+            try:
+                prompt = maint.build_prompt(self.config, catalogs, states, report)
+                reply = self._maintenance_llm_call(model, prompt)
+                parsed = maint.parse_llm_output(reply)
+                report["llm_model"] = model
+                report["llm_notes"] = parsed["notes"]
+                report["suggestions"].extend(parsed["suggestions"])
+            except Exception as exc:  # LLM analysis is best-effort
+                report["llm_error"] = str(exc)[:200]
+
+        report["trigger"] = trigger
+        report["finished_at"] = time.time()
+        report["channels_total"] = len(self.config.channels)
+        self._record_maintenance(report)
+        return report
+
+    def _maintenance_llm_call(self, model: str, prompt: str) -> str:
+        """Route the analysis prompt through the gateway itself.
+
+        The request is an ordinary client request, so it lands on the route's
+        (preferably free) channels with normal failover — free quota maintains
+        the free pool.
+        """
+        listen = self.config.listen
+        host = "127.0.0.1" if listen.host in ("0.0.0.0", "::", "") else listen.host
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1200,
+            "temperature": 0.2,
+            "stream": False,
+        }
+        headers = {"Content-Type": "application/json"}
+        if listen.api_key:
+            headers["Authorization"] = f"Bearer {listen.api_key}"
+        req = Request(
+            f"http://{host}:{listen.port}/v1/chat/completions",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers=headers, method="POST",
+        )
+        with urlopen(req, timeout=max(60, self.config.defaults.timeout)) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"]
+
+    def _backup_config(self, tag: str) -> None:
+        if not self.config_path or not self.config_path.is_file():
+            return
+        try:
+            backup = self.config_path.with_name(self.config_path.name + f".{tag}.bak")
+            backup.write_bytes(self.config_path.read_bytes())
+        except OSError:
+            pass  # a failed backup must not block maintenance
+
+    def _record_maintenance(self, report: dict) -> None:
+        """Keep the last reports in memory and append one JSON line to disk."""
+        with self.maintenance_lock:
+            self.maintenance_reports.append(report)
+            del self.maintenance_reports[:-MaintenanceRunner.MAX_REPORTS]
+        if not self.config_path:
+            return
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                 **{k: v for k, v in report.items() if k != "patch"}}
+        try:
+            path = self.config_path.parent / "maintenance.jsonl"
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # logging must never break maintenance
+
+    def maintenance_payload(self) -> dict:
+        with self.maintenance_lock:
+            reports = [
+                {k: v for k, v in report.items() if k != "patch"}
+                for report in self.maintenance_reports
+            ]
+        return {
+            "enabled": bool(self.config.defaults.maintenance_hours),
+            "hours": self.config.defaults.maintenance_hours,
+            "llm_model": self.config.defaults.maintenance_model,
+            "llm_available": bool(
+                self.config.defaults.maintenance_model
+                and any(c.enabled for c in self.config.channels)),
+            "reports": list(reversed(reports)),
+        }
+
+    def apply_maintenance_suggestion(self, payload) -> dict:
+        """One-click apply for `add_model` suggestions: map the model verbatim."""
+        if not isinstance(payload, dict):
+            raise ValueError("body 必须是对象")
+        channel_name = payload.get("channel")
+        models = payload.get("models")
+        if isinstance(models, str):
+            models = [models]
+        if (not isinstance(channel_name, str) or not channel_name.strip()
+                or not isinstance(models, list) or not models):
+            raise ValueError("需要 channel 与 models（模型名数组）")
+        if any(not isinstance(m, str) or not m.strip() for m in models):
+            raise ValueError("模型名必须是非空字符串")
+        if self.config.channel(channel_name) is None:
+            raise ValueError(f"渠道 {channel_name} 不存在")
+        raw = copy.deepcopy(self.raw)
+        for channel in raw.get("channels") or []:
+            if isinstance(channel, dict) and channel.get("name") == channel_name:
+                mapping = channel.get("models") or {}
+                for m in models:
+                    mapping[m.strip()] = m.strip()
+                channel["models"] = mapping
+                break
+        self.apply_config(raw)
+        return {"ok": True, "channel": channel_name,
+                "models": [m.strip() for m in models]}
+
+    def _apply_catalog_filter(self, candidates, decision) -> tuple[list, list]:
+        """Soft validation of candidates against recorded upstream catalogs.
+
+        A catalog is a *known list*, not a whitelist: unknown names are still
+        passed through, but a channel whose catalog provably lacks the wire
+        model is skipped to pre-empt a doomed upstream call. Internal
+        scheduling (auto) is exempt — the wire model there is the channel's
+        own configured mapping, not a client-supplied name.
+        """
+        if decision.mode not in ("exact", "fallback"):
+            return candidates, []
+        kept, skipped = [], []
+        for channel, wire in candidates:
+            models = (self.store.catalogs.get(channel.name) or {}).get("models") or []
+            if models and wire not in models:
+                skipped.append({"channel": channel.name, "wire_model": wire,
+                                "reason": "model_not_in_catalog"})
+                continue
+            kept.append((channel, wire))
+        return kept, skipped
+
     def ui_state(self) -> dict:
         snap = self.store.snapshot()
         blocked = self.blocked_channels()
         channels = []
         for channel in self.config.channels:
             item = dict(snap["channels"].get(channel.name, {}))
+            catalog = self.store.catalog_view(channel.name)
             item.update({
                 "name": channel.name,
                 "protocol": channel.protocol,
@@ -439,6 +748,11 @@ class App:
                 "cooldown_minutes": channel.cooldown_minutes,
                 "blocked": channel.name in blocked,
                 "blocked_reason": blocked.get(channel.name, ""),
+                "catalog": {
+                    "fetched_at": catalog["fetched_at"],
+                    "count": catalog["count"],
+                    "changes": catalog["changes"],
+                },
             })
             channels.append(item)
         return {
@@ -450,6 +764,26 @@ class App:
             "subscriptions": self.subscription_summary(),
             "subscription_settings": self.subscription_settings,
             "blocked_channels": blocked,
+            "catalog_refresh_hours": self.config.defaults.catalog_refresh_hours,
+            "maintenance": {
+                "hours": self.config.defaults.maintenance_hours,
+                "llm_model": self.config.defaults.maintenance_model,
+                "runs": len(self.maintenance_reports),
+                "last": self._maintenance_summary(),
+            },
+        }
+
+    def _maintenance_summary(self) -> dict | None:
+        if not self.maintenance_reports:
+            return None
+        report = self.maintenance_reports[-1]
+        return {
+            "finished_at": report.get("finished_at"),
+            "trigger": report.get("trigger"),
+            "applied": len(report.get("applied") or []),
+            "suggestions": len(report.get("suggestions") or []),
+            "alerts": len(report.get("alerts") or []),
+            "llm_error": report.get("llm_error") or "",
         }
 
     # ------------------------------------------------------------------ auth
@@ -641,6 +975,11 @@ class App:
         )
         candidates = [(channel, wire) for channel, wire in candidates
                       if channel.name not in blocked]
+        candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        if decision.mode == "fallback":
+            log_base["model_unverified"] = not self.store.catalog_knows(decision.requested)
+            if log_base["model_unverified"]:
+                audit["X-Routed-Model-Unverified"] = "1"
         if decision.mode == "exact" and candidates and not any(
                 channel.name in decision.exact_channels for channel, _ in candidates):
             audit["X-Routed-Model-Mode"] = "fallback"
@@ -649,13 +988,16 @@ class App:
             log_base["reason"] = "exact-channels-unavailable"
         if not candidates:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            error = {
+                "message": "no healthy channel for this route/model",
+                "route": f"{protocol}:{decision.hint}",
+                "model": model,
+                "blocked_channels": blocked,
+            }
+            if catalog_skipped:
+                error["catalog_skipped"] = catalog_skipped
             _json(h, 503, {
-                "error": {
-                    "message": "no healthy channel for this route/model",
-                    "route": f"{protocol}:{decision.hint}",
-                    "model": model,
-                    "blocked_channels": blocked,
-                },
+                "error": error,
                 "channels": self.store.snapshot()["channels"],
             }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
             return

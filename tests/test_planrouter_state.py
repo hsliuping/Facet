@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
-from planrouter.core import parse_config
+from planrouter.core import StateStore, parse_config
 from planrouter.persistence import StatePersistence, capture, restore
 from planrouter.server import App
 
@@ -26,6 +26,71 @@ def config_dict() -> dict:
             {"name": "default", "protocol": "anthropic", "channels": ["b"]},
         ],
     }
+
+
+def rotation_config() -> dict:
+    return {
+        "listen": {"host": "127.0.0.1", "port": 0},
+        "channels": [
+            {"name": "a", "protocol": "openai", "base_url": "http://127.0.0.1:9201",
+             "models": {"auto": "model-a"}},
+            {"name": "b", "protocol": "openai", "base_url": "http://127.0.0.1:9202",
+             "models": {"auto": "model-b"}},
+            {"name": "c", "protocol": "openai", "base_url": "http://127.0.0.1:9203",
+             "models": {"auto": "model-c"}, "priority": 200},
+            {"name": "claude", "protocol": "anthropic",
+             "base_url": "http://127.0.0.1:9204", "models": {"auto": "claude-x"}},
+        ],
+        "routes": [
+            {"name": "default", "protocol": "openai", "channels": ["a", "b", "c"]},
+            {"name": "default", "protocol": "anthropic", "channels": ["claude"]},
+        ],
+    }
+
+
+class RoundRobinTests(unittest.TestCase):
+    """New sessions rotate the starting channel inside the top-priority tier."""
+
+    def setUp(self):
+        self.store = StateStore(parse_config(rotation_config()))
+
+    def pick(self, session):
+        picked, route = self.store.pick("openai", "default", "some-model",
+                                        session, now=1000.0)
+        self.assertIsNotNone(route)
+        return [channel.name for channel, _ in picked]
+
+    def test_new_sessions_rotate_within_top_tier(self):
+        self.assertEqual(self.pick("s1"), ["a", "b", "c"])
+        self.assertEqual(self.pick("s2"), ["b", "a", "c"])
+        self.assertEqual(self.pick("s3"), ["a", "b", "c"])
+        self.assertEqual(self.pick("s4"), ["b", "a", "c"])
+
+    def test_low_priority_channel_keeps_tail_position(self):
+        for i in range(4):
+            self.assertEqual(self.pick(f"s{i}")[-1], "c")
+
+    def test_sticky_session_skips_rotation(self):
+        self.pick("s1")  # cursor advances to 1
+        self.store.bind_session("s2", "b", 1000.0)
+        self.assertEqual(self.pick("s2"), ["b", "a", "c"])
+        self.assertEqual(self.store.rr_cursor.get("openai:default"), 1)
+
+    def test_single_tier_channel_is_untouched(self):
+        raw = rotation_config()
+        raw["routes"][0]["channels"] = ["a", "c"]
+        store = StateStore(parse_config(raw))
+        picked, _ = store.pick("openai", "default", "some-model", "s1", now=1000.0)
+        self.assertEqual([c.name for c, _ in picked], ["a", "c"])
+        self.assertEqual(store.rr_cursor, {})
+
+    def test_cursor_survives_capture_restore(self):
+        self.pick("s1")  # cursor advances to 1
+        snapshot = capture(self.store, 1000.0)
+        revived = StateStore(parse_config(rotation_config()))
+        restore(revived, snapshot, 1000.0)
+        picked, _ = revived.pick("openai", "default", "some-model", "s9", now=1000.0)
+        self.assertEqual([c.name for c, _ in picked], ["b", "a", "c"])
 
 
 class PersistenceTests(unittest.TestCase):

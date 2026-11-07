@@ -13,7 +13,10 @@
     "max_cooldown_hours": 168,
     "timeout": 15,
     "track_stream_usage": true,
-    "preempt_quota": true
+    "preempt_quota": true,
+    "catalog_refresh_hours": 24,
+    "maintenance_hours": 24,
+    "maintenance_model": ""
   },
   "models": {
     "branded": {
