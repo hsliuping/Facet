@@ -213,6 +213,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .tag.expiring { background: rgba(224, 166, 58, .14); color: var(--warn); }
 .tag.expired { background: rgba(242, 99, 107, .14); color: var(--bad); }
 .tag.unknown { background: rgba(138, 155, 176, .14); color: var(--muted); }
+.tag.free { background: rgba(63, 191, 120, .14); color: var(--ok); }
+.tag.paid { background: rgba(91, 157, 255, .16); color: var(--accent); }
 .days-left { font-weight: 650; }
 .days-left.expiring { color: var(--warn); }
 .days-left.expired { color: var(--bad); }

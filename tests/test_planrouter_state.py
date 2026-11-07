@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planrouter.core import StateStore, parse_config
 from planrouter.persistence import StatePersistence, capture, restore
-from planrouter.server import App
+from planrouter.server import App, channel_tier
 
 
 def config_dict() -> dict:
@@ -144,6 +144,36 @@ class PersistenceTests(unittest.TestCase):
             persistence.flush()
             second = json.loads(state_path.read_text(encoding="utf-8"))["saved_at"]
             self.assertEqual(first, second)
+
+
+class TierTests(unittest.TestCase):
+    """Channel tier: explicit free/paid field, inferred from subscriptions."""
+
+    def test_parse_tier_accepts_free_and_paid(self):
+        raw = rotation_config()
+        raw["channels"][0]["tier"] = "free"
+        raw["channels"][1]["tier"] = "Paid "
+        config = parse_config(raw)
+        self.assertEqual(config.channels[0].tier, "free")
+        self.assertEqual(config.channels[1].tier, "paid")
+
+    def test_parse_tier_rejects_unknown_value(self):
+        raw = rotation_config()
+        raw["channels"][0]["tier"] = "expensive"
+        with self.assertRaises(ValueError):
+            parse_config(raw)
+
+    def test_channel_tier_inference(self):
+        raw = rotation_config()
+        raw["channels"][0]["tier"] = "free"
+        config = parse_config(raw)
+        by_name = {c.name: c for c in config.channels}
+        subs = [{"name": "plan", "price": 39, "channels": ["b"]},
+                {"name": "trial", "price": 0, "channels": ["c"]}]
+        self.assertEqual(channel_tier(by_name["a"], subs), "free")  # explicit wins
+        self.assertEqual(channel_tier(by_name["b"], subs), "paid")  # priced sub
+        self.assertEqual(channel_tier(by_name["c"], subs), "")      # zero price
+        self.assertEqual(channel_tier(by_name["claude"], subs), "")  # unlinked
 
 
 if __name__ == "__main__":

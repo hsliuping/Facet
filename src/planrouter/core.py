@@ -183,6 +183,7 @@ class Channel:
     timeout: int
     enabled: bool = True
     upstream_path: str | None = None
+    tier: str = ""  # "", "free" or "paid"; empty infers from linked subscriptions
 
 
 @dataclass(frozen=True)
@@ -418,6 +419,9 @@ def parse_config(raw: dict) -> Config:
                     f"channel {name}: upstream_path must be a path starting with /"
                 )
             upstream_path = upstream_path.rstrip("/") or "/"
+        tier = str(item.get("tier") or "").strip().lower()
+        if tier not in ("", "free", "paid"):
+            raise ValueError(f'channel {name}: tier must be "", "free" or "paid"')
         models = item.get("models") or {}
         if not models:
             raise ValueError(f"channel {name}: models mapping is required")
@@ -438,6 +442,7 @@ def parse_config(raw: dict) -> Config:
             timeout=int(item.get("timeout", defaults.timeout)),
             enabled=bool(item.get("enabled", True)),
             upstream_path=upstream_path,
+            tier=tier,
         ))
     if not channels:
         raise ValueError("at least one channel is required")

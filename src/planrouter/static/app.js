@@ -257,6 +257,19 @@ function parseModels(text) {
   return out;
 }
 
+function tierBadge(tier) {
+  if (tier === 'free') return '<span class="tag free">免费</span>';
+  if (tier === 'paid') return '<span class="tag paid">收费</span>';
+  return '';
+}
+
+// Preferred: tier from the runtime snapshot (explicit field or inferred from
+// subscriptions); fallback to the raw config value before the first load.
+function tierFor(name, fallback) {
+  const snap = (state.snapshot?.channels || []).find((x) => x.name === name);
+  return snap ? snap.tier : (fallback || '');
+}
+
 function catalogSummary(name) {
   const snap = (state.snapshot?.channels || []).find((c) => c.name === name);
   const cat = snap && snap.catalog;
@@ -272,7 +285,7 @@ function channelCard(c, i) {
   const models = Object.entries(c.models || {}).map(([k, v]) => k + ' → ' + v).join(' · ');
   return `<article class="card">
     <div class="card-top">
-      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3></div>
+      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${tierBadge(tierFor(c.name, c.tier))}</div>
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
     </div>
     <dl>
@@ -374,7 +387,7 @@ function renderStatus() {
     const remain = c.cooling
       ? `${Math.ceil(c.cooling_seconds / 60)} 分钟<div class="bar"><span style="width:${pct}%"></span></div>` : '—';
     return `<tr>
-      <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong><br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
+      <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong> ${tierBadge(c.tier)}<br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
       <td>${label}${reason ? '<br><small>' + esc(reason) + '</small>' : ''}${quotaText ? `<br><span class="sub-note ${quotaLow ? 'quota-low' : ''}">${esc(quotaText)}</span>` : ''}</td>
       <td>${remain}</td>
       <td>${c.total_requests} / ${c.served_requests} / ${c.failed_requests}</td>
@@ -980,6 +993,7 @@ function renderMaintenance() {
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
     + ` · LLM 分析：${llm} · 由 defaults.maintenance_hours / maintenance_model 控制`;
   const reports = data.reports || [];
+  const tierTag = (name) => tierBadge(tierFor(name));
   const body = $('maintenance-body');
   if (!reports.length) {
     body.innerHTML = '<p class="sub-note">还没有运维报告。点「立即运行」会拉取各渠道模型目录，'
@@ -998,18 +1012,18 @@ function renderMaintenance() {
         ? `auto：<code>${esc(a.from)}</code> → <code>${esc(a.to)}</code>`
         : (a.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
       rows.push(maintItem('自动应用', 'active',
-        `<strong>${esc(a.channel)}</strong> ${esc(a.reason || '')}：${detail}`));
+        `<strong>${esc(a.channel)}</strong> ${tierTag(a.channel)} ${esc(a.reason || '')}：${detail}`));
     });
     (r.suggestions || []).forEach((s) => {
       const btn = s.kind === 'add_model' && (s.models || []).length
         ? ` <button class="btn small" data-apply="${esc(JSON.stringify(s.models))}"`
           + ` data-channel="${esc(s.channel)}">一键采纳</button>` : '';
       rows.push(maintItem(s.source === 'llm' ? 'AI 建议' : '建议', 'unknown',
-        `${s.channel ? `<strong>${esc(s.channel)}</strong> ` : ''}${esc(s.message)}${btn}`));
+        `${s.channel ? `<strong>${esc(s.channel)}</strong>${tierTag(s.channel)} ` : ''}${esc(s.message)}${btn}`));
     });
     (r.alerts || []).forEach((a) => {
       rows.push(maintItem('注意', 'expired',
-        `${a.channel ? `<strong>${esc(a.channel)}</strong> ` : ''}${esc(a.message)}`));
+        `${a.channel ? `<strong>${esc(a.channel)}</strong>${tierTag(a.channel)} ` : ''}${esc(a.message)}`));
     });
     (r.llm_notes || []).forEach((n) => {
       rows.push(maintItem('AI', 'active', `<span class="sub-note">${esc(n)}</span>`));
@@ -1288,7 +1302,7 @@ function openChannelEditor(index) {
   state.editing = index;
   const c = index >= 0 ? state.config.channels[index] : {
     name: '', protocol: 'openai', base_url: '', api_key: '', models: { auto: '' },
-    priority: 100, cooldown_minutes: 300, enabled: true, rate: {},
+    priority: 100, cooldown_minutes: 300, enabled: true, rate: {}, tier: '',
   };
   const rate = c.rate || {};
   openModal(index >= 0 ? '编辑渠道' : '新增渠道', `
@@ -1299,6 +1313,12 @@ function openChannelEditor(index) {
           <select id="f-protocol" name="protocol">
             <option value="openai" ${c.protocol === 'openai' ? 'selected' : ''}>openai</option>
             <option value="anthropic" ${c.protocol === 'anthropic' ? 'selected' : ''}>anthropic</option>
+          </select></div>
+        <div class="field"><label for="f-tier">免费 / 收费</label>
+          <select id="f-tier" name="tier">
+            <option value="" ${!c.tier ? 'selected' : ''}>自动推断（按订阅）</option>
+            <option value="free" ${c.tier === 'free' ? 'selected' : ''}>免费</option>
+            <option value="paid" ${c.tier === 'paid' ? 'selected' : ''}>收费</option>
           </select></div>
         ${field('上游 base_url', 'base_url', c.base_url, { wide: true, placeholder: 'http://127.0.0.1:8080' })}
         ${field('上游路径（留空自动选择）', 'upstream_path', c.upstream_path || '', { wide: true, placeholder: 'base_url 已含 /v3 时留空即可；需要覆盖时填 /chat/completions' })}
@@ -1353,6 +1373,7 @@ function saveChannelEditor() {
       rate,
       models,
       enabled: f.elements.namedItem('enabled').checked,
+      tier: val('tier'),
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
     };
     if (state.editing >= 0) {

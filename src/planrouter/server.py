@@ -120,6 +120,20 @@ def _estimate_tokens(body: dict) -> int:
     return max(1, (len(text) - non_ascii) // 4 + non_ascii + len(parts) * 2)
 
 
+def channel_tier(channel, subscriptions: list[dict]) -> str:
+    """Explicit channel.tier wins; otherwise infer from linked subscriptions."""
+    if channel.tier:
+        return channel.tier
+    for record in subscriptions:
+        if channel.name in (record.get("channels") or []):
+            try:
+                if float(record.get("price") or 0) > 0:
+                    return "paid"
+            except (TypeError, ValueError):
+                continue
+    return ""
+
+
 def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     """Keep stored secrets when the editor sends '***' or an empty value."""
     merged = copy.deepcopy(new_raw)
@@ -748,6 +762,7 @@ class App:
                 "cooldown_minutes": channel.cooldown_minutes,
                 "blocked": channel.name in blocked,
                 "blocked_reason": blocked.get(channel.name, ""),
+                "tier": channel_tier(channel, self.subscriptions),
                 "catalog": {
                     "fetched_at": catalog["fetched_at"],
                     "count": catalog["count"],
