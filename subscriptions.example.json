@@ -1,5 +1,5 @@
 {
-  "_readme": "示例订阅数据。请复制为 subscriptions.json 后在控制台「套餐订阅」页签里改成真实值，或直接在界面里新增/删除。同一厂家可以有多个账号、多个套餐；channels 填渠道名称（逗号分隔），可留空。expires_at 前 remind_days 天会在页面顶部横幅、GET /health、CLI 和 webhook 中提醒续费；settings.block_expired_channels 控制过期套餐是否自动停用其关联渠道。",
+  "_readme": "示例订阅数据。请复制为 subscriptions.json 后在控制台「套餐订阅」页签里改成真实值，或直接在界面里新增/删除。同一厂家可以有多个账号、多个套餐；channels 填渠道名称（逗号分隔），可留空。expires_at 前 remind_days 天会在页面顶部横幅、GET /health、CLI 和 webhook 中提醒续费；settings.block_expired_channels 控制过期套餐是否自动停用其关联渠道。quota_limit / quota_used / quota_unit 记录本周期总额度与已用量（可留空），剩余低于 15% 会在横幅提醒，续费时自动把已用量清零。GET /api/report/YYYY-MM 与控制台「月度报表」把订阅成本、关联渠道的本月用量和每千次请求成本汇总在一起。",
   "settings": {
     "block_expired_channels": true,
     "notify_enabled": false,
@@ -21,7 +21,11 @@
       "auto_renew": false,
       "remind_days": 7,
       "channels": [],
-      "note": "示例数据：快要到期，用来演示续费提醒"
+      "quota_limit": 1000,
+      "quota_used": 940,
+      "quota_unit": "requests",
+      "quota_updated_at": "2026-11-07",
+      "note": "示例数据：快要到期且额度偏低，用来演示续费与额度提醒"
     },
     {
       "id": "sub-volcengine-b-coding",
@@ -37,6 +41,10 @@
       "auto_renew": true,
       "remind_days": 7,
       "channels": [],
+      "quota_limit": 1000,
+      "quota_used": 320,
+      "quota_unit": "requests",
+      "quota_updated_at": "2026-11-07",
       "note": "示例数据：第二个账号"
     },
     {
@@ -53,7 +61,11 @@
       "auto_renew": false,
       "remind_days": 7,
       "channels": [],
-      "note": "示例数据：同一账号下的另一个套餐"
+      "quota_limit": null,
+      "quota_used": null,
+      "quota_unit": "",
+      "quota_updated_at": "",
+      "note": "示例数据：同一账号下的另一个套餐，额度字段可留空"
     }
   ]
 }

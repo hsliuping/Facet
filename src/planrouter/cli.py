@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import subscriptions as subs
-from .core import PROTOCOLS, load_config
+from .core import PROTOCOLS, VERSIONED_BASE, load_config
 from .server import make_server
 
 
@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-file", help="persisted cooldown state (default: next to config)")
     parser.add_argument("--usage-file", help="daily usage buckets (default: next to config)")
     parser.add_argument("--notifications-file", help="reminder delivery log (default: next to config)")
+    parser.add_argument("--audit-file", help="request routing log, JSONL (default: next to config)")
     parser.add_argument("--host", help="override listen host")
     parser.add_argument("--port", type=int, help="override listen port")
     parser.add_argument("--check", action="store_true", help="validate config and print routes, then exit")
@@ -38,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     usage_path = Path(args.usage_file) if args.usage_file else config_dir / "usage.json"
     notify_path = (Path(args.notifications_file) if args.notifications_file
                    else config_dir / "notifications.json")
+    audit_path = Path(args.audit_file) if args.audit_file else config_dir / "requests.jsonl"
 
     if args.check:
         print(f"config OK: {args.config}")
@@ -53,7 +55,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  default cooldown: {config.defaults.cooldown_minutes} min; "
               f"max failover: {config.defaults.max_failover}; "
               f"sticky sessions: {config.defaults.sticky_minutes} min")
+        print(f"  tool model names: {', '.join(config.models.branded)}")
+        print(f"  unknown model names: "
+              f"{'auto-scheduled on ' + config.models.fallback_route if config.models.fallback_unknown else 'rejected'}")
+        print(f"  preemptive quota: {'on' if config.defaults.preempt_quota else 'off'}")
         print(f"  state file: {state_path}")
+        print(f"  audit log: {audit_path}")
+        missing = [c.name for c in config.channels if not c.api_key]
+        if missing:
+            print(f"  WARNING: {len(missing)} channel(s) have no api_key: {', '.join(missing)}")
+        if not config.listen.api_key:
+            print("  WARNING: listen.api_key is unset; any local process can call /v1 and /api")
+        if not config.listen.admin_key:
+            print("  WARNING: listen.admin_key is unset; management API uses the gateway key")
+        known_routes = {name.split(":", 1)[1] for name in config.routes}
+        for name, hint in config.models.branded.items():
+            if hint not in known_routes:
+                print(f"  WARNING: branded model {name!r} points to unknown route {hint!r}")
+        if config.models.fallback_route not in known_routes:
+            print(f"  WARNING: fallback_route {config.models.fallback_route!r} is not a defined route")
+        for channel in config.channels:
+            if (not channel.upstream_path
+                    and VERSIONED_BASE.search(channel.base_url.rstrip("/"))):
+                print(f"  INFO: channel {channel.name}: base_url already has a version "
+                      "segment; /chat/completions will be used automatically")
         try:
             records = subs.load_file(subs_path)
             summary = subs.summarize(records)
@@ -72,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 
     httpd = make_server(
         config, args.host, args.port, args.config, state_path, subs_path,
-        usage_path, notify_path,
+        usage_path, notify_path, audit_path,
     )
     app = httpd.app  # type: ignore[attr-defined]
     host, port = httpd.server_address[:2]
@@ -83,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  persisted state: {state_path}", flush=True)
     print(f"  usage history: {usage_path}", flush=True)
     print(f"  notification log: {notify_path}", flush=True)
+    print(f"  routing audit log: {audit_path}", flush=True)
     summary = subs.summarize(app.subscriptions)
     if summary["monthly_cost"]:
         cost = ", ".join(f"{amount:g} {code}/month"
@@ -96,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         route = config.routes.get(f"{protocol}:default")
         if route:
             print(f"  {protocol:9} default: {' -> '.join(route.channels)}", flush=True)
+    print(f"  tool model names: {', '.join(config.models.branded)}", flush=True)
+    print(f"  model rule: exact name first, unknown names -> internal scheduling "
+          f"({'on' if config.models.fallback_unknown else 'off'})", flush=True)
     print("  health: GET /health   stats: GET /stats   models: GET /v1/models", flush=True)
     try:
         httpd.serve_forever()

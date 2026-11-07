@@ -18,6 +18,19 @@ CURRENCIES = ("CNY", "USD", "EUR", "HKD")
 DEFAULT_REMIND_DAYS = 7
 CYCLE_MONTHS = {"monthly": 1, "quarterly": 3, "yearly": 12, "one_time": 1, "custom": 1}
 CYCLE_DIVISOR = {"monthly": 1, "quarterly": 3, "yearly": 12, "one_time": 1, "custom": 1}
+QUOTA_UNITS = ("", "requests", "tokens", "hours")
+
+
+def _number(value, field: str) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} 必须是数字") from exc
+    if number < 0:
+        raise ValueError(f"{field} 不能为负数")
+    return round(number, 2)
 
 
 def _date(value, field: str) -> date | None:
@@ -67,6 +80,12 @@ def normalize(record: dict) -> dict:
     if isinstance(raw_channels, str):
         raw_channels = raw_channels.split(",")
     channels = [str(x).strip() for x in raw_channels if str(x).strip()]
+    quota_limit = _number(record.get("quota_limit"), "quota_limit")
+    quota_used = _number(record.get("quota_used"), "quota_used")
+    quota_unit = str(record.get("quota_unit") or "").strip()
+    if quota_unit not in QUOTA_UNITS:
+        raise ValueError(f"quota_unit 必须是 {', '.join(QUOTA_UNITS)} 之一")
+    quota_updated = _date(record.get("quota_updated_at"), "quota_updated_at")
     started = _date(record.get("started_at"), "started_at")
     expires = _date(record.get("expires_at"), "expires_at")
     if started and expires and expires < started:
@@ -85,6 +104,10 @@ def normalize(record: dict) -> dict:
         "auto_renew": bool(record.get("auto_renew", False)),
         "remind_days": remind_days,
         "channels": channels,
+        "quota_limit": quota_limit,
+        "quota_used": quota_used,
+        "quota_unit": quota_unit,
+        "quota_updated_at": quota_updated.isoformat() if quota_updated else "",
         "note": str(record.get("note") or "").strip(),
     }
 
@@ -124,11 +147,18 @@ def enrich(record: dict, on: date | None = None) -> dict:
         status = "expiring"
     else:
         status = "active"
+    limit = record.get("quota_limit")
+    used = record.get("quota_used")
+    remaining = round(float(limit) - float(used or 0), 2) if limit is not None else None
+    ratio = max(0.0, min(1.0, remaining / float(limit))) if limit else None
     result = dict(record)
     result.update({
         "days_left": days_left,
         "status": status,
         "monthly_equivalent": monthly_equivalent(record),
+        "quota_remaining": remaining,
+        "quota_ratio": ratio,
+        "low_quota": ratio is not None and ratio <= 0.15,
     })
     return result
 
@@ -164,6 +194,12 @@ def summarize(records: list[dict], on: date | None = None) -> dict:
         "counts": counts,
         "monthly_cost": monthly_cost,
         "alerts": alerts,
+        "quota_alerts": [
+            {"id": r["id"], "vendor": r["vendor"], "account": r["account"],
+             "plan": r["plan"], "quota_remaining": r.get("quota_remaining"),
+             "quota_unit": r.get("quota_unit", "")}
+            for r in enriched if r.get("low_quota")
+        ],
         "upcoming": [
             {"id": r["id"], "vendor": r["vendor"], "account": r["account"],
              "plan": r["plan"], "expires_at": r["expires_at"], "days_left": r["days_left"]}
@@ -191,6 +227,8 @@ def renew_record(record: dict, payload: dict | None = None, on: date | None = No
         updated["price"] = payload["price"]
     if payload.get("tier") not in (None, ""):
         updated["tier"] = payload["tier"]
+    updated["quota_used"] = 0
+    updated["quota_updated_at"] = on.isoformat()
     return normalize(updated)
 
 

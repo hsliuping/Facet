@@ -91,5 +91,5 @@ class UsageRecorder:
             "range": days,
             "days": timeline,
             "channels": channels,
-            "note": "tokens 只统计非流式响应；套餐为月费，此处不折算按量费用",
+            "note": "tokens 含上游报告的流式用量；套餐为月费，此处不折算按量费用",
         }

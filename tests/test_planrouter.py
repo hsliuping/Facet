@@ -168,7 +168,16 @@ class RoutingTests(unittest.TestCase):
         candidates, _ = self.store.pick(OPENAI, "cheap", "auto", None, self.now)
         self.assertEqual([c.name for c, _ in candidates], ["free", "plan-b"])
         candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
-        self.assertEqual([c.name for c, _ in candidates], ["plan-a", "plan-b"])
+        self.assertEqual([c.name for c, _ in candidates], ["plan-a"])
+        self.assertEqual(candidates[0][1], "wire-a")
+        # An unknown model is scheduled internally instead of being rejected.
+        candidates, _ = self.store.pick(OPENAI, "default", "gpt-5.1-codex", None, self.now)
+        self.assertEqual([c.name for c, _ in candidates], ["plan-a", "plan-b", "free"])
+        self.assertEqual(candidates[0][1], "model-a")
+        # A cooling exact channel must not break the calling tool.
+        self.store.states["plan-a"].mark_cooldown(3600, "quota", self.now)
+        candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
+        self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
 
 
 if __name__ == "__main__":

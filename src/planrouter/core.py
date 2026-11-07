@@ -19,10 +19,37 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+from .quota import quota_view
+
 OPENAI = "openai"
 ANTHROPIC = "anthropic"
 PROTOCOLS = (OPENAI, ANTHROPIC)
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+# Providers such as Volcengine Ark expose https://host/api/v3 (or
+# /api/coding/v3) as the OpenAI-compatible base. Appending the usual
+# /v1/chat/completions would produce /v3/v1/chat/completions and a 404.
+VERSIONED_BASE = re.compile(r"/v\d+(?:beta)?$", re.IGNORECASE)
+
+
+def upstream_path_for(base_url: str, upstream_path: str | None,
+                      protocol: str) -> str:
+    """Pick the upstream path without duplicating a version segment."""
+    if upstream_path:
+        return upstream_path
+    suffix = "/chat/completions" if protocol == OPENAI else "/messages"
+    if VERSIONED_BASE.search(base_url.rstrip("/")):
+        return suffix
+    return "/v1" + suffix
+
+# Tools usually demand a concrete model id. These branded ids are ours: putting
+# one into a tool's model field means "let the router schedule internally".
+AUTO_MODEL = "auto"
+DEFAULT_BRANDED_MODELS = {
+    "facet-auto": "default",
+    "facet-cheap": "cheap",
+}
+INTERNAL_MODEL_PREFIXES = ("auto:", "facet:")
 
 # Substrings that mean "this channel is out of quota", not "the request is bad".
 QUOTA_MARKERS = (
@@ -155,6 +182,7 @@ class Channel:
     rate: Rate
     timeout: int
     enabled: bool = True
+    upstream_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +197,7 @@ class Listen:
     host: str
     port: int
     api_key: str | None
+    admin_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +207,43 @@ class Defaults:
     sticky_minutes: int = 30
     max_cooldown_hours: int = 168
     timeout: int = 120
+    track_stream_usage: bool = True
+    preempt_quota: bool = True
+
+
+@dataclass(frozen=True)
+class ModelPolicy:
+    """How a client-supplied model name maps to routing behaviour."""
+
+    branded: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_BRANDED_MODELS))
+    fallback_unknown: bool = True
+    fallback_route: str = "default"
+
+
+def parse_model_policy(raw) -> ModelPolicy:
+    if raw is None:
+        return ModelPolicy()
+    if not isinstance(raw, dict):
+        raise ValueError("models policy must be a JSON object")
+    branded = dict(DEFAULT_BRANDED_MODELS)
+    extra = raw.get("branded") or {}
+    if not isinstance(extra, dict):
+        raise ValueError("models.branded must be an object")
+    for name, hint in extra.items():
+        if (not isinstance(name, str) or not name.strip()
+                or not isinstance(hint, str) or not hint.strip()):
+            raise ValueError("models.branded entries must be non-empty name -> route pairs")
+        key = name.strip()
+        if key in (AUTO_MODEL, "facet") or key.startswith(INTERNAL_MODEL_PREFIXES):
+            raise ValueError(f"models.branded: {key!r} is a reserved internal model name")
+        branded[key] = hint.strip()
+    fallback_unknown = raw.get("fallback_unknown", True)
+    if not isinstance(fallback_unknown, bool):
+        raise ValueError("models.fallback_unknown must be true or false")
+    fallback_route = raw.get("fallback_route") or "default"
+    if not isinstance(fallback_route, str) or not fallback_route.strip():
+        raise ValueError("models.fallback_route must be a route name")
+    return ModelPolicy(branded, fallback_unknown, fallback_route.strip())
 
 
 @dataclass(frozen=True)
@@ -186,6 +252,7 @@ class Config:
     defaults: Defaults
     channels: tuple[Channel, ...]
     routes: dict[str, Route]
+    models: ModelPolicy = field(default_factory=ModelPolicy)
 
     def channel(self, name: str) -> Channel | None:
         return next((c for c in self.channels if c.name == name), None)
@@ -209,6 +276,87 @@ def wire_model(channel: Channel, exposed: str) -> str | None:
     return None
 
 
+def explicit_models(channel: Channel) -> set[str]:
+    """Names a channel declares explicitly (internal and wildcard keys excluded)."""
+    return {key for key in channel.models if key not in (AUTO_MODEL, "*")}
+
+
+def dispatch_wire_model(channel: Channel, requested: str = AUTO_MODEL) -> str | None:
+    """Wire model to use when the router schedules this channel itself."""
+    auto = channel.models.get(AUTO_MODEL)
+    if auto and auto != "*":
+        return auto
+    for key, value in channel.models.items():
+        if key not in (AUTO_MODEL, "*") and value and value != "*":
+            return value
+    wildcard = channel.models.get("*")
+    if wildcard == "*":
+        return requested
+    return wildcard or None
+
+
+@dataclass(frozen=True)
+class ModelDecision:
+    mode: str  # auto | exact | fallback | rejected
+    hint: str
+    exposed: str
+    requested: str
+    reason: str
+    exact_channels: tuple[str, ...] = ()
+
+
+def resolve_model(
+    config: Config,
+    protocol: str,
+    model: str,
+    hint: str | None = None,
+    blocked: set[str] | frozenset[str] | None = None,
+) -> ModelDecision:
+    """Decide how a client-supplied model name is served.
+
+    Branded/reserved names always mean "schedule internally". Anything else is
+    first matched against the explicit `models` keys of the channels in the
+    selected route chain; when nothing matches, the same chain is scheduled
+    internally (unless `fallback_unknown` is disabled).
+    """
+    policy = config.models
+    requested = (model or "").strip() or AUTO_MODEL
+    header_hint = (hint or "").strip() or None
+    excluded = set(blocked or ())
+
+    internal_hint: str | None = None
+    if requested in policy.branded:
+        internal_hint = policy.branded[requested]
+    elif requested in (AUTO_MODEL, "facet"):
+        internal_hint = "default"
+    elif requested.startswith(INTERNAL_MODEL_PREFIXES):
+        internal_hint = requested.split(":", 1)[1].strip() or "default"
+
+    route_hint = header_hint or internal_hint or policy.fallback_route or "default"
+    route = config.route(protocol, route_hint)
+    ordered = route.channels if route else ()
+
+    if internal_hint is not None:
+        return ModelDecision("auto", route_hint, AUTO_MODEL, requested,
+                             "internal-model-name")
+
+    exact = tuple(
+        name for name in ordered
+        if name not in excluded
+        and (channel := config.channel(name)) is not None
+        and channel.enabled and channel.protocol == protocol
+        and requested in explicit_models(channel)
+    )
+    if exact:
+        return ModelDecision("exact", route_hint, requested, requested,
+                             "exact-model-match", exact)
+    if policy.fallback_unknown:
+        return ModelDecision("fallback", route_hint, AUTO_MODEL, requested,
+                             "unknown-model-internal-schedule")
+    return ModelDecision("rejected", route_hint, requested, requested,
+                         "unknown-model-fallback-disabled")
+
+
 def parse_config(raw: dict) -> Config:
     """Validate an in-memory config dict (used by the editor's hot reload)."""
     if not isinstance(raw, dict):
@@ -219,17 +367,26 @@ def parse_config(raw: dict) -> Config:
         host=listen_raw.get("host", "127.0.0.1"),
         port=int(listen_raw.get("port", 8787)),
         api_key=resolve_secret(listen_raw.get("api_key")),
+        admin_key=resolve_secret(listen_raw.get("admin_key")),
     )
     if listen.host not in LOOPBACK and not listen.api_key:
         raise ValueError("non-loopback listen requires listen.api_key (use env:VAR)")
 
     d = raw.get("defaults") or {}
+    track_stream_usage = d.get("track_stream_usage", True)
+    if not isinstance(track_stream_usage, bool):
+        raise ValueError("defaults.track_stream_usage must be true or false")
+    preempt_quota = d.get("preempt_quota", True)
+    if not isinstance(preempt_quota, bool):
+        raise ValueError("defaults.preempt_quota must be true or false")
     defaults = Defaults(
         cooldown_minutes=int(d.get("cooldown_minutes", 300)),
         max_failover=int(d.get("max_failover", 3)),
         sticky_minutes=int(d.get("sticky_minutes", 30)),
         max_cooldown_hours=int(d.get("max_cooldown_hours", 168)),
         timeout=int(d.get("timeout", 120)),
+        track_stream_usage=track_stream_usage,
+        preempt_quota=preempt_quota,
     )
 
     channels: list[Channel] = []
@@ -245,6 +402,14 @@ def parse_config(raw: dict) -> Config:
         base_url = (item.get("base_url") or "").rstrip("/")
         if not base_url.startswith(("http://", "https://")):
             raise ValueError(f"channel {name}: base_url must be an http(s) URL")
+        upstream_path = item.get("upstream_path")
+        if upstream_path is not None:
+            if (not isinstance(upstream_path, str) or not upstream_path.startswith("/")
+                    or "://" in upstream_path):
+                raise ValueError(
+                    f"channel {name}: upstream_path must be a path starting with /"
+                )
+            upstream_path = upstream_path.rstrip("/") or "/"
         models = item.get("models") or {}
         if not models:
             raise ValueError(f"channel {name}: models mapping is required")
@@ -264,6 +429,7 @@ def parse_config(raw: dict) -> Config:
             rate=rate,
             timeout=int(item.get("timeout", defaults.timeout)),
             enabled=bool(item.get("enabled", True)),
+            upstream_path=upstream_path,
         ))
     if not channels:
         raise ValueError("at least one channel is required")
@@ -295,7 +461,17 @@ def parse_config(raw: dict) -> Config:
     for protocol in PROTOCOLS:
         if f"{protocol}:default" not in routes:
             raise ValueError(f"missing {protocol}:default route")
-    return Config(listen=listen, defaults=defaults, channels=tuple(channels), routes=routes)
+    model_policy = parse_model_policy(raw.get("models"))
+    declared = set().union(*(explicit_models(c) for c in channels))
+    for name in model_policy.branded:
+        if name in declared:
+            raise ValueError(
+                f"models.branded: {name!r} clashes with a channel's explicit model name"
+            )
+    return Config(
+        listen=listen, defaults=defaults, channels=tuple(channels),
+        routes=routes, models=model_policy,
+    )
 
 
 def load_config(path: str | Path) -> Config:
@@ -318,6 +494,7 @@ class ChannelState:
     total_tokens: int = 0
     handoffs: int = 0
     last_used: float = 0.0
+    quota: dict = field(default_factory=dict)
 
     def _prune(self, now: float) -> None:
         while self.req_times and now - self.req_times[0] > 86400:
@@ -383,6 +560,7 @@ class ChannelState:
             "total_tokens": self.total_tokens,
             "handoffs": self.handoffs,
             "last_used": self.last_used,
+            "quota": quota_view(self.quota, now),
         }
 
 
@@ -418,11 +596,23 @@ class StateStore:
         model: str,
         session_id: str | None,
         now: float | None = None,
+        decision: ModelDecision | None = None,
+        blocked: set[str] | frozenset[str] | None = None,
     ) -> tuple[list[tuple[Channel, str]], Route | None]:
-        """Return ([(channel, wire_model), ...], route) in attempt order."""
+        """Return ([(channel, wire_model), ...], route) in attempt order.
+
+        `decision` comes from resolve_model. Exact matches get their own
+        channels first; if every exact channel is cooling, the router's own
+        schedule takes over so a quota window never breaks the calling tool.
+        """
         now = time.time() if now is None else now
+        excluded = set(blocked or ())
         with self.lock:
-            route = self.config.route(protocol, hint)
+            if decision is None:
+                decision = resolve_model(self.config, protocol, model, hint, excluded)
+            if decision.mode == "rejected":
+                return [], None
+            route = self.config.route(protocol, decision.hint)
             if route is None:
                 return [], None
             ordered = list(route.channels)
@@ -430,19 +620,27 @@ class StateStore:
             if sticky in ordered:
                 ordered.remove(sticky)
                 ordered.insert(0, sticky)
-            result: list[tuple[Channel, str]] = []
+            exact: list[tuple[Channel, str]] = []
+            scheduled: list[tuple[Channel, str]] = []
             for name in ordered:
                 channel = self.config.channel(name)
-                if channel is None or not channel.enabled:
-                    continue
-                wire = wire_model(channel, model)
-                if not wire:
+                if (channel is None or not channel.enabled or name in excluded
+                        or channel.protocol != protocol):
                     continue
                 ok, _ = self.states[name].available(now, channel.rate)
                 if not ok:
                     continue
-                result.append((channel, wire))
-            return result, route
+                if decision.mode == "exact" and name in decision.exact_channels:
+                    wire = wire_model(channel, decision.exposed)
+                    if wire:
+                        exact.append((channel, wire))
+                    continue
+                wire = dispatch_wire_model(channel, decision.requested)
+                if wire:
+                    scheduled.append((channel, wire))
+            if decision.mode == "exact":
+                return (exact or scheduled), route
+            return scheduled, route
 
     def snapshot(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now

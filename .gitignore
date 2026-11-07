@@ -17,4 +17,8 @@ subscriptions.json
 router.state.json
 usage.json
 notifications.json
+requests.jsonl
 *.tmp
+
+# PlanRouter container data (bind-mounted into /data)
+data/

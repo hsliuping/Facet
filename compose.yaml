@@ -1,0 +1,44 @@
+name: facet-planrouter
+
+x-build: &build
+  context: .
+  dockerfile: Dockerfile
+
+services:
+  # Fake upstream so `docker compose up` can exercise the whole gateway without
+  # any real provider credentials. Remove this service once you use real channels.
+  mock:
+    image: facet-planrouter:test
+    build: *build
+    entrypoint: ["python", "/opt/planrouter/mock_upstream.py"]
+    command: []
+    environment:
+      MOCK_PORT: "9000"
+    expose:
+      - "9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  router:
+    image: facet-planrouter:test
+    build: *build
+    depends_on:
+      mock:
+        condition: service_healthy
+    ports:
+      - "${ROUTER_PORT:-8787}:8787"
+    environment:
+      # Override via a .env file next to this compose.yaml for real use.
+      ROUTER_API_KEY: "${ROUTER_API_KEY:-test-router-key}"
+      ROUTER_ADMIN_KEY: "${ROUTER_ADMIN_KEY:-test-admin-key}"
+    volumes:
+      # Bind mount: config, state, usage and the audit log are visible on the
+      # host at ./data/. Edit ./data/router.json and POST /api/reload (or use
+      # the console). The old named volume is kept untouched as a backup.
+      - ./data:/data
+    restart: unless-stopped

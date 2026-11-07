@@ -5,8 +5,10 @@ import copy
 import hmac
 import json
 import os
+import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -15,14 +17,35 @@ from urllib.request import Request, urlopen
 
 from . import subscriptions as subs
 from . import ui
+from .audit import RequestLog
 from .core import (
-    ANTHROPIC, OPENAI, Config, StateStore, parse_cooldown, parse_config,
+    ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
+    parse_cooldown, parse_config, resolve_model, upstream_path_for,
 )
 from .notifier import ReminderService
 from .persistence import StatePersistence
+from .probe import MAX_CHANNELS, probe_channel
+from .quota import parse_quota, quota_exhaustion_wait
+from .report import build_report
+from .responses import ResponsesAdapter, to_chat_request
 from .usage import UsageRecorder
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
+UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
+
+
+def _header_safe(value) -> str:
+    """Client-controlled values must never be able to inject a response header."""
+    return UNSAFE_HEADER.sub("-", str(value))[:120]
+
+
+def _audit_headers(decision) -> dict:
+    return {
+        "X-Routed-Model-Mode": decision.mode,
+        "X-Routed-Model-Reason": decision.reason,
+        "X-Routed-Requested-Model": _header_safe(decision.requested),
+        "X-Route": _header_safe(decision.hint),
+    }
 
 
 def _json(h: BaseHTTPRequestHandler, status: int, payload: dict, extra: dict | None = None) -> None:
@@ -49,6 +72,52 @@ def _usage(data: bytes, protocol: str) -> int:
         return 0
 
 
+def _stream_tokens(data: bytes, protocol: str) -> int:
+    """Sum `usage` blocks from SSE data lines (OpenAI final chunk, Anthropic deltas)."""
+    total = 0
+    for line in data.split(b"\n"):
+        line = line.strip()
+        if not line.startswith(b"data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == b"[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+            usage = event.get("usage") or {}
+            if not usage and isinstance(event.get("message"), dict):
+                usage = event["message"].get("usage") or {}
+        except (ValueError, AttributeError):
+            continue
+        try:
+            if protocol == OPENAI:
+                total += int(usage.get("total_tokens") or 0)
+            else:
+                total += int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _estimate_tokens(body: dict) -> int:
+    """Cheap local estimate for /v1/messages/count_tokens; never calls an upstream."""
+    parts: list[str] = []
+    system = body.get("system")
+    if system is not None:
+        parts.append(system if isinstance(system, str) else json.dumps(system, ensure_ascii=False))
+    for message in body.get("messages") or []:
+        if isinstance(message, dict):
+            content = message.get("content")
+            parts.append(content if isinstance(content, str)
+                         else json.dumps(content, ensure_ascii=False))
+    for key in ("tools", "tool_choice", "thinking", "metadata"):
+        if body.get(key) is not None:
+            parts.append(json.dumps(body[key], ensure_ascii=False))
+    text = "\n".join(parts)
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return max(1, (len(text) - non_ascii) // 4 + non_ascii + len(parts) * 2)
+
+
 def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     """Keep stored secrets when the editor sends '***' or an empty value."""
     merged = copy.deepcopy(new_raw)
@@ -64,12 +133,13 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
             else:
                 channel.pop("api_key", None)
     listen = merged.setdefault("listen", {})
-    if listen.get("api_key") in (None, "", "***"):
-        key = (old_raw.get("listen") or {}).get("api_key")
-        if key:
-            listen["api_key"] = key
-        else:
-            listen.pop("api_key", None)
+    for field in ("api_key", "admin_key"):
+        if listen.get(field) in (None, "", "***"):
+            key = (old_raw.get("listen") or {}).get(field)
+            if key:
+                listen[field] = key
+            else:
+                listen.pop(field, None)
     return merged
 
 
@@ -82,6 +152,7 @@ class App:
         subscriptions_file: str | Path | None = None,
         usage_file: str | Path | None = None,
         notifications_file: str | Path | None = None,
+        audit_file: str | Path | None = None,
     ):
         self.config = config
         self.store = StateStore(config)
@@ -102,6 +173,22 @@ class App:
             self.subscriptions_path, notifications_file,
             lambda: self.subscriptions, lambda: self.subscription_settings,
         ) if notifications_file else None
+        self.audit = RequestLog(audit_file) if audit_file else None
+
+    def log_request(self, **fields) -> None:
+        if self.audit:
+            self.audit.record(**fields)
+
+    def request_log_payload(self, limit: int = 50) -> dict:
+        if not self.audit:
+            return {"entries": [], "path": None, "size": 0,
+                    "note": "请求审计未启用（启动时未指定 --audit-file）"}
+        return {
+            "entries": self.audit.recent(limit),
+            "path": str(self.audit.path),
+            "size": self.audit.size(),
+            "note": "仅记录选路元数据，不含 prompt、密钥与模型输出",
+        }
 
     def start_background(self) -> None:
         if self.persistence:
@@ -122,6 +209,42 @@ class App:
     def record_usage(self, channel: str, success: bool, tokens: int = 0) -> None:
         if self.usage:
             self.usage.record(channel, success, tokens)
+
+    def apply_quota(self, name: str, headers) -> None:
+        """Observe upstream quota headers; cool early when the window is empty."""
+        quota = parse_quota(headers)
+        if not quota:
+            return
+        now = time.time()
+        with self.store.lock:
+            state = self.store.states.get(name)
+            if not state:
+                return
+            state.quota = quota
+            if not self.config.defaults.preempt_quota:
+                return
+            seconds = quota_exhaustion_wait(
+                quota, now,
+                self.config.defaults.cooldown_minutes * 60,
+                self.config.defaults.max_cooldown_hours * 3600,
+            )
+            if seconds:
+                state.cooldown_until = now + seconds
+                state.reason = "quota-preempted"
+                state.half_open = False
+                state.last_error = "上游额度头显示本周期已用尽，提前切换"
+                self.log_request(
+                    api="quota", model="", mode="preempt",
+                    reason="upstream-quota-exhausted", channel=name,
+                    status="cooldown", cooldown_seconds=round(seconds, 1),
+                )
+
+    def report_payload(self, month: str | None = None) -> dict:
+        days = {}
+        if self.usage:
+            with self.usage.lock:
+                days = {day: dict(buckets) for day, buckets in self.usage.data["days"].items()}
+        return build_report(self.subscriptions, days, month)
 
     def blocked_channels(self) -> dict[str, str]:
         """Channels whose every linked subscription has expired."""
@@ -200,8 +323,15 @@ class App:
             if key and not str(key).startswith("env:"):
                 channel["api_key"] = "***"
         listen = visible.get("listen") or {}
-        if listen.get("api_key") and not str(listen["api_key"]).startswith("env:"):
-            listen["api_key"] = "***"
+        for field in ("api_key", "admin_key"):
+            if listen.get(field) and not str(listen[field]).startswith("env:"):
+                listen[field] = "***"
+        policy = self.config.models
+        visible["models"] = {
+            "branded": dict(policy.branded),
+            "fallback_unknown": policy.fallback_unknown,
+            "fallback_route": policy.fallback_route,
+        }
         return visible
 
     def apply_config(self, raw: dict, persist: bool = True) -> Config:
@@ -243,7 +373,57 @@ class App:
             state.consecutive_errors = 0
             state.half_open = False
             state.last_error = ""
+            state.quota = {}
             return True
+
+    def test_channels(self, channels, model: str | None = None) -> dict:
+        """Probe console drafts without touching cooldown, usage or audit state.
+
+        Items may be full channel objects (an unsaved channel draft) or bare
+        names (a subscription's linked channels, resolved from saved config).
+        """
+        if not isinstance(channels, list) or not channels:
+            raise ValueError("channels 必须是非空数组")
+        if len(channels) > MAX_CHANNELS:
+            raise ValueError(f"一次最多测试 {MAX_CHANNELS} 个渠道")
+        wanted = model.strip() if isinstance(model, str) else ""
+        wanted = wanted or None
+        saved = {
+            c.get("name"): c for c in (self.raw.get("channels") or [])
+            if isinstance(c, dict)
+        }
+        prepared = []
+        for item in channels:
+            if isinstance(item, str):
+                item = {"name": item}
+            if not isinstance(item, dict):
+                raise ValueError("channels 元素必须是渠道对象或渠道名")
+            name = item.get("name")
+            base = saved.get(name, {}) if isinstance(name, str) else {}
+            prepared.append({**base, **item})
+        merged = merge_secrets({"channels": prepared}, self.raw)["channels"]
+        with ThreadPoolExecutor(max_workers=min(4, len(merged))) as pool:
+            results = list(pool.map(lambda channel: probe_channel(channel, wanted), merged))
+        self._append_probe_log(results)
+        return {
+            "ok": all(result.get("ok") for result in results),
+            "results": results,
+            "note": "已向每个渠道发送一次最小非流式请求（max_tokens=16）；"
+                    "不计入冷却、用量与审计，可能产生极少量费用",
+        }
+
+    def _append_probe_log(self, results: list[dict]) -> None:
+        """Persist one JSON line per probe batch; secrets are already masked."""
+        if not self.config_path:
+            return
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                 "results": results}
+        try:
+            path = self.config_path.parent / "probe.jsonl"
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # logging must never break the console
 
     def ui_state(self) -> dict:
         snap = self.store.snapshot()
@@ -283,6 +463,17 @@ class App:
             provided = auth[7:] if auth.lower().startswith("bearer ") else ""
         return hmac.compare_digest(provided, expected)
 
+    def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
+        """Management endpoints can require a key distinct from the tool's key."""
+        expected = self.config.listen.admin_key
+        if not expected:
+            return self._authorized(h)
+        provided = h.headers.get("X-Admin-Key")
+        if not provided:
+            auth = h.headers.get("Authorization") or ""
+            provided = auth[7:] if auth.lower().startswith("bearer ") else ""
+        return hmac.compare_digest(provided, expected)
+
     # --------------------------------------------------------------- dispatch
     def dispatch(self, h: BaseHTTPRequestHandler, method: str, path: str, raw: bytes) -> None:
         if ui.handle(self, h, method, path, raw):
@@ -307,31 +498,30 @@ class App:
             snap = self.store.snapshot()
             _json(h, 200, {
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "note": "total_tokens covers non-streaming responses only",
+                "note": "total_tokens includes streamed usage when the upstream reports it",
                 **snap,
             })
             return
         if method == "GET" and path == "/v1/models":
-            blocked = self.blocked_channels()
-            names = {"auto", "auto:cheap"}
-            for channel in self.config.channels:
-                if channel.enabled and channel.name not in blocked:
-                    names.update(m for m in channel.models if m not in ("*", "auto"))
-            _json(h, 200, {
-                "object": "list",
-                "data": [{"id": n, "object": "model", "owned_by": "planrouter"} for n in sorted(names)],
-            })
+            _json(h, 200, self.model_list())
+            return
+        if method == "POST" and path == "/v1/responses":
+            self._completion(h, OPENAI, raw, responses=True)
             return
         if method == "POST" and path == "/v1/chat/completions":
             self._completion(h, OPENAI, raw)
+            return
+        if method == "POST" and path == "/v1/messages/count_tokens":
+            self._count_tokens(h, raw)
             return
         if method == "POST" and path == "/v1/messages":
             self._completion(h, ANTHROPIC, raw)
             return
         _json(h, 404, {"error": {"message": "not found", "path": path}})
 
-    # ------------------------------------------------------------- completion
-    def _completion(self, h: BaseHTTPRequestHandler, protocol: str, raw: bytes) -> None:
+    # ---------------------------------------------------------- count_tokens
+    def _count_tokens(self, h: BaseHTTPRequestHandler, raw: bytes) -> None:
+        """Local context-budget estimate for Claude Code; costs no upstream quota."""
         try:
             body = json.loads(raw)
         except ValueError:
@@ -340,11 +530,75 @@ class App:
         if not isinstance(body, dict):
             _json(h, 400, {"error": {"message": "body must be an object"}})
             return
-        model = str(body.get("model") or "auto")
-        hint = h.headers.get("X-Route")
-        if not hint and model.startswith("auto:"):
-            hint = model.split(":", 1)[1]
-        hint = hint or "default"
+        tokens = _estimate_tokens(body)
+        self.log_request(
+            protocol=ANTHROPIC, model=str(body.get("model") or ""),
+            mode="local", reason="local-token-estimate", status="local",
+            http_status=200, tokens=tokens, ms=0, stream=False,
+        )
+        _json(h, 200, {"input_tokens": tokens}, {
+            "X-Token-Estimate": "local-heuristic",
+            "X-Routed-Via": "local",
+        })
+
+    # --------------------------------------------------------------- models
+    def model_list(self) -> dict:
+        """Advertise our own ids first, then every explicitly declared model."""
+        blocked = self.blocked_channels()
+        policy = self.config.models
+        data: list[dict] = []
+        seen: set[str] = set()
+
+        def add(name: str, owned_by: str, mode: str, route: str | None = None) -> None:
+            if not name or name in seen:
+                return
+            seen.add(name)
+            item = {"id": name, "object": "model", "owned_by": owned_by, "mode": mode}
+            if route:
+                item["route"] = route
+            data.append(item)
+
+        for name, hint in policy.branded.items():
+            add(name, "facet", "auto", hint)
+        add(AUTO_MODEL, "planrouter", "auto", "default")
+        for key in sorted(self.config.routes):
+            name = key.split(":", 1)[1]
+            if name == "default":
+                continue
+            add(f"auto:{name}", "planrouter", "auto", name)
+            add(f"facet:{name}", "facet", "auto", name)
+        for channel in self.config.channels:
+            if not channel.enabled or channel.name in blocked:
+                continue
+            for name in sorted(explicit_models(channel)):
+                add(name, channel.name, "exact", channel.protocol)
+        return {
+            "object": "list",
+            "data": data,
+            "policy": {
+                "fallback_unknown": policy.fallback_unknown,
+                "fallback_route": policy.fallback_route,
+                "note": "unknown model names are scheduled internally when fallback_unknown is true",
+            },
+        }
+
+    # ------------------------------------------------------------- completion
+    def _completion(self, h: BaseHTTPRequestHandler, protocol: str, raw: bytes,
+                    responses: bool = False) -> None:
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return
+        if not isinstance(body, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return
+        requested_model = str(body.get("model") or "").strip() or AUTO_MODEL
+        adapter = None
+        if responses:
+            body = to_chat_request(body)
+            adapter = ResponsesAdapter(requested_model, bool(body.get("stream")))
+        model = str(body.get("model") or "").strip() or AUTO_MODEL
         metadata = body.get("metadata")
         session = (
             h.headers.get("X-Session-Id")
@@ -355,19 +609,55 @@ class App:
             session = None
 
         blocked = self.blocked_channels()
-        candidates, _ = self.store.pick(protocol, hint, model, session)
+        decision = resolve_model(
+            self.config, protocol, model, h.headers.get("X-Route"), blocked,
+        )
+        audit = _audit_headers(decision)
+        log_base = {
+            "api": "responses" if responses else ("chat" if protocol == OPENAI else "messages"),
+            "protocol": protocol,
+            "model": decision.requested,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "route": decision.hint,
+            "stream": bool(body.get("stream")),
+            "sticky": bool(session),
+        }
+        if decision.mode == "rejected":
+            self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
+            _json(h, 400, {
+                "error": {
+                    "message": "unknown model; internal scheduling is disabled",
+                    "model": model,
+                    "hint": "use a branded model name or add the model to a channel's models mapping",
+                },
+                "models": [item["id"] for item in self.model_list()["data"]],
+            }, audit)
+            return
+
+        candidates, _ = self.store.pick(
+            protocol, decision.hint, decision.exposed, session,
+            decision=decision, blocked=blocked,
+        )
         candidates = [(channel, wire) for channel, wire in candidates
                       if channel.name not in blocked]
+        if decision.mode == "exact" and candidates and not any(
+                channel.name in decision.exact_channels for channel, _ in candidates):
+            audit["X-Routed-Model-Mode"] = "fallback"
+            audit["X-Routed-Model-Reason"] = "exact-channels-unavailable"
+            log_base["mode"] = "fallback"
+            log_base["reason"] = "exact-channels-unavailable"
         if not candidates:
+            self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             _json(h, 503, {
                 "error": {
                     "message": "no healthy channel for this route/model",
-                    "route": f"{protocol}:{hint}",
+                    "route": f"{protocol}:{decision.hint}",
                     "model": model,
                     "blocked_channels": blocked,
                 },
                 "channels": self.store.snapshot()["channels"],
-            })
+            }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
             return
 
         sticky = self.store.session_channel(session, time.time())
@@ -383,33 +673,57 @@ class App:
                 self.store.states[channel.name].note_attempt(now)
 
             handoff = sticky is not None and sticky != channel.name
-            error = self._forward(h, protocol, channel, wire, body, attempt, handoff)
+            delivery: dict = {"adapter": adapter} if adapter else {}
+            started = time.perf_counter()
+            error = self._forward(h, protocol, channel, wire, body, attempt,
+                                  handoff, audit, delivery)
+            entry = {
+                **log_base, "channel": channel.name, "wire_model": wire,
+                "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+            }
             if error is None:
                 if handoff:
                     with self.store.lock:
                         self.store.states[channel.name].handoffs += 1
+                self.log_request(**entry, status="ok", http_status=200,
+                                 tokens=delivery.get("tokens", 0))
                 self.store.bind_session(session, channel.name, time.time())
                 return
 
+            reason = error[1]
+            entry["reason"] = reason
+            self.log_request(
+                **entry,
+                status="network_error" if reason.startswith("transient_") else "upstream_error",
+                http_status=error[0], cooldown_seconds=round(error[2], 1),
+            )
             attempt += 1
             failures.append({
                 "channel": channel.name,
                 "status": error[0],
-                "reason": error[1],
+                "reason": reason,
                 "cooldown_seconds": round(error[2], 1),
             })
 
         _json(h, 503, {
             "error": {"message": "all channels failed for this request", "failures": failures},
             "channels": self.store.snapshot()["channels"],
-        }, {"X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
+        }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
 
     # --------------------------------------------------------------- upstream
-    def _forward(self, h, protocol, channel, wire, body, attempt, handoff):
+    def _forward(self, h, protocol, channel, wire, body, attempt, handoff,
+                 audit=None, delivery=None):
         """Relay one attempt. Return None on success, else (status, reason, seconds)."""
+        audit = audit or {}
+        if delivery is None:
+            delivery = {}
         payload = dict(body)
         payload["model"] = wire
-        upstream_path = "/v1/chat/completions" if protocol == OPENAI else "/v1/messages"
+        stream = bool(payload.get("stream"))
+        if (stream and protocol == OPENAI and self.config.defaults.track_stream_usage
+                and "stream_options" not in payload):
+            payload["stream_options"] = {"include_usage": True}
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, protocol)
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
             if protocol == OPENAI:
@@ -424,7 +738,6 @@ class App:
             headers=headers,
             method="POST",
         )
-        stream = bool(payload.get("stream"))
         now = time.time()
         try:
             resp = urlopen(req, timeout=channel.timeout)
@@ -461,7 +774,8 @@ class App:
             # Headers may already be on the wire here: never fail over again.
             try:
                 with resp:
-                    return self._relay(h, resp, protocol, channel, wire, attempt, handoff, stream)
+                    return self._relay(h, resp, protocol, channel, wire, attempt,
+                                       handoff, stream, audit, delivery)
             except (BrokenPipeError, ConnectionResetError):
                 with self.store.lock:
                     self.store.states[channel.name].mark_success(0, time.time())
@@ -471,9 +785,12 @@ class App:
                     self.store.states[channel.name].last_error = repr(exc)[:300]
                 return None
 
-    def _relay(self, h, resp, protocol, channel, wire, attempt, handoff, stream):
+    def _relay(self, h, resp, protocol, channel, wire, attempt, handoff, stream,
+               audit=None, delivery=None):
+        adapter = (delivery or {}).get("adapter")
         extra = {
-            "X-Routed-Via": f"{channel.name}/{wire}",
+            **dict(audit or {}),
+            "X-Routed-Via": _header_safe(f"{channel.name}/{wire}"),
             "X-Failover-Count": str(attempt),
         }
         if handoff:
@@ -486,25 +803,49 @@ class App:
             for key, value in extra.items():
                 h.send_header(key, value)
             h.end_headers()
+            stream_tokens = 0
+            buffer = b""
             try:
                 while True:
                     chunk = resp.read(4096)
                     if not chunk:
                         break
-                    h.wfile.write(chunk)
-                    h.wfile.flush()
+                    outgoing = adapter.feed(chunk) if adapter is not None else chunk
+                    if outgoing:
+                        h.wfile.write(outgoing)
+                        h.wfile.flush()
+                    buffer += chunk
+                    if b"\n" in buffer:
+                        complete, buffer = buffer.rsplit(b"\n", 1)
+                        stream_tokens += _stream_tokens(complete, protocol)
+                    if len(buffer) > 65536:  # never parse an unbounded non-SSE line
+                        buffer = b""
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            stream_tokens += _stream_tokens(buffer, protocol)
+            if adapter is not None:
+                tail = adapter.finish()
+                if tail:
+                    h.wfile.write(tail)
+                    h.wfile.flush()
             with self.store.lock:
-                self.store.states[channel.name].mark_success(0, time.time())
-            self.record_usage(channel.name, True, 0)
+                self.store.states[channel.name].mark_success(stream_tokens, time.time())
+            self.record_usage(channel.name, True, stream_tokens)
+            self.apply_quota(channel.name, resp.headers)
+            if delivery is not None:
+                delivery["tokens"] = stream_tokens
             return None
 
         data = resp.read()
         tokens = _usage(data, protocol)
+        if delivery is not None:
+            delivery["tokens"] = tokens
         with self.store.lock:
             self.store.states[channel.name].mark_success(tokens, time.time())
         self.record_usage(channel.name, True, tokens)
+        self.apply_quota(channel.name, resp.headers)
+        if adapter is not None:
+            data = adapter.finish(data)
         h.send_response(200)
         h.send_header("Content-Type", resp.headers.get("Content-Type") or "application/json")
         h.send_header("Content-Length", str(len(data)))
@@ -550,6 +891,7 @@ def make_server(
     subscriptions_file: str | Path | None = None,
     usage_file: str | Path | None = None,
     notifications_file: str | Path | None = None,
+    audit_file: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     httpd = ThreadingHTTPServer(
         (host or config.listen.host, port or config.listen.port), Handler,
@@ -562,6 +904,7 @@ def make_server(
         subscriptions_file=subscriptions_file,
         usage_file=usage_file,
         notifications_file=notifications_file,
+        audit_file=audit_file,
     )
     app.start_background()
     httpd.app = app  # type: ignore[attr-defined]

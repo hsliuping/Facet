@@ -1,0 +1,81 @@
+{
+  "_readme": "Container test config. listen.host must stay 0.0.0.0 and ROUTER_API_KEY must be set (core.py refuses a non-loopback listen without a key). All channels point at the in-compose mock upstream, so no real credentials are needed to smoke-test. Put the word 'fail' in a user message to force the primary channel into a 429 and exercise cooldown + failover to mock-backup. To use real providers: replace a channel's base_url / api_key / upstream_path / models, add the matching env var to compose.yaml, then copy this file to /data/router.json. All runtime files live next to it in /data (router.state.json, usage.json, notifications.json, requests.jsonl, subscriptions.json).",
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 8787,
+    "api_key": "env:ROUTER_API_KEY",
+    "admin_key": "env:ROUTER_ADMIN_KEY"
+  },
+  "defaults": {
+    "cooldown_minutes": 1,
+    "max_failover": 3,
+    "sticky_minutes": 30,
+    "max_cooldown_hours": 168,
+    "timeout": 15,
+    "track_stream_usage": true,
+    "preempt_quota": true
+  },
+  "models": {
+    "branded": {
+      "facet-auto": "default",
+      "facet-cheap": "cheap"
+    },
+    "fallback_unknown": true,
+    "fallback_route": "default"
+  },
+  "channels": [
+    {
+      "name": "mock-primary",
+      "protocol": "openai",
+      "base_url": "http://mock:9000",
+      "api_key": "docker-mock-key",
+      "models": {
+        "mock-model": "mock-model",
+        "auto": "mock-model"
+      },
+      "priority": 10,
+      "rate": { "rpm": 120 }
+    },
+    {
+      "name": "mock-backup",
+      "protocol": "openai",
+      "base_url": "http://mock:9000",
+      "upstream_path": "/backup/v1/chat/completions",
+      "api_key": "docker-mock-key",
+      "models": {
+        "mock-model": "mock-model",
+        "auto": "mock-model"
+      },
+      "priority": 20,
+      "rate": { "rpm": 120 }
+    },
+    {
+      "name": "mock-claude",
+      "protocol": "anthropic",
+      "base_url": "http://mock:9000",
+      "api_key": "docker-mock-key",
+      "models": {
+        "mock-claude": "mock-claude",
+        "auto": "mock-claude"
+      },
+      "priority": 10
+    }
+  ],
+  "routes": [
+    {
+      "name": "default",
+      "protocol": "openai",
+      "channels": ["mock-primary", "mock-backup"]
+    },
+    {
+      "name": "cheap",
+      "protocol": "openai",
+      "channels": ["mock-backup"]
+    },
+    {
+      "name": "default",
+      "protocol": "anthropic",
+      "channels": ["mock-claude"]
+    }
+  ]
+}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -39,6 +39,21 @@ def _static(name: str) -> tuple[bytes, str] | None:
     return path.read_bytes(), CONTENT_TYPES.get(path.suffix, "application/octet-stream")
 
 
+def _same_site(h) -> bool:
+    """Reject browser cross-site writes to the management API."""
+    site = (h.headers.get("Sec-Fetch-Site") or "").lower()
+    if site and site not in ("same-origin", "none"):
+        return False
+    origin = h.headers.get("Origin")
+    if not origin:
+        return True
+    try:
+        netloc = urlsplit(origin).netloc
+    except ValueError:
+        return False
+    return bool(netloc) and netloc == (h.headers.get("Host") or "")
+
+
 def handle(app, h, method: str, path: str, raw: bytes) -> bool:
     """Return True when this request belongs to the UI/API surface."""
     if method == "GET" and path in ("/", "/ui", "/ui/"):
@@ -60,8 +75,21 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
     if not path.startswith("/api/"):
         return False
 
-    if not app._authorized(h):
-        _json(h, 401, {"error": {"message": "invalid gateway key"}})
+    if not app._authorized_admin(h):
+        _json(h, 401, {"error": {"message": "invalid admin key"}})
+        return True
+
+    if method == "POST" and not _same_site(h):
+        _json(h, 403, {"error": {"message": "cross-site writes are not allowed"}})
+        return True
+
+    if (path == "/api/requests" or path.startswith("/api/requests/")) and method == "GET":
+        parts = path.split("/")
+        try:
+            limit = int(parts[3]) if len(parts) > 3 and parts[3] else 50
+        except ValueError:
+            limit = 50
+        _json(h, 200, app.request_log_payload(limit))
         return True
 
     if path == "/api/config" and method == "GET":
@@ -94,6 +122,15 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
 
     if path == "/api/state" and method == "GET":
         _json(h, 200, app.ui_state())
+        return True
+
+    if (path == "/api/report" or path.startswith("/api/report/")) and method == "GET":
+        parts = path.split("/")
+        month = parts[3] if len(parts) > 3 and parts[3] else None
+        try:
+            _json(h, 200, app.report_payload(month))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
         return True
 
     if path.startswith("/api/usage") and method == "GET":
@@ -178,6 +215,23 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 500, {"error": {"message": f"cannot write subscriptions: {exc}"}})
             return True
         _json(h, 200, {"ok": True, "subscription": record})
+        return True
+
+    if path == "/api/test/channels" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        try:
+            payload = app.test_channels(incoming.get("channels"), incoming.get("model"))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        _json(h, 200, payload)
         return True
 
     if path == "/api/reload" and method == "POST":

@@ -11,7 +11,7 @@ from pathlib import Path
 STATE_FIELDS = (
     "cooldown_until", "reason", "last_error", "consecutive_errors", "half_open",
     "total_requests", "served_requests", "failed_requests", "total_tokens",
-    "handoffs", "last_used",
+    "handoffs", "last_used", "quota",
 )
 WINDOW_SECONDS = 86400
 
@@ -38,7 +38,10 @@ def restore(store, data: dict, now: float | None = None) -> int:
             continue
         for field in STATE_FIELDS:
             if field in entry:
-                setattr(state, field, entry[field])
+                value = entry[field]
+                if field == "quota" and not isinstance(value, dict):
+                    value = {}
+                setattr(state, field, value)
         state.req_times = deque(
             float(t) for t in (entry.get("req_times") or [])
             if isinstance(t, (int, float)) and 0 <= now - float(t) < WINDOW_SECONDS

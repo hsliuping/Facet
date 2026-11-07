@@ -1,10 +1,33 @@
 'use strict';
 
+// Keys live in the browser only. sessionStorage is the default (cleared when the
+// tab closes); "remember" also writes localStorage so embedded previews that
+// open a fresh session do not ask for the key on every reload.
+const KEY_STORAGE = { gateway: 'planrouter_key', admin: 'planrouter_admin_key' };
+
+function readStoredKey(kind) {
+  try {
+    return sessionStorage.getItem(KEY_STORAGE[kind])
+      || localStorage.getItem(KEY_STORAGE[kind]) || '';
+  } catch (_) { return ''; }
+}
+
+function storeKey(kind, value, remember) {
+  try {
+    if (value) sessionStorage.setItem(KEY_STORAGE[kind], value);
+    else sessionStorage.removeItem(KEY_STORAGE[kind]);
+    if (remember && value) localStorage.setItem(KEY_STORAGE[kind], value);
+    else localStorage.removeItem(KEY_STORAGE[kind]);
+  } catch (_) { /* private mode */ }
+}
+
 const state = {
   config: null,
   snapshot: null,
   tab: 'channels',
-  key: sessionStorage.getItem('planrouter_key') || '',
+  key: readStoredKey('gateway'),
+  adminKey: readStoredKey('admin'),
+  requests: null,
   editing: -1,
   dirty: false,
   subs: null,
@@ -13,6 +36,7 @@ const state = {
   usage: null,
   usageRange: 30,
   notify: null,
+  report: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -20,9 +44,80 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
+// Embedded/IDE webviews have no native dialogs (calling one throws
+// "prompt() is not supported."). Use an in-page overlay instead, and never
+// reuse #modal so an open channel/subscription editor keeps its unsaved draft.
+function askText({ title, message, value = '', password = false, remember = false,
+  withInput = true, confirmText = '确定' }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop ask-backdrop';
+    wrap.innerHTML = `<div class="modal ask-modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>${esc(title)}</h2></div>
+      <p class="hint ask-message">${esc(message)}</p>
+      ${withInput ? `<input class="ask-input" type="${password ? 'password' : 'text'}" value="${esc(value)}" autocomplete="off" spellcheck="false">` : ''}
+      ${remember ? '<label class="check ask-remember"><input type="checkbox"> 在本机记住（下次打开免填）</label>' : ''}
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" data-ask="cancel">取消</button>
+        <button type="button" class="btn primary" data-ask="ok">${esc(confirmText)}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('.ask-input');
+    const rememberBox = wrap.querySelector('.ask-remember input');
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      resolve(ok ? {
+        value: input ? input.value.trim() : '',
+        remember: !!(rememberBox && rememberBox.checked),
+      } : null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); finish(false);
+      } else if (e.key === 'Enter' && input && e.target === input) {
+        e.preventDefault(); e.stopPropagation(); finish(true);
+      }
+    };
+    // Capture phase: stop the page-wide Escape handler from closing an open editor.
+    document.addEventListener('keydown', onKey, true);
+    wrap.querySelector('[data-ask="cancel"]').onclick = () => finish(false);
+    wrap.querySelector('[data-ask="ok"]').onclick = () => finish(true);
+    if (input) { input.focus(); input.select(); }
+    else wrap.querySelector('[data-ask="ok"]').focus();
+  });
+}
+
+async function askConfirm(title, message) {
+  return (await askText({ title, message, withInput: false, confirmText: '确认' })) !== null;
+}
+
+// Concurrent 401s during boot must share one dialog instead of stacking overlays.
+const authPrompts = { api: null, gateway: null };
+
+function promptForAuth(isApi) {
+  const kind = isApi ? 'api' : 'gateway';
+  if (!authPrompts[kind]) {
+    authPrompts[kind] = askText({
+      title: isApi ? '需要管理密钥' : '需要网关密钥',
+      message: isApi
+        ? '管理接口返回 401。填写 listen.admin_key（未单独设置时即网关密钥），也可点右上角「管理密钥」。'
+        : '网关接口返回 401。填写 listen.api_key，也可点右上角「网关密钥」。',
+      password: true,
+      remember: true,
+    }).finally(() => { authPrompts[kind] = null; });
+  }
+  return authPrompts[kind];
+}
+
 async function api(path, opts = {}) {
   const headers = {};
   if (state.key) headers.Authorization = 'Bearer ' + state.key;
+  if (path.startsWith('/api/') && state.adminKey) headers['X-Admin-Key'] = state.adminKey;
   let body;
   if (opts.body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -30,13 +125,21 @@ async function api(path, opts = {}) {
   }
   const res = await fetch(path, { method: opts.method || 'GET', headers, body });
   if (res.status === 401 && !opts.retried) {
-    const input = window.prompt('输入网关密钥（listen.api_key）');
-    if (input) {
-      state.key = input.trim();
-      sessionStorage.setItem('planrouter_key', state.key);
+    const isApi = path.startsWith('/api/');
+    const answer = await promptForAuth(isApi);
+    if (answer && answer.value) {
+      if (isApi) {
+        state.adminKey = answer.value;
+        storeKey('admin', state.adminKey, answer.remember);
+      } else {
+        state.key = answer.value;
+        storeKey('gateway', state.key, answer.remember);
+      }
       return api(path, { ...opts, retried: true });
     }
-    throw new Error('未授权：需要网关密钥');
+    throw new Error(isApi
+      ? '未授权：请点右上角「管理密钥」填入 admin_key 后重试'
+      : '未授权：请点右上角「网关密钥」填入 api_key 后重试');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
@@ -51,16 +154,47 @@ function toast(message, kind = 'ok') {
   setTimeout(() => el.remove(), 4200);
 }
 
-function markDirty() {
+const DRAFT_CONFIG = 'planrouter_draft_config';
+const DRAFT_SUBS = 'planrouter_draft_subs';
+const saveTimers = { config: null, subs: null };
+
+function stashDraft(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* quota */ }
+}
+function dropDraft(key) {
+  try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+}
+function readDraft(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
+}
+
+// Every edit is persisted on its own; there is no separate "save and apply"
+// step. Debounced so typing in the model-policy box does not POST per keystroke.
+function scheduleSave(kind) {
+  clearTimeout(saveTimers[kind]);
+  saveTimers[kind] = setTimeout(() => {
+    saveTimers[kind] = null;
+    if (kind === 'subs') saveSubscriptions(); else saveConfig();
+  }, 600);
+}
+
+function holdDirty() {
   state.dirty = true;
   $('btn-save').classList.add('dirty');
-  $('btn-save').textContent = '保存并应用 *';
+  $('btn-save').textContent = '立即保存 *';
+  stashDraft(DRAFT_CONFIG, state.config);
+}
+
+function markDirty() {
+  holdDirty();
+  scheduleSave('config');
 }
 
 function clearDirty() {
   state.dirty = false;
   $('btn-save').classList.remove('dirty');
-  $('btn-save').textContent = '保存并应用';
+  $('btn-save').textContent = '立即保存';
+  dropDraft(DRAFT_CONFIG);
 }
 
 function normalizeConfig() {
@@ -69,6 +203,10 @@ function normalizeConfig() {
   c.routes = c.routes || [];
   c.listen = c.listen || {};
   c.defaults = c.defaults || {};
+  c.models = c.models || {};
+  c.models.branded = c.models.branded || {};
+  if (c.models.fallback_unknown === undefined) c.models.fallback_unknown = true;
+  c.models.fallback_route = c.models.fallback_route || 'default';
 }
 
 async function loadConfig() {
@@ -207,13 +345,20 @@ function renderStatus() {
     const kind = c.blocked ? 'bad' : (c.cooling ? 'warn' : 'ok');
     const label = c.blocked ? '已停用' : (c.cooling ? '冷却中' : '可用');
     const reason = c.blocked ? c.blocked_reason : c.reason;
+    const q = c.quota || {};
+    const quotaText = q.known
+      ? (q.ratio !== null && q.ratio !== undefined
+          ? `额度 ${Math.round(q.ratio * 100)}%`
+          : `余量 ${q.requests_remaining ?? q.tokens_remaining ?? '—'}`)
+      : '';
+    const quotaLow = q.exhausted || (q.ratio !== null && q.ratio !== undefined && q.ratio <= 0.15);
     const total = Math.max(c.cooldown_minutes * 60, c.cooling_seconds, 1);
     const pct = Math.min(100, (c.cooling_seconds / total) * 100);
     const remain = c.cooling
       ? `${Math.ceil(c.cooling_seconds / 60)} 分钟<div class="bar"><span style="width:${pct}%"></span></div>` : '—';
     return `<tr>
       <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong><br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
-      <td>${label}${reason ? '<br><small>' + esc(reason) + '</small>' : ''}</td>
+      <td>${label}${reason ? '<br><small>' + esc(reason) + '</small>' : ''}${quotaText ? `<br><span class="sub-note ${quotaLow ? 'quota-low' : ''}">${esc(quotaText)}</span>` : ''}</td>
       <td>${remain}</td>
       <td>${c.total_requests} / ${c.served_requests} / ${c.failed_requests}</td>
       <td>${c.total_tokens.toLocaleString()}</td>
@@ -237,16 +382,23 @@ function addMonthsISO(iso, months, fromToday) {
   return `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`;
 }
 
-function markSubDirty() {
+function holdSubDirty() {
   state.subDirty = true;
   $('btn-save-subs').classList.add('dirty');
-  $('btn-save-subs').textContent = '保存订阅 *';
+  $('btn-save-subs').textContent = '立即保存订阅 *';
+  stashDraft(DRAFT_SUBS, state.subs ? state.subs.subscriptions : []);
+}
+
+function markSubDirty() {
+  holdSubDirty();
+  scheduleSave('subs');
 }
 
 function clearSubDirty() {
   state.subDirty = false;
   $('btn-save-subs').classList.remove('dirty');
-  $('btn-save-subs').textContent = '保存订阅';
+  $('btn-save-subs').textContent = '立即保存订阅';
+  dropDraft(DRAFT_SUBS);
 }
 
 async function loadSubscriptions() {
@@ -257,17 +409,20 @@ async function loadSubscriptions() {
 function renderBanner() {
   const summary = state.snapshot && state.snapshot.subscriptions;
   const el = $('renewal-banner');
-  if (!summary || !summary.alerts || !summary.alerts.length) {
+  const alerts = (summary && summary.alerts) || [];
+  const quotaAlerts = (summary && summary.quota_alerts) || [];
+  if (!alerts.length && !quotaAlerts.length) {
     el.innerHTML = '';
     return;
   }
-  const critical = summary.alerts.some((a) => a.status === 'expired');
-  const items = summary.alerts.map((a) => {
+  const critical = alerts.some((a) => a.status === 'expired');
+  const items = alerts.map((a) => {
     const days = a.status === 'expired' ? `已过期 ${Math.abs(a.days_left)} 天` : `剩 ${a.days_left} 天`;
     return `<span class="banner-item">${esc(a.vendor)} / ${esc(a.account || '—')} / ${esc(a.plan)} · <span class="days">${days}</span></span>`;
-  }).join('');
+  }).join('') + quotaAlerts.map((a) =>
+    `<span class="banner-item">${esc(a.vendor)} / ${esc(a.account || '—')} / ${esc(a.plan)} · <span class="days">额度仅剩 ${esc(a.quota_remaining)} ${esc(a.quota_unit)}</span></span>`).join('');
   el.innerHTML = `<div class="banner ${critical ? 'critical' : ''}">
-    <span class="banner-title">${critical ? '有套餐已过期' : '套餐即将到期'}</span>
+    <span class="banner-title">${critical ? '有套餐已过期' : '套餐与额度提醒'}</span>
     <span class="banner-items">${items}</span>
     <button class="btn small" id="banner-view">查看订阅</button>
   </div>`;
@@ -278,12 +433,15 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
+  if (name === 'models') renderModels();
   if (name === 'status') {
     loadState().catch(() => {});
     loadUsage().catch((e) => toast(e.message, 'bad'));
+    loadRequests().catch(() => {});
   }
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
+    loadReport($('report-month').value).catch(() => {});
     if (!state.subDirty) loadSubscriptions().catch((e) => toast(e.message, 'bad'));
   }
 }
@@ -310,6 +468,9 @@ function renderSubscriptions() {
   $('sub-body').innerHTML = records.length ? records.map((r) => {
     const days = r.days_left === null ? '—'
       : r.days_left < 0 ? `逾期 ${-r.days_left} 天` : `${r.days_left} 天`;
+    const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
+      ? '—'
+      : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
     return `<tr>
       <td><strong>${esc(r.vendor)}</strong><br><span class="sub-note">${esc(r.account) || '未填账号'}</span></td>
       <td>${esc(r.plan)}<br><span class="sub-note">${esc(r.tier) || '未填档位'}</span></td>
@@ -320,6 +481,7 @@ function renderSubscriptions() {
       <td class="days-left ${esc(r.status)}">${days}</td>
       <td><span class="tag ${esc(r.status)}">${labels[r.status] || r.status}</span></td>
       <td>${r.auto_renew ? '是' : '否'}</td>
+      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${esc(quota)}</td>
       <td class="sub-note">${esc((r.channels || []).join(', ')) || '—'}</td>
       <td>
         <button class="btn small" data-action="renew" data-id="${esc(r.id)}">续费</button>
@@ -327,7 +489,82 @@ function renderSubscriptions() {
         <button class="btn small danger" data-action="delete-sub" data-id="${esc(r.id)}">删除</button>
       </td>
     </tr>`;
-  }).join('') : '<tr><td colspan="11" class="sub-note">还没有订阅记录，点击「新增订阅」录入厂家、账号、套餐与到期时间。</td></tr>';
+  }).join('') : '<tr><td colspan="12" class="sub-note">还没有订阅记录，点击「新增订阅」录入厂家、账号、套餐与到期时间。</td></tr>';
+}
+
+function channelPicker(selected) {
+  const saved = (Array.isArray(selected) ? selected : []).map((n) => String(n));
+  const available = state.config?.channels || [];
+  const names = [...new Set([...available.map((c) => String(c.name)), ...saved])];
+  if (!names.length) {
+    return `<div class="field wide"><label>关联渠道（勾选，可多选）</label>
+      <div class="channel-picker empty">还没有可选渠道。请先在「渠道配置」新增渠道并点「保存」，再回来勾选。</div></div>`;
+  }
+  const items = names.map((name) => {
+    const c = available.find((x) => String(x.name) === name);
+    const detail = c ? `${c.protocol} · ${c.base_url}` : '渠道不存在（保存时保留原值）';
+    return `<label class="pick ${c ? '' : 'missing'}">
+      <input type="checkbox" name="channels" value="${esc(name)}" ${saved.includes(name) ? 'checked' : ''}>
+      <span><strong>${esc(name)}</strong><small>${esc(detail)}</small></span>
+    </label>`;
+  }).join('');
+  return `<div class="field wide"><label>关联渠道（勾选，可多选）</label>
+    <div class="channel-picker">${items}</div>
+    <small class="pick-note">勾选后自动带出厂家与套餐名称，仍可手动修改</small></div>`;
+}
+
+function pickedChannels(f) {
+  return Array.from(f.querySelectorAll('input[name="channels"]:checked'), (n) => n.value);
+}
+
+const VENDOR_RULES = [
+  [/volces|volcengine|火山/i, '火山引擎'],
+  [/deepseek/i, 'DeepSeek'],
+  [/dashscope|aliyun|qwen|通义|阿里/i, '阿里云百炼'],
+  [/qianfan|baidu|文心|百度/i, '百度千帆'],
+  [/bigmodel|zhipuai|智谱|glm/i, '智谱'],
+  [/moonshot|kimi/i, 'Moonshot'],
+  [/siliconflow|硅基/i, '硅基流动'],
+  [/hunyuan|tencent|腾讯/i, '腾讯云'],
+  [/anthropic|claude/i, 'Anthropic'],
+  [/openai/i, 'OpenAI'],
+];
+
+function inferVendor(c) {
+  const text = `${c.name || ''} ${c.base_url || ''}`;
+  for (const [pattern, vendor] of VENDOR_RULES) {
+    if (pattern.test(text)) return vendor;
+  }
+  try {
+    return new URL(c.base_url).hostname.split('.')[0];
+  } catch (_) {
+    return String(c.name || '');
+  }
+}
+
+function inferPlan(c) {
+  const name = String(c.name || '');
+  const vendor = inferVendor(c);
+  const rest = name.includes(vendor)
+    ? name.replace(vendor, '').replace(/^[-_\s/]+/, '').trim() : name;
+  return rest || name;
+}
+
+function autofillFromChannels(f) {
+  const names = pickedChannels(f);
+  if (!names.length) return;
+  const c = (state.config?.channels || []).find((x) => x.name === names[0]);
+  if (!c) return;
+  const fill = (field, value) => {
+    const el = f.elements.namedItem(field);
+    if (!el || !value) return;
+    if (el.value.trim() && el.dataset.autofill !== '1') return;
+    el.value = value;
+    el.dataset.autofill = '1';
+  };
+  fill('vendor', c.vendor || inferVendor(c));
+  fill('plan', c.plan || inferPlan(c));
+  if (c.tier) fill('tier', c.tier);
 }
 
 function openSubEditor(index) {
@@ -336,8 +573,8 @@ function openSubEditor(index) {
     vendor: '', account: '', plan: '', tier: '', price: '', currency: 'CNY',
     billing_cycle: 'monthly', started_at: todayISO(), expires_at: '',
     auto_renew: false, remind_days: 7, channels: [], note: '',
+    quota_limit: '', quota_used: '', quota_unit: '', quota_updated_at: '',
   };
-  const channels = Array.isArray(r.channels) ? r.channels.join(', ') : (r.channels || '');
   const currencies = ['CNY', 'USD', 'EUR', 'HKD'].map((c) =>
     `<option value="${c}" ${r.currency === c ? 'selected' : ''}>${c}</option>`).join('');
   const cycles = [['monthly', '月付'], ['quarterly', '季付'], ['yearly', '年付'],
@@ -346,6 +583,7 @@ function openSubEditor(index) {
   openModal(index >= 0 ? '编辑订阅' : '新增订阅', `
     <form id="sub-form">
       <div class="form-grid">
+        ${channelPicker(r.channels)}
         ${field('厂家 *', 'vendor', r.vendor, { placeholder: '火山引擎' })}
         ${field('账号 / 备注', 'account', r.account, { placeholder: '账号 A' })}
         ${field('套餐名称 *', 'plan', r.plan, { placeholder: 'coding plan' })}
@@ -357,16 +595,36 @@ function openSubEditor(index) {
         ${field('开始日期', 'started_at', r.started_at, { type: 'date' })}
         ${field('到期日期', 'expires_at', r.expires_at, { type: 'date' })}
         <div class="field"><label class="check"><input type="checkbox" name="auto_renew" ${r.auto_renew ? 'checked' : ''}> 已开启自动续费</label></div>
-        ${field('关联渠道（逗号分隔）', 'channels', channels, { wide: true, placeholder: 'volcengine-a, volcengine-b' })}
+        ${field('本周期总额度', 'quota_limit', r.quota_limit ?? '', { type: 'number' })}
+        ${field('已用额度', 'quota_used', r.quota_used ?? '', { type: 'number' })}
+        <div class="field"><label for="f-quota_unit">额度单位</label><select id="f-quota_unit" name="quota_unit">
+          ${[['', '未指定'], ['requests', '次请求'], ['tokens', 'tokens'], ['hours', '小时']]
+            .map(([v, l]) => `<option value="${v}" ${(r.quota_unit || '') === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select></div>
         ${field('备注', 'note', r.note, { wide: true, textarea: true })}
       </div>
+      <div class="test-row">
+        <span class="test-hint">测试勾选的渠道是否可用（会各发一次最小请求）</span>
+        <button type="button" class="btn ghost" id="sub-test">测试关联渠道</button>
+      </div>
+      <div id="test-result" class="test-result" hidden></div>
       <div class="modal-foot">
         <button type="button" class="btn ghost" id="sub-cancel">取消</button>
-        <button type="submit" class="btn primary">确定</button>
+        <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
   $('sub-cancel').onclick = closeModal;
-  $('sub-form').onsubmit = (e) => { e.preventDefault(); saveSubEditor(); };
+  $('sub-test').onclick = testSubscriptionEditor;
+  const f = $('sub-form');
+  f.querySelectorAll('input[name="channels"]').forEach((box) => {
+    box.addEventListener('change', () => autofillFromChannels(f));
+  });
+  ['vendor', 'plan', 'tier'].forEach((n) => {
+    const el = f.elements.namedItem(n);
+    if (el) el.addEventListener('input', () => { el.dataset.autofill = ''; });
+  });
+  autofillFromChannels(f);
+  f.onsubmit = (e) => { e.preventDefault(); saveSubEditor(); };
 }
 
 function saveSubEditor() {
@@ -380,7 +638,12 @@ function saveSubEditor() {
       billing_cycle: val('billing_cycle'), started_at: val('started_at'),
       expires_at: val('expires_at'), remind_days: Number(val('remind_days') || 7),
       auto_renew: f.elements.namedItem('auto_renew').checked,
-      channels: val('channels').split(',').map((s) => s.trim()).filter(Boolean),
+      channels: pickedChannels(f),
+      quota_limit: val('quota_limit') === '' ? null : Number(val('quota_limit')),
+      quota_used: val('quota_used') === '' ? null : Number(val('quota_used')),
+      quota_unit: val('quota_unit'),
+      quota_updated_at: state.editingSub >= 0
+        ? (state.subs.subscriptions[state.editingSub].quota_updated_at || '') : '',
       note: val('note'),
     };
     if (!record.vendor || !record.plan) throw new Error('厂家和套餐名称不能为空');
@@ -403,7 +666,12 @@ async function saveSubscriptions() {
     renderSubscriptions();
     await loadState();
     toast('订阅已保存');
-  } catch (err) { toast(err.message, 'bad'); }
+    return true;
+  } catch (err) {
+    holdSubDirty();
+    toast('订阅未保存：' + err.message + '（改动已暂存，刷新后可恢复）', 'bad');
+    return false;
+  }
 }
 
 function openRenewModal(id) {
@@ -446,9 +714,9 @@ function openRenewModal(id) {
   };
 }
 
-function deleteSub(id) {
+async function deleteSub(id) {
   const record = state.subs.subscriptions.find((x) => x.id === id);
-  if (!record || !window.confirm(`删除订阅「${record.vendor} / ${record.plan}」？`)) return;
+  if (!record || !(await askConfirm('删除订阅', `删除订阅「${record.vendor} / ${record.plan}」？`))) return;
   state.subs.subscriptions = state.subs.subscriptions.filter((x) => x.id !== id);
   markSubDirty();
   renderSubscriptions();
@@ -574,6 +842,154 @@ async function checkNotifications() {
   } catch (err) { toast(err.message, 'bad'); }
 }
 
+function renderBrandList() {
+  const p = state.config.models || {};
+  const rows = Object.entries(p.branded || {});
+  $('brand-list').innerHTML = rows.length ? rows.map(([name, hint]) => `
+    <div class="model-row">
+      <code>${esc(name)}</code>
+      <span class="sub-note">→ ${esc(hint)} 链 · 内部调度</span>
+      <button class="btn small ghost" data-copy="${esc(name)}">复制</button>
+    </div>`).join('') : '<div class="chart-empty">还没有自有模型名</div>';
+}
+
+function renderExactModels() {
+  const rows = (state.config.channels || []).filter((c) => c.enabled !== false).flatMap((c) =>
+    Object.keys(c.models || {}).filter((k) => k !== 'auto' && k !== '*')
+      .map((k) => `<div class="model-row"><code>${esc(k)}</code><span class="sub-note">${esc(c.name)} → ${esc(c.models[k])}</span></div>`));
+  $('exact-models').innerHTML = rows.length
+    ? rows.join('') : '<div class="chart-empty">还没有显式模型映射，任意名字都会内部调度</div>';
+}
+
+function renderModels() {
+  const p = state.config.models || {};
+  $('set-branded').value = Object.entries(p.branded || {})
+    .map(([name, hint]) => name + '=' + hint).join('\n');
+  $('set-fallback').checked = p.fallback_unknown !== false;
+  $('set-fallback-route').value = p.fallback_route || 'default';
+  renderBrandList();
+  renderExactModels();
+}
+
+function syncModelPolicy() {
+  const branded = {};
+  $('set-branded').value.split('\n').forEach((line) => {
+    const s = line.trim();
+    if (!s) return;
+    const i = s.indexOf('=');
+    const name = (i > 0 ? s.slice(0, i) : s).trim();
+    if (name) branded[name] = i > 0 ? s.slice(i + 1).trim() : 'default';
+  });
+  state.config.models = {
+    branded,
+    fallback_unknown: $('set-fallback').checked,
+    fallback_route: $('set-fallback-route').value.trim() || 'default',
+  };
+  markDirty();
+  renderBrandList();
+}
+
+$('set-branded').addEventListener('input', syncModelPolicy);
+$('set-fallback-route').addEventListener('input', syncModelPolicy);
+$('set-fallback').addEventListener('change', syncModelPolicy);
+$('brand-list').addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-copy]');
+  if (!button) return;
+  const value = button.dataset.copy;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(
+      () => toast('已复制：' + value),
+      () => toast('复制失败，请手动选中：' + value, 'warn'),
+    );
+  } else {
+    toast('请手动复制：' + value, 'warn');
+  }
+});
+
+async function loadRequests() {
+  state.requests = await api('/api/requests/50');
+  renderRequests();
+}
+
+function renderRequests() {
+  const data = state.requests;
+  const tbody = $('requests-body');
+  if (!data || !data.entries || !data.entries.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
+    $('requests-note').textContent = (data && data.note) || '请求审计未启用';
+    return;
+  }
+  $('requests-note').textContent = `${data.note} · 最近 ${data.entries.length} 条 · ${(data.size / 1024).toFixed(1)} KB`;
+  const labels = {
+    ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
+    no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+  };
+  tbody.innerHTML = data.entries.map((e) => {
+    const cls = e.status === 'ok' || e.status === 'local' ? 'active'
+      : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
+    return `<tr>
+      <td>${esc((e.ts || '').slice(11, 19))}</td>
+      <td><code>${esc(e.model || '—')}</code></td>
+      <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(e.reason || '')}</span></td>
+      <td>${esc(e.channel || '—')}<br><span class="sub-note">${esc(e.wire_model || '')}</span></td>
+      <td><span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span><br><span class="sub-note">${esc(e.http_status ?? '')}</span></td>
+      <td>${esc(e.attempt ?? 0)}</td>
+      <td>${esc(e.ms ?? 0)} ms</td>
+      <td>${esc(e.tokens ?? 0)}</td>
+    </tr>`;
+  }).join('');
+}
+
+$('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));
+$('btn-admin-key').onclick = async () => {
+  const answer = await askText({
+    title: '管理密钥',
+    message: 'listen.admin_key，留空表示清除。密钥只保存在本机浏览器。',
+    value: state.adminKey, password: true, remember: true,
+  });
+  if (!answer) return;
+  state.adminKey = answer.value;
+  storeKey('admin', state.adminKey, answer.remember);
+  loadState().then(() => toast('管理密钥已更新')).catch((e) => toast(e.message, 'bad'));
+};
+
+async function loadReport(month) {
+  state.report = await api(month ? `/api/report/${encodeURIComponent(month)}` : '/api/report');
+  renderReport();
+}
+
+function renderReport() {
+  const r = state.report;
+  if (!r) return;
+  const cost = Object.entries(r.currency_totals || {})
+    .map(([code, amount]) => `${amount} ${code}`).join(' / ') || '—';
+  $('report-note').textContent = `${r.month} · ${r.active_days} 天有用量 · ${r.note}`;
+  $('report-metrics').innerHTML = [
+    ['月等效成本', cost, ''],
+    ['请求 / 成功 / 失败', `${r.total.requests} / ${r.total.success} / ${r.total.failed}`, ''],
+    ['Tokens', r.total.tokens.toLocaleString(), ''],
+    ['渠道数', r.channels.length, ''],
+  ].map(([label, value, cls]) =>
+    `<div class="metric"><div class="label">${esc(label)}</div><div class="value ${cls}">${esc(value)}</div></div>`).join('');
+  $('report-body').innerHTML = r.subscriptions.length
+    ? r.subscriptions.map((s) => `<tr>
+        <td><strong>${esc(s.vendor)}</strong><br><span class="sub-note">${esc(s.account) || '—'}</span></td>
+        <td>${esc(s.plan)}<br><span class="sub-note">${esc(s.tier) || '未填档位'}</span></td>
+        <td>${esc(s.monthly_equivalent?.amount ?? '—')} ${esc(s.currency)}</td>
+        <td>${s.usage.requests} / ${s.usage.failed}</td>
+        <td>${s.usage.tokens.toLocaleString()}</td>
+        <td>${s.cost_per_1k_requests === null || s.cost_per_1k_requests === undefined
+              ? '—' : s.cost_per_1k_requests + ' ' + esc(s.currency)}</td>
+        <td class="${s.quota_ratio !== null && s.quota_ratio !== undefined && s.quota_ratio <= 0.15 ? 'quota-low' : 'sub-note'}">${s.quota_remaining === null || s.quota_remaining === undefined ? '—' : esc(s.quota_remaining + ' ' + (s.quota_unit || ''))}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="sub-note">还没有订阅记录</td></tr>';
+  $('report-channels').textContent = '渠道用量：' + (r.channels.map((c) =>
+    `${c.name} ${c.requests} 次 / ${c.tokens} tokens${c.linked ? '' : '（未关联订阅）'}`).join(' · ') || '暂无');
+}
+
+$('btn-load-report').onclick = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
+$('report-month').onchange = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
+
 function renderAll() {
   renderChannels();
   renderRoutes();
@@ -583,6 +999,9 @@ function renderAll() {
   renderBanner();
   renderUsage();
   renderNotifications();
+  renderModels();
+  renderRequests();
+  renderReport();
 }
 
 function openModal(title, html) {
@@ -603,10 +1022,93 @@ const field = (label, name, value, opts = {}) => `
       : `<input id="f-${name}" name="${name}" type="${opts.type || 'text'}" value="${esc(value)}" ${opts.type === 'number' ? 'min="0"' : ''} placeholder="${esc(opts.placeholder || '')}">`}
   </div>`;
 
+function draftChannelFromEditor() {
+  const f = $('editor-form');
+  const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
+  const rate = {};
+  ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => { if (val(k)) rate[k] = Number(val(k)); });
+  return {
+    name: val('name'), protocol: val('protocol'), base_url: val('base_url'),
+    api_key: val('api_key') || '***',
+    priority: Number(val('priority') || 100),
+    cooldown_minutes: Number(val('cooldown_minutes') || 300),
+    rate, models: parseModels(val('models')),
+    enabled: f.elements.namedItem('enabled').checked,
+    ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
+  };
+}
+
+function showTestResult(results, note) {
+  const box = $('test-result');
+  if (!box) return;
+  box.hidden = false;
+  if (!results) {
+    box.className = 'test-result';
+    box.textContent = note || '';
+    return;
+  }
+  box.innerHTML = results.map((r) => {
+    const ok = !!r.ok;
+    const head = [r.name || '渠道', r.http_status ? 'HTTP ' + r.http_status : '',
+      r.latency_ms != null ? r.latency_ms + 'ms' : '', r.model ? '模型 ' + r.model : '']
+      .filter(Boolean).join(' · ');
+    const detail = ok
+      ? (r.reply ? '回复：' + r.reply : '上游返回成功')
+      : ((r.error || '未知错误') + (r.hint ? ' — ' + r.hint : ''));
+    const meta = [r.url && 'URL ' + r.url,
+      r.auth && (r.auth === 'none' ? '未携带密钥' : '已携带密钥（' + r.auth + '）')]
+      .filter(Boolean).join(' · ');
+    const keyNote = r.key && r.key.note
+      ? `<div class="test-key">密钥解析：${esc(r.key.note)}</div>` : '';
+    const debug = r.debug
+      ? `<details class="test-debug"><summary>查看请求 / 响应明细</summary><pre>${esc(JSON.stringify({ key: r.key, ...r.debug }, null, 2))}</pre></details>`
+      : '';
+    return `<div class="test-line"><div class="test-head ${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${esc(head)}</div><div class="test-detail">${esc(detail)}</div>${meta ? `<div class="test-meta">${esc(meta)}</div>` : ''}${keyNote}${debug}</div>`;
+  }).join('') + (note ? `<div class="test-note">${esc(note)}</div>` : '');
+  box.className = 'test-result';
+}
+
+async function runProbe(button, channels, model) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '测试中…';
+  showTestResult(null, '正在发起最小请求，请稍候…');
+  try {
+    const body = { channels };
+    if (model) body.model = model;
+    const data = await api('/api/test/channels', { method: 'POST', body });
+    showTestResult(data.results || [], data.note);
+    toast(data.ok ? '测试通过' : '测试未通过，查看详情', data.ok ? 'ok' : 'bad');
+  } catch (err) {
+    const hint = /未授权|401/.test(err.message)
+      ? '请点右上角「管理密钥」填入 listen.admin_key（默认值见 compose.yaml 或 .env）后重试'
+      : '';
+    showTestResult([{ ok: false, name: '请求失败', error: err.message, hint }], null);
+    toast(err.message, 'bad');
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function testChannelEditor() {
+  const model = ($('editor-test-model')?.value || '').trim();
+  return runProbe($('editor-test'), [draftChannelFromEditor()], model);
+}
+
+function testSubscriptionEditor() {
+  const f = $('sub-form');
+  const names = pickedChannels(f);
+  if (!names.length) return toast('请先勾选关联渠道', 'bad');
+  const drafts = names.map((name) =>
+    (state.config?.channels || []).find((c) => c.name === name) || name);
+  return runProbe($('sub-test'), drafts, '');
+}
+
 function openChannelEditor(index) {
   state.editing = index;
   const c = index >= 0 ? state.config.channels[index] : {
-    name: '', protocol: 'openai', base_url: '', api_key: 'env:', models: { auto: '' },
+    name: '', protocol: 'openai', base_url: '', api_key: '', models: { auto: '' },
     priority: 100, cooldown_minutes: 300, enabled: true, rate: {},
   };
   const rate = c.rate || {};
@@ -620,7 +1122,8 @@ function openChannelEditor(index) {
             <option value="anthropic" ${c.protocol === 'anthropic' ? 'selected' : ''}>anthropic</option>
           </select></div>
         ${field('上游 base_url', 'base_url', c.base_url, { wide: true, placeholder: 'http://127.0.0.1:8080' })}
-        ${field('密钥（env:VAR 或留空不改）', 'api_key', c.api_key || '', { wide: true, placeholder: 'env:MY_PLAN_KEY' })}
+        ${field('上游路径（留空自动选择）', 'upstream_path', c.upstream_path || '', { wide: true, placeholder: 'base_url 已含 /v3 时留空即可；需要覆盖时填 /chat/completions' })}
+        ${field('密钥（直接粘贴明文 API Key）', 'api_key', c.api_key || '', { wide: true, placeholder: '直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY' })}
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
         ${field('RPM', 'rpm', rate.rpm ?? '', { type: 'number' })}
@@ -630,12 +1133,18 @@ function openChannelEditor(index) {
         ${field('模型映射（每行 exposed=wire，*=* 表示透传）', 'models', serializeModels(c.models), { wide: true, textarea: true })}
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
       </div>
+      <div class="test-row">
+        <input id="editor-test-model" placeholder="测试模型（留空自动选择）">
+        <button type="button" class="btn ghost" id="editor-test">测试连接</button>
+      </div>
+      <div id="test-result" class="test-result" hidden></div>
       <div class="modal-foot">
         <button type="button" class="btn ghost" id="editor-cancel">取消</button>
-        <button type="submit" class="btn primary">确定</button>
+        <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
   $('editor-cancel').onclick = closeModal;
+  $('editor-test').onclick = testChannelEditor;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
 }
 
@@ -659,6 +1168,7 @@ function saveChannelEditor() {
       rate,
       models,
       enabled: f.elements.namedItem('enabled').checked,
+      ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
     };
     if (state.editing >= 0) {
       const oldName = state.config.channels[state.editing].name;
@@ -695,7 +1205,7 @@ function openRouteModal() {
       </div>
       <div class="modal-foot">
         <button type="button" class="btn ghost" id="route-cancel">取消</button>
-        <button type="submit" class="btn primary">确定</button>
+        <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
   $('route-cancel').onclick = closeModal;
@@ -737,7 +1247,12 @@ async function saveConfig() {
     await loadConfig();
     await loadState();
     toast(`已保存并热加载：${result.channels} 个渠道，${result.routes.length} 条链`);
-  } catch (err) { toast(err.message, 'bad'); }
+    return true;
+  } catch (err) {
+    holdDirty();
+    toast('配置未保存：' + err.message + '（改动已暂存，刷新后可恢复）', 'bad');
+    return false;
+  }
 }
 
 function bindEvents() {
@@ -750,19 +1265,22 @@ function bindEvents() {
   $('btn-add-route').onclick = openRouteModal;
   $('btn-refresh').onclick = () => loadState().catch((e) => toast(e.message, 'bad'));
   $('btn-reload').onclick = async () => {
-    if (state.dirty && !window.confirm('有未保存的修改，确认放弃并从磁盘重载？')) return;
+    if (state.dirty && !(await askConfirm('放弃修改', '有未保存的修改，确认放弃并从磁盘重载？'))) return;
     try {
       await api('/api/reload', { method: 'POST' });
       await loadConfig(); await loadState(); clearDirty();
       toast('已从磁盘重载');
     } catch (err) { toast(err.message, 'bad'); }
   };
-  $('btn-key').onclick = () => {
-    const input = window.prompt('网关密钥（留空表示清除）', state.key);
-    if (input === null) return;
-    state.key = input.trim();
-    if (state.key) sessionStorage.setItem('planrouter_key', state.key);
-    else sessionStorage.removeItem('planrouter_key');
+  $('btn-key').onclick = async () => {
+    const answer = await askText({
+      title: '网关密钥',
+      message: 'listen.api_key，留空表示清除。密钥只保存在本机浏览器。',
+      value: state.key, password: true, remember: true,
+    });
+    if (!answer) return;
+    state.key = answer.value;
+    storeKey('gateway', state.key, answer.remember);
     loadState().then(() => toast('密钥已更新')).catch((e) => toast(e.message, 'bad'));
   };
   $('btn-export').onclick = () => {
@@ -777,7 +1295,7 @@ function bindEvents() {
   $('modal').onclick = (e) => { if (e.target === $('modal')) closeModal(); };
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
-  $('channel-list').addEventListener('click', (e) => {
+  $('channel-list').addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
     const i = Number(b.dataset.index);
@@ -789,7 +1307,7 @@ function bindEvents() {
     }
     if (action === 'delete') {
       const name = state.config.channels[i].name;
-      if (!window.confirm(`删除渠道「${name}」？它也会从所有路由链中移除。`)) return;
+      if (!(await askConfirm('删除渠道', `删除渠道「${name}」？它也会从所有路由链中移除。`))) return;
       state.config.channels.splice(i, 1);
       removeFromRoutes(name);
       markDirty(); renderAll();
@@ -797,7 +1315,7 @@ function bindEvents() {
     if (action === 'reset') resetCooldown(b.dataset.name);
   });
 
-  $('route-list').addEventListener('click', (e) => {
+  $('route-list').addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
     const ri = Number(b.dataset.index);
@@ -805,7 +1323,7 @@ function bindEvents() {
     const route = state.config.routes[ri];
     const action = b.dataset.action;
     if (action === 'delete-route') {
-      if (!window.confirm(`删除链「${route.name}」？`)) return;
+      if (!(await askConfirm('删除链', `删除链「${route.name}」？`))) return;
       state.config.routes.splice(ri, 1);
     } else if (action === 'move-up' && pos > 0) {
       [route.channels[pos - 1], route.channels[pos]] = [route.channels[pos], route.channels[pos - 1]];
@@ -860,21 +1378,51 @@ function bindEvents() {
   });
 }
 
+async function restoreDrafts() {
+  const config = readDraft(DRAFT_CONFIG);
+  if (config && await askConfirm('恢复草稿', '检测到上次未保存的渠道配置，是否恢复并重新保存？')) {
+    state.config = config;
+    normalizeConfig();
+    holdDirty();
+    renderAll();
+    saveConfig();
+  } else if (config) {
+    dropDraft(DRAFT_CONFIG);
+  }
+  const subs = readDraft(DRAFT_SUBS);
+  if (subs && await askConfirm('恢复草稿', '检测到上次未保存的订阅修改，是否恢复并重新保存？')) {
+    state.subs = state.subs || { subscriptions: [] };
+    state.subs.subscriptions = subs;
+    holdSubDirty();
+    renderSubscriptions();
+    saveSubscriptions();
+  } else if (subs) {
+    dropDraft(DRAFT_SUBS);
+  }
+}
+
 async function boot() {
   bindEvents();
   try {
     await loadConfig();
     await loadSubscriptions();
+    await restoreDrafts();
     await loadState();
     await loadUsage();
     await loadNotifications();
+    await loadRequests();
+    $('report-month').value = todayISO().slice(0, 7);
+    await loadReport();
   } catch (err) {
     toast(err.message, 'bad');
     $('conn-badge').textContent = '连接失败';
     $('conn-badge').className = 'badge bad';
   }
   setInterval(() => {
-    if (state.tab === 'status') loadState().catch(() => {});
+    if (state.tab === 'status') {
+      loadState().catch(() => {});
+      loadRequests().catch(() => {});
+    }
   }, 5000);
 }
 
