@@ -184,6 +184,10 @@ class Channel:
     enabled: bool = True
     upstream_path: str | None = None
     tier: str = ""  # "", "free" or "paid"; empty infers from linked subscriptions
+    # Per-model tier overrides ("free"/"paid" by exposed model name) — a plan
+    # like Bailian mixes free-quota and billed models on one channel, and the
+    # mix moves over time, so each model can be switched by hand.
+    tiers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -422,6 +426,21 @@ def parse_config(raw: dict) -> Config:
         tier = str(item.get("tier") or "").strip().lower()
         if tier not in ("", "free", "paid"):
             raise ValueError(f'channel {name}: tier must be "", "free" or "paid"')
+        tiers_raw = item.get("tiers") or {}
+        if not isinstance(tiers_raw, dict):
+            raise ValueError(f"channel {name}: tiers must be an object")
+        tiers = {}
+        for model_name, mark in tiers_raw.items():
+            key = str(model_name).strip()
+            mark = str(mark or "").strip().lower()
+            if not key:
+                raise ValueError(f"channel {name}: tiers keys must be model names")
+            if mark not in ("", "free", "paid"):
+                raise ValueError(
+                    f'channel {name}: tiers values must be "", "free" or "paid"'
+                )
+            if mark:
+                tiers[key] = mark
         models = item.get("models") or {}
         if not models:
             raise ValueError(f"channel {name}: models mapping is required")
@@ -443,6 +462,7 @@ def parse_config(raw: dict) -> Config:
             enabled=bool(item.get("enabled", True)),
             upstream_path=upstream_path,
             tier=tier,
+            tiers=tiers,
         ))
     if not channels:
         raise ValueError("at least one channel is required")

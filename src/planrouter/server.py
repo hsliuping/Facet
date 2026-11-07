@@ -134,6 +134,13 @@ def channel_tier(channel, subscriptions: list[dict]) -> str:
     return ""
 
 
+def model_tier(channel, subscriptions: list[dict], model: str) -> str:
+    """Per-model tier wins (manual switching), then the channel default."""
+    if model in channel.tiers:
+        return channel.tiers[model]
+    return channel_tier(channel, subscriptions)
+
+
 def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     """Keep stored secrets when the editor sends '***' or an empty value."""
     merged = copy.deepcopy(new_raw)
@@ -763,6 +770,7 @@ class App:
                 "blocked": channel.name in blocked,
                 "blocked_reason": blocked.get(channel.name, ""),
                 "tier": channel_tier(channel, self.subscriptions),
+                "tiers": dict(channel.tiers),
                 "catalog": {
                     "fetched_at": catalog["fetched_at"],
                     "count": catalog["count"],

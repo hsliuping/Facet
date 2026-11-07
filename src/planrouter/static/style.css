@@ -215,6 +215,10 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .tag.unknown { background: rgba(138, 155, 176, .14); color: var(--muted); }
 .tag.free { background: rgba(63, 191, 120, .14); color: var(--ok); }
 .tag.paid { background: rgba(91, 157, 255, .16); color: var(--accent); }
+.tag.mixed { background: rgba(224, 166, 58, .14); color: var(--warn); }
+.tier-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.tier-row code { font-size: 12px; word-break: break-all; }
+.tier-row select { max-width: 130px; }
 .days-left { font-weight: 650; }
 .days-left.expiring { color: var(--warn); }
 .days-left.expired { color: var(--bad); }

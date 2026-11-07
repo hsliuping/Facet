@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planrouter.core import StateStore, parse_config
 from planrouter.persistence import StatePersistence, capture, restore
-from planrouter.server import App, channel_tier
+from planrouter.server import App, channel_tier, model_tier
 
 
 def config_dict() -> dict:
@@ -147,7 +147,8 @@ class PersistenceTests(unittest.TestCase):
 
 
 class TierTests(unittest.TestCase):
-    """Channel tier: explicit free/paid field, inferred from subscriptions."""
+    """Tiers: explicit free/paid field, inferred from subscriptions, and
+    per-model marks that switch a single model by hand."""
 
     def test_parse_tier_accepts_free_and_paid(self):
         raw = rotation_config()
@@ -163,6 +164,22 @@ class TierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_config(raw)
 
+    def test_parse_tiers_per_model(self):
+        raw = rotation_config()
+        raw["channels"][0]["tiers"] = {"model-a": "Free ", "extra": "paid", "auto": ""}
+        config = parse_config(raw)
+        self.assertEqual(config.channels[0].tiers,
+                         {"model-a": "free", "extra": "paid"})
+
+    def test_parse_tiers_rejects_bad_value_and_type(self):
+        raw = rotation_config()
+        raw["channels"][0]["tiers"] = {"model-a": "expensive"}
+        with self.assertRaises(ValueError):
+            parse_config(raw)
+        raw["channels"][0]["tiers"] = ["model-a"]
+        with self.assertRaises(ValueError):
+            parse_config(raw)
+
     def test_channel_tier_inference(self):
         raw = rotation_config()
         raw["channels"][0]["tier"] = "free"
@@ -174,6 +191,19 @@ class TierTests(unittest.TestCase):
         self.assertEqual(channel_tier(by_name["b"], subs), "paid")  # priced sub
         self.assertEqual(channel_tier(by_name["c"], subs), "")      # zero price
         self.assertEqual(channel_tier(by_name["claude"], subs), "")  # unlinked
+
+    def test_model_tier_precedence(self):
+        raw = rotation_config()
+        raw["channels"][0]["tier"] = "free"
+        raw["channels"][0]["tiers"] = {"model-a": "paid"}  # manual switch wins
+        raw["channels"][1]["tiers"] = {"model-b": "free"}  # free model on a paid plan
+        config = parse_config(raw)
+        by_name = {c.name: c for c in config.channels}
+        subs = [{"name": "plan", "price": 39, "channels": ["b"]}]
+        self.assertEqual(model_tier(by_name["a"], subs, "model-a"), "paid")
+        self.assertEqual(model_tier(by_name["a"], subs, "other"), "free")
+        self.assertEqual(model_tier(by_name["b"], subs, "model-b"), "free")
+        self.assertEqual(model_tier(by_name["b"], subs, "other"), "paid")
 
 
 if __name__ == "__main__":

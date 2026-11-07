@@ -263,11 +263,33 @@ function tierBadge(tier) {
   return '';
 }
 
-// Preferred: tier from the runtime snapshot (explicit field or inferred from
-// subscriptions); fallback to the raw config value before the first load.
-function tierFor(name, fallback) {
+// Tier resolution for a model on a channel: a manual per-model marking wins
+// ("tiers" map), then the channel default (explicit field or inferred from
+// subscriptions in the snapshot); falls back to the raw config before loading.
+function tierFor(name, fallback, model) {
   const snap = (state.snapshot?.channels || []).find((x) => x.name === name);
+  if (model) {
+    if (snap?.tiers?.[model]) return snap.tiers[model];
+    const cfg = (state.config?.channels || []).find((x) => x.name === name);
+    if (cfg?.tiers?.[model]) return cfg.tiers[model];
+  }
   return snap ? snap.tier : (fallback || '');
+}
+
+// Channel badge summarising its per-model markings: mixed when the manual
+// markings disagree, otherwise the marked tier, otherwise the channel default.
+function channelTierBadge(name, fallback) {
+  const cfg = (state.config?.channels || []).find((x) => x.name === name);
+  const snap = (state.snapshot?.channels || []).find((x) => x.name === name);
+  const marks = Object.values(cfg?.tiers || {}).length
+    ? Object.values(cfg.tiers) : Object.values(snap?.tiers || {});
+  if (marks.length) {
+    const free = marks.includes('free');
+    const paid = marks.includes('paid');
+    if (free && paid) return '<span class="tag mixed">混合</span>';
+    return tierBadge(free ? 'free' : 'paid');
+  }
+  return tierBadge(tierFor(name, fallback));
 }
 
 function catalogSummary(name) {
@@ -282,10 +304,13 @@ function catalogSummary(name) {
 }
 
 function channelCard(c, i) {
-  const models = Object.entries(c.models || {}).map(([k, v]) => k + ' → ' + v).join(' · ');
+  const modelBits = Object.entries(c.models || {}).map(([k, v]) => {
+    const badge = tierBadge(tierFor(c.name, c.tier, k));
+    return `${esc(k)} → ${esc(v)}${badge ? ' ' + badge : ''}`;
+  }).join(' · ');
   return `<article class="card">
     <div class="card-top">
-      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${tierBadge(tierFor(c.name, c.tier))}</div>
+      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${channelTierBadge(c.name, c.tier)}</div>
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
     </div>
     <dl>
@@ -293,7 +318,7 @@ function channelCard(c, i) {
       <div><dt>优先级</dt><dd>${esc(c.priority ?? 100)}</dd></div>
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
-      <div><dt>模型映射</dt><dd class="wrap">${esc(models) || '未配置'}</dd></div>
+      <div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div>
       <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
     </dl>
@@ -387,7 +412,7 @@ function renderStatus() {
     const remain = c.cooling
       ? `${Math.ceil(c.cooling_seconds / 60)} 分钟<div class="bar"><span style="width:${pct}%"></span></div>` : '—';
     return `<tr>
-      <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong> ${tierBadge(c.tier)}<br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
+      <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong> ${channelTierBadge(c.name, c.tier)}<br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
       <td>${label}${reason ? '<br><small>' + esc(reason) + '</small>' : ''}${quotaText ? `<br><span class="sub-note ${quotaLow ? 'quota-low' : ''}">${esc(quotaText)}</span>` : ''}</td>
       <td>${remain}</td>
       <td>${c.total_requests} / ${c.served_requests} / ${c.failed_requests}</td>
@@ -993,7 +1018,7 @@ function renderMaintenance() {
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
     + ` · LLM 分析：${llm} · 由 defaults.maintenance_hours / maintenance_model 控制`;
   const reports = data.reports || [];
-  const tierTag = (name) => tierBadge(tierFor(name));
+  const tierTag = (name) => channelTierBadge(name);
   const body = $('maintenance-body');
   if (!reports.length) {
     body.innerHTML = '<p class="sub-note">还没有运维报告。点「立即运行」会拉取各渠道模型目录，'
@@ -1298,11 +1323,46 @@ function testSubscriptionEditor() {
   return runProbe($('sub-test'), drafts, '');
 }
 
+// Per-model tier marks, kept in sync with the models textarea. auto/* are
+// scheduling directives rather than real models and never get a mark.
+function renderModelTierRows() {
+  const box = $('model-tier-rows');
+  if (!box) return;
+  const prev = Object.fromEntries(
+    Array.from(box.querySelectorAll('select')).map((s) => [s.dataset.model, s.value]));
+  const saved = state.editing >= 0
+    ? (state.config.channels[state.editing].tiers || {}) : {};
+  const names = [];
+  const seen = new Set();
+  ($('f-models').value || '').split('\n').forEach((line) => {
+    const s = line.trim();
+    const i = s.indexOf('=');
+    if (i < 1) return;
+    const k = s.slice(0, i).trim();
+    if (!k || k === 'auto' || k === '*' || seen.has(k)) return;
+    seen.add(k);
+    names.push(k);
+  });
+  if (!names.length) {
+    box.innerHTML = '<small class="hint">模型映射中还没有可标注的模型。</small>';
+    return;
+  }
+  box.innerHTML = names.map((m) => {
+    const cur = prev[m] ?? saved[m] ?? '';
+    return `<div class="tier-row"><code>${esc(m)}</code>
+      <select data-model="${esc(m)}">
+        <option value="" ${!cur ? 'selected' : ''}>跟随默认</option>
+        <option value="free" ${cur === 'free' ? 'selected' : ''}>免费</option>
+        <option value="paid" ${cur === 'paid' ? 'selected' : ''}>收费</option>
+      </select></div>`;
+  }).join('');
+}
+
 function openChannelEditor(index) {
   state.editing = index;
   const c = index >= 0 ? state.config.channels[index] : {
     name: '', protocol: 'openai', base_url: '', api_key: '', models: { auto: '' },
-    priority: 100, cooldown_minutes: 300, enabled: true, rate: {}, tier: '',
+    priority: 100, cooldown_minutes: 300, enabled: true, rate: {}, tier: '', tiers: {},
   };
   const rate = c.rate || {};
   openModal(index >= 0 ? '编辑渠道' : '新增渠道', `
@@ -1314,7 +1374,7 @@ function openChannelEditor(index) {
             <option value="openai" ${c.protocol === 'openai' ? 'selected' : ''}>openai</option>
             <option value="anthropic" ${c.protocol === 'anthropic' ? 'selected' : ''}>anthropic</option>
           </select></div>
-        <div class="field"><label for="f-tier">免费 / 收费</label>
+        <div class="field"><label for="f-tier">默认计费（未单独标注的模型）</label>
           <select id="f-tier" name="tier">
             <option value="" ${!c.tier ? 'selected' : ''}>自动推断（按订阅）</option>
             <option value="free" ${c.tier === 'free' ? 'selected' : ''}>免费</option>
@@ -1330,6 +1390,10 @@ function openChannelEditor(index) {
         ${field('TPM', 'tpm', rate.tpm ?? '', { type: 'number' })}
         ${field('TPD', 'tpd', rate.tpd ?? '', { type: 'number' })}
         ${field('模型映射（每行 exposed=wire，*=* 表示透传）', 'models', serializeModels(c.models), { wide: true, textarea: true })}
+        <div class="field wide"><label>模型计费标注（免费 / 收费，可随时手动切换）</label>
+          <div id="model-tier-rows" class="channel-picker"></div>
+          <small class="hint">同一渠道可以既有免费额度模型也有收费模型（如百炼免费额度转收费）；未标注的模型跟随上面的默认计费，auto 与 * 不需要标注。</small>
+        </div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
           <small class="hint">按密钥请求上游 /models；勾选要暴露的模型后写入模型映射</small>
@@ -1351,6 +1415,8 @@ function openChannelEditor(index) {
   $('editor-test').onclick = testChannelEditor;
   $('editor-fetch-models').onclick = fetchChannelModels;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
+  $('f-models').addEventListener('input', renderModelTierRows);
+  renderModelTierRows();
 }
 
 function saveChannelEditor() {
@@ -1363,6 +1429,10 @@ function saveChannelEditor() {
     if (!Object.keys(models).length) throw new Error('至少配置一条模型映射');
     const rate = {};
     ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => { if (val(k)) rate[k] = Number(val(k)); });
+    const tiers = {};
+    $('model-tier-rows').querySelectorAll('select').forEach((s) => {
+      if (s.value) tiers[s.dataset.model] = s.value;
+    });
     const channel = {
       name,
       protocol: val('protocol'),
@@ -1374,6 +1444,7 @@ function saveChannelEditor() {
       models,
       enabled: f.elements.namedItem('enabled').checked,
       tier: val('tier'),
+      tiers,
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
     };
     if (state.editing >= 0) {
