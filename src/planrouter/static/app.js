@@ -1540,6 +1540,7 @@ function draftChannelFromEditor() {
     provider: val('provider'),
     mode: val('mode'),
     ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
+    ...(val('proxy') ? { proxy: val('proxy') } : {}),
   };
 }
 
@@ -1838,6 +1839,7 @@ function openChannelEditor(index) {
           </select></div>
         ${field('上游 base_url', 'base_url', c.base_url, { wide: true, placeholder: 'http://127.0.0.1:8080' })}
         ${field('上游路径（留空自动选择）', 'upstream_path', c.upstream_path || '', { wide: true, placeholder: 'base_url 已含 /v3 时留空即可；需要覆盖时填 /chat/completions' })}
+        ${field('出站代理（可选）', 'proxy', c.proxy || '', { wide: true, placeholder: '留空直连；国外上游填 http://127.0.0.1:7890，支持 env:HTTP_PROXY' })}
         ${field('密钥（直接粘贴明文 API Key）', 'api_key', c.api_key || '', { wide: true, placeholder: '直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY' })}
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
@@ -1912,6 +1914,7 @@ function saveChannelEditor() {
       provider,
       mode: provider ? val('mode') : '',
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
+      ...(val('proxy') ? { proxy: val('proxy') } : {}),
     };
     if (state.editing >= 0) {
       const oldName = state.config.channels[state.editing].name;

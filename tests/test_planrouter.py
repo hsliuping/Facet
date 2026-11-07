@@ -8,8 +8,10 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
-from planrouter.core import OPENAI, StateStore, load_config, parse_cooldown, wire_model
+from planrouter.core import (OPENAI, StateStore, load_config, open_with_proxy,
+                             parse_cooldown, wire_model)
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -116,6 +118,50 @@ class ConfigTests(unittest.TestCase):
         data["routes"] = [r for r in data["routes"] if r["protocol"] != "anthropic"]
         with self.assertRaisesRegex(ValueError, "anthropic:default"):
             load_config(write_config(data))
+
+    def test_channel_proxy(self):
+        data = json.loads(json.dumps(BASE))
+        cfg = load_config(write_config(data))
+        self.assertEqual(cfg.channel("plan-a").proxy, "")
+        data["channels"][0]["proxy"] = "env:PLANROUTER_TEST_PROXY"
+        os.environ["PLANROUTER_TEST_PROXY"] = "http://127.0.0.1:7890"
+        try:
+            cfg = load_config(write_config(data))
+            self.assertEqual(cfg.channel("plan-a").proxy,
+                             "http://127.0.0.1:7890")
+        finally:
+            os.environ.pop("PLANROUTER_TEST_PROXY", None)
+        data["channels"][0]["proxy"] = "socks5://127.0.0.1:7890"
+        with self.assertRaisesRegex(ValueError, "proxy"):
+            load_config(write_config(data))
+
+
+class OpenWithProxyTests(unittest.TestCase):
+    def test_empty_proxy_keeps_plain_urlopen(self):
+        with mock.patch("planrouter.core.urlopen") as fake:
+            fake.return_value = "resp"
+            self.assertEqual(open_with_proxy("req", 5), "resp")
+        fake.assert_called_once_with("req", timeout=5)
+
+    def test_proxy_builds_opener(self):
+        captured = {}
+
+        class FakeOpener:
+            def open(self, req, timeout):
+                captured["timeout"] = timeout
+                return "resp"
+
+        def fake_build_opener(handler):
+            captured["proxies"] = handler.proxies
+            return FakeOpener()
+
+        with mock.patch("planrouter.core.build_opener", fake_build_opener):
+            self.assertEqual(
+                open_with_proxy("req", 7, "http://127.0.0.1:7890"), "resp")
+        self.assertEqual(captured["timeout"], 7)
+        self.assertEqual(
+            captured["proxies"],
+            {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"})
 
 
 class RoutingTests(unittest.TestCase):

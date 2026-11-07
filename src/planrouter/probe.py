@@ -14,8 +14,8 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .core import (ANTHROPIC, OPENAI, PROTOCOLS, VERSIONED_BASE, resolve_secret,
-                   upstream_path_for)
+from .core import (ANTHROPIC, OPENAI, PROTOCOLS, VERSIONED_BASE, open_with_proxy,
+                   resolve_secret, upstream_path_for)
 
 DEFAULT_TIMEOUT = 8.0
 MAX_CHANNELS = 8
@@ -126,6 +126,9 @@ def validate_channel(raw) -> dict:
     api_key = raw.get("api_key")
     if api_key in (None, "", "***"):
         api_key = None
+    proxy = resolve_secret(str(raw.get("proxy") or "").strip()) or ""
+    if proxy and not proxy.lower().startswith(("http://", "https://")):
+        raise ValueError(f"渠道 {name}: 代理必须是 http(s):// 地址")
     return {
         "name": name,
         "protocol": protocol,
@@ -133,6 +136,7 @@ def validate_channel(raw) -> dict:
         "api_key": resolve_secret(api_key),
         "models": dict(models),
         "upstream_path": upstream_path,
+        "proxy": proxy,
     }
 
 
@@ -222,7 +226,7 @@ def probe_channel(raw, model: str | None = None,
     try:
         req = Request(url, data=json.dumps(payload).encode("utf-8"),
                       headers=headers, method="POST")
-        with urlopen(req, timeout=timeout) as resp:
+        with open_with_proxy(req, timeout, channel.get("proxy") or "") as resp:
             body = resp.read(8192)
             reply = _reply_excerpt(body, protocol)
             result.update(ok=True, http_status=resp.status,
@@ -318,7 +322,7 @@ def probe_models(raw, timeout: float = DEFAULT_TIMEOUT) -> dict:
     started = time.monotonic()
     try:
         req = Request(url, headers=headers, method="GET")
-        with urlopen(req, timeout=timeout) as resp:
+        with open_with_proxy(req, timeout, channel.get("proxy") or "") as resp:
             models = parse_model_list(json.loads(resp.read(2_000_000)))
             return {"ok": True, "name": name, "endpoint": url, "path": path,
                     "http_status": resp.status,

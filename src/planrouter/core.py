@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.request import ProxyHandler, build_opener, urlopen
 
 from .quota import quota_view
 
@@ -41,6 +42,20 @@ def upstream_path_for(base_url: str, upstream_path: str | None,
     if VERSIONED_BASE.search(base_url.rstrip("/")):
         return suffix
     return "/v1" + suffix
+
+
+def open_with_proxy(req, timeout, proxy: str = ""):
+    """urlopen honoring an optional http(s):// proxy URL.
+
+    Foreign upstreams (OpenAI, Anthropic, xAI, ...) are usually unreachable
+    from CN networks directly, so a channel can point at a local relay
+    (e.g. http://127.0.0.1:7890) via its `proxy` field. Empty proxy keeps
+    the plain urlopen behavior (which still honors environment proxies).
+    """
+    if not proxy:
+        return urlopen(req, timeout=timeout)
+    opener = build_opener(ProxyHandler({"http": proxy, "https": proxy}))
+    return opener.open(req, timeout=timeout)
 
 # Tools usually demand a concrete model id. These branded ids are ours: putting
 # one into a tool's model field means "let the router schedule internally".
@@ -192,6 +207,9 @@ class Channel:
     # builtin providers.json registry; empty means a custom/unknown channel.
     provider: str = ""
     mode: str = ""
+    # Optional outbound http(s) proxy for foreign upstreams that are not
+    # reachable directly (e.g. "http://127.0.0.1:7890"); empty = direct.
+    proxy: str = ""
 
 
 @dataclass(frozen=True)
@@ -427,6 +445,9 @@ def parse_config(raw: dict) -> Config:
                     f"channel {name}: upstream_path must be a path starting with /"
                 )
             upstream_path = upstream_path.rstrip("/") or "/"
+        proxy = resolve_secret(str(item.get("proxy") or "").strip()) or ""
+        if proxy and not proxy.lower().startswith(("http://", "https://")):
+            raise ValueError(f"channel {name}: proxy must be an http(s):// URL")
         tier = str(item.get("tier") or "").strip().lower()
         if tier not in ("", "free", "paid"):
             raise ValueError(f'channel {name}: tier must be "", "free" or "paid"')
@@ -469,6 +490,7 @@ def parse_config(raw: dict) -> Config:
             tiers=tiers,
             provider=str(item.get("provider") or "").strip(),
             mode=str(item.get("mode") or "").strip(),
+            proxy=proxy,
         ))
     if not channels:
         raise ValueError("at least one channel is required")

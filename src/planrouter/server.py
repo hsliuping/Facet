@@ -23,7 +23,8 @@ from . import providers as providers_mod
 from .audit import RequestLog
 from .core import (
     ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
-    parse_cooldown, parse_config, resolve_model, upstream_path_for,
+    open_with_proxy, parse_cooldown, parse_config, resolve_model,
+    upstream_path_for,
 )
 from .notifier import ReminderService
 from .persistence import StatePersistence
@@ -463,6 +464,18 @@ class App:
         self.providers = providers_mod.load_providers(
             self.config_path.parent if self.config_path else None)
         return self.providers
+
+    def docs_proxy(self) -> str:
+        """Proxy for best-effort doc/catalog fetches: first channel proxy.
+
+        Vendor doc sites rarely need a dedicated relay; when the user runs
+        one for foreign channels, reuse it so docs.x.ai etc. stay reachable
+        from CN networks.
+        """
+        for ch in self.config.channels:
+            if ch.proxy:
+                return ch.proxy
+        return ""
 
     def maintain_providers(self, vendor_id=None) -> dict:
         """Run the registry refresh on demand and return its report."""
@@ -1260,7 +1273,7 @@ class App:
         )
         now = time.time()
         try:
-            resp = urlopen(req, timeout=channel.timeout)
+            resp = open_with_proxy(req, channel.timeout, channel.proxy)
         except HTTPError as exc:
             raw = exc.read()
             quota, seconds, reason = parse_cooldown(

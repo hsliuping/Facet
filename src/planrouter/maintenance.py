@@ -24,10 +24,10 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from . import providers as providers_mod
-from .core import AUTO_MODEL, QUOTA_MARKERS
+from .core import AUTO_MODEL, QUOTA_MARKERS, open_with_proxy
 
 JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 PLAN_LIST_BLOCK = re.compile(r"\[.*\]", re.DOTALL)
@@ -257,10 +257,10 @@ def parse_llm_output(text: str) -> dict:
 
 
 # ------------------------------------------------------- plan model refresh
-def fetch_plan_doc(url: str) -> str:
+def fetch_plan_doc(url: str, proxy: str = "") -> str:
     """GET a subscription's plan documentation page (no auth, 10s timeout)."""
     req = Request(url, headers={"User-Agent": "planrouter-maintenance/1.0"})
-    with urlopen(req, timeout=10) as resp:
+    with open_with_proxy(req, 10, proxy) as resp:
         return resp.read().decode("utf-8", "replace")
 
 
@@ -413,7 +413,7 @@ def refresh_plan_models(app, report: dict) -> None:
             continue
         label = f"{record.get('vendor') or '—'} / {record.get('plan') or '—'}"
         try:
-            text = html_to_text(fetch_plan_doc(url))
+            text = html_to_text(fetch_plan_doc(url, proxy=app.docs_proxy()))
         except Exception as exc:  # any fetch failure must keep the old list
             report["alerts"].append({
                 "channel": "", "kind": "plan_models_fetch",
@@ -442,10 +442,10 @@ def refresh_plan_models(app, report: dict) -> None:
         })
 
 
-def fetch_models_json(url: str) -> str:
+def fetch_models_json(url: str, proxy: str = "") -> str:
     """GET a vendor models endpoint (no auth, 10s timeout), JSON expected."""
     req = Request(url, headers={"User-Agent": "planrouter-maintenance/1.0"})
-    with urlopen(req, timeout=10) as resp:
+    with open_with_proxy(req, 10, proxy) as resp:
         return resp.read().decode("utf-8", "replace")
 
 
@@ -501,7 +501,7 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
 
     if docs_url:
         try:
-            text = html_to_text(fetch_plan_doc(docs_url))
+            text = html_to_text(fetch_plan_doc(docs_url, proxy=app.docs_proxy()))
         except Exception as exc:  # any fetch failure must keep the old list
             report["alerts"].append({
                 "channel": "", "kind": "provider_models_fetch",
@@ -519,7 +519,7 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
         where = "文档"
     else:
         try:
-            text = fetch_models_json(models_url)
+            text = fetch_models_json(models_url, proxy=app.docs_proxy())
         except Exception as exc:  # any fetch failure must keep the old list
             report["alerts"].append({
                 "channel": "", "kind": "provider_models_fetch",

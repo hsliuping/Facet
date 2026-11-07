@@ -101,6 +101,10 @@ class ProbeUnitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_channel({"name": "x", "base_url": "http://host",
                               "upstream_path": "chat/completions"})
+        with self.assertRaises(ValueError):
+            validate_channel({"name": "x", "base_url": "http://host",
+                              "models": {"auto": "m"},
+                              "proxy": "socks5://127.0.0.1:7890"})
         good = validate_channel({
             "name": "x", "base_url": "http://host/", "api_key": "***",
             "models": {"auto": "m"}, "upstream_path": "/chat/completions/",
@@ -108,6 +112,12 @@ class ProbeUnitTests(unittest.TestCase):
         self.assertEqual(good["base_url"], "http://host")
         self.assertIsNone(good["api_key"])
         self.assertEqual(good["upstream_path"], "/chat/completions")
+        self.assertEqual(good["proxy"], "")
+        proxied = validate_channel({
+            "name": "x", "base_url": "http://host", "api_key": "***",
+            "models": {"auto": "m"}, "proxy": "http://127.0.0.1:7890",
+        })
+        self.assertEqual(proxied["proxy"], "http://127.0.0.1:7890")
 
     def test_upstream_path_for_avoids_duplicate_version(self):
         self.assertEqual(upstream_path_for("http://host", None, "openai"),

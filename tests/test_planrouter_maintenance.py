@@ -409,7 +409,7 @@ class RefreshPlanModelsTests(unittest.TestCase):
     def patch_fetch(self, result):
         original = maint.fetch_plan_doc
 
-        def fake(url):
+        def fake(url, proxy=""):
             if isinstance(result, Exception):
                 raise result
             return result
@@ -528,7 +528,7 @@ class RefreshProvidersTests(unittest.TestCase):
     def patch_fetch(self, result):
         original = maint.fetch_plan_doc
 
-        def fake(url):
+        def fake(url, proxy=""):
             if isinstance(result, Exception):
                 raise result
             return result
@@ -661,7 +661,7 @@ class ProviderModelsEndpointTests(unittest.TestCase):
     def patch_models_fetch(self, result):
         original = maint.fetch_models_json
 
-        def fake(url):
+        def fake(url, proxy=""):
             if isinstance(result, Exception):
                 raise result
             return result
@@ -747,10 +747,10 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         vendor = self.app.providers[0]
         vendor["modes"]["coding"]["models_url"] = "https://ark.example.com/api/v3/models"
 
-        def fake_doc(url):
+        def fake_doc(url, proxy=""):
             return "<html><body><ul><li>from-doc</li></ul></body></html>"
 
-        def fake_api(url):  # must never be called while docs_url wins
+        def fake_api(url, proxy=""):  # must never be called while docs_url wins
             raise AssertionError("models_url fetch must not run")
 
         maint.fetch_plan_doc = fake_doc
@@ -770,7 +770,7 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         self.app.providers = [self.app.providers[0], second]
         original_doc = maint.fetch_plan_doc
 
-        def fake_doc(url):
+        def fake_doc(url, proxy=""):
             return "<html><body><ul><li>from-doc</li></ul></body></html>"
 
         maint.fetch_plan_doc = fake_doc
