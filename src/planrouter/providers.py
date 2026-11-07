@@ -5,7 +5,8 @@ zhipu, deepseek, ...). Each vendor lists only the modes it actually offers
 (coding / agent / payg) with label, protocol, base_url, docs_url and tier.
 A user overlay file ``<config_dir>/providers.json`` may override whole
 vendor entries by id; the daily maintenance task updates the ``models``
-field of modes that expose a ``docs_url`` and persists them there.
+field of modes that expose a ``docs_url`` / ``models_url`` and persists
+them there.
 """
 
 from __future__ import annotations

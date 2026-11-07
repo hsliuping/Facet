@@ -1,5 +1,5 @@
 {
-  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 后写入，手工勿改。",
+  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 或 models_url 后写入，手工勿改。models_url 需要密钥的（如百炼 /api/v1/models），会自动借用同厂家已配置渠道的 API Key。",
   "providers": [
     {
       "id": "volcengine",
@@ -109,7 +109,17 @@
           "label": "按量付费",
           "protocol": "openai",
           "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-          "docs_url": "https://help.aliyun.com/zh/model-studio/models",
+          "docs_url": "",
+          "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
+          "tier": "paid",
+          "models": []
+        },
+        "agent": {
+          "label": "Token Plan 套餐",
+          "protocol": "openai",
+          "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "docs_url": "",
+          "models_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models",
           "tier": "paid",
           "models": []
         }

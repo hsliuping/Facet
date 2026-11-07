@@ -24,6 +24,7 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import Request
 
 from . import providers as providers_mod
@@ -442,39 +443,47 @@ def refresh_plan_models(app, report: dict) -> None:
         })
 
 
-def fetch_models_json(url: str, proxy: str = "") -> str:
-    """GET a vendor models endpoint (no auth, 10s timeout), JSON expected."""
-    req = Request(url, headers={"User-Agent": "planrouter-maintenance/1.0"})
+def fetch_models_json(url: str, proxy: str = "", api_key: str = "") -> str:
+    """GET a vendor models endpoint (optional Bearer auth), JSON expected.
+
+    Public catalog endpoints need no auth; key-protected ones like Bailian's
+    GET /api/v1/models authenticate with the user's own vendor key, which the
+    caller passes after borrowing it from a channel of the same vendor.
+    """
+    headers = {"User-Agent": "planrouter-maintenance/1.0"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = Request(url, headers=headers)
     with open_with_proxy(req, 10, proxy) as resp:
         return resp.read().decode("utf-8", "replace")
 
 
-def parse_models_payload(text: str) -> list[str]:
-    """Extract sorted model ids from a models endpoint payload.
+def _model_ids_from(data) -> list[str]:
+    """Pull sorted unique model ids from a decoded models payload.
 
-    Supports ``{"data": [{"id": ...}]}``, ``{"models": [...]}`` and a bare
-    array; elements may be plain strings or objects carrying an ``id``
-    field. Raises ValueError when the body is not valid JSON or the shape
-    is unsupported.
+    Supports OpenAI ``{"data": [...]}``, ``{"models": [...]}``, Bailian
+    ``{"output": {"models": [...]}}`` and bare arrays; elements may be plain
+    strings or objects carrying ``id`` / ``model`` fields.
     """
-    try:
-        data = json.loads(text)
-    except ValueError as exc:
-        raise ValueError(f"响应不是合法 JSON（{exc}）") from exc
     if isinstance(data, dict):
         if isinstance(data.get("data"), list):
             data = data["data"]
         elif isinstance(data.get("models"), list):
             data = data["models"]
+        elif (isinstance(data.get("output"), dict)
+                and isinstance(data["output"].get("models"), list)):
+            data = data["output"]["models"]
         else:
-            raise ValueError("JSON 结构不支持：需要 data/models 数组或纯数组")
+            raise ValueError(
+                "JSON 结构不支持：需要 data/models/output.models 数组或纯数组")
     if not isinstance(data, list):
-        raise ValueError("JSON 结构不支持：需要 data/models 数组或纯数组")
+        raise ValueError(
+            "JSON 结构不支持：需要 data/models/output.models 数组或纯数组")
     models: list[str] = []
     seen: set[str] = set()
     for item in data:
         if isinstance(item, dict):
-            item = item.get("id")
+            item = item.get("id") or item.get("model")
         if item is None:
             continue
         name = str(item).strip()
@@ -484,14 +493,84 @@ def parse_models_payload(text: str) -> list[str]:
     return sorted(models)
 
 
+def parse_models_payload(text: str) -> list[str]:
+    """Extract sorted model ids from a models endpoint payload.
+
+    Raises ValueError when the body is not valid JSON or the shape is
+    unsupported.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(f"响应不是合法 JSON（{exc}）") from exc
+    return _model_ids_from(data)
+
+
+def _page_url(url: str, page_no: int, page_size: int = 100) -> str:
+    """Append/replace page_no & page_size query params on a models URL."""
+    parts = urlsplit(url)
+    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    params["page_no"] = str(page_no)
+    params["page_size"] = str(page_size)
+    return parts._replace(query=urlencode(params)).geturl()
+
+
+def _pagination_total(text: str) -> int:
+    """Advertised total for a Bailian-style paginated models payload, else 0.
+
+    Bailian's GET /api/v1/models answers ``{"output": {"total": N, "models":
+    [...]}}`` and pages via page_no/page_size query params (20 per page by
+    default); plain OpenAI-style payloads are not paginated and yield 0.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    output = data.get("output")
+    if not isinstance(output, dict) or not isinstance(output.get("models"), list):
+        return 0
+    try:
+        return max(0, int(output.get("total") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _channel_for_provider(app, provider_id: str, base_url: str = ""):
+    """First configured channel of this vendor carrying an API key.
+
+    Vendor model endpoints such as Bailian's /api/v1/models authenticate with
+    the user's own key; the channel created from the same vendor preset is
+    the natural source for it (and for its outbound proxy). Vendors with
+    several billing modes may run one key per endpoint (Bailian payg uses
+    sk-... while Token Plan uses sk-sp-...), so a channel whose base_url
+    matches the mode is preferred over any other channel of the vendor.
+    """
+    if not provider_id:
+        return None
+    channels = getattr(getattr(app, "config", None), "channels", None) or []
+    same = [c for c in channels
+            if getattr(c, "provider", "") == provider_id and c.api_key]
+    if base_url:
+        wanted = base_url.rstrip("/")
+        for channel in same:
+            if channel.base_url.rstrip("/") == wanted:
+                return channel
+    return same[0] if same else None
+
+
 def _refresh_provider_mode(app, provider: dict, mode_key: str,
                            mode: dict, report: dict) -> bool:
     """Refresh one registry mode's model list in place.
 
-    docs_url takes precedence; when it is absent a models_url JSON
-    endpoint is consulted. Returns True when the mode was changed; fetch
-    or extraction failures only append to report["alerts"] and keep the
-    old list.
+    docs_url takes precedence; when it is absent a models_url JSON endpoint
+    is consulted — with the Bearer key of a configured channel of the same
+    vendor when one exists (Bailian's /api/v1/models needs the user's own
+    key), and following Bailian-style pagination when the payload advertises
+    a larger total. Returns True when the mode was changed; fetch or
+    extraction failures only append to report["alerts"] and keep the old
+    list.
     """
     docs_url = str(mode.get("docs_url") or "").strip()
     models_url = str(mode.get("models_url") or "").strip()
@@ -518,8 +597,12 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
             return False
         where = "文档"
     else:
+        channel = _channel_for_provider(app, str(provider.get("id") or ""),
+                                        str(mode.get("base_url") or ""))
+        api_key = channel.api_key if channel else ""
+        proxy = channel.proxy if channel and channel.proxy else app.docs_proxy()
         try:
-            text = fetch_models_json(models_url, proxy=app.docs_proxy())
+            text = fetch_models_json(models_url, proxy=proxy, api_key=api_key)
         except Exception as exc:  # any fetch failure must keep the old list
             report["alerts"].append({
                 "channel": "", "kind": "provider_models_fetch",
@@ -534,6 +617,28 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
                 "message": f"厂家模型接口解析失败：{label}（{exc}），保留原模型清单",
             })
             return False
+        total = _pagination_total(text)
+        if total > len(extracted):
+            # Bailian-style paging: collect the remaining pages (capped so a
+            # lying total cannot loop forever); any failure keeps the old list.
+            try:
+                for page_no in range(2, 11):
+                    page_text = fetch_models_json(
+                        _page_url(models_url, page_no), proxy=proxy,
+                        api_key=api_key)
+                    page_ids = parse_models_payload(page_text)
+                    if not page_ids:
+                        break
+                    extracted = sorted(set(extracted) | set(page_ids))
+                    if len(extracted) >= total:
+                        break
+            except Exception as exc:
+                report["alerts"].append({
+                    "channel": "", "kind": "provider_models_fetch",
+                    "message": f"抓取厂家模型接口失败（分页）：{label}"
+                               f"（{str(exc)[:160]}），保留原模型清单",
+                })
+                return False
         if not extracted:
             report["alerts"].append({
                 "channel": "", "kind": "provider_models_empty",

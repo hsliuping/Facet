@@ -929,7 +929,7 @@ function vendorModeFieldset(index, modeKey, mode) {
           ${FETCH_METHOD_CHOICES.map(([v, text]) => opt(v, method, text)).join('')}
         </select></div>
       ${field('文档 URL（文档提取用）', `mode-docs-${index}`, m.docs_url || '', { wide: true, placeholder: 'https://docs.example.com/pricing' })}
-      ${field('模型接口 URL（接口拉取用）', `mode-models-${index}`, m.models_url || '', { wide: true, placeholder: 'https://api.example.com/v1/models' })}
+      ${field('模型接口 URL（接口拉取用）', `mode-models-${index}`, m.models_url || '', { wide: true, placeholder: 'https://api.example.com/v1/models', hint: '同厂家已配置渠道时自动附带其 API Key；百炼类分页接口会自动翻页' })}
       ${field('模型清单（每行一个；自动维护成功后会覆盖）', `mode-model-list-${index}`, (m.models || []).join('\n'), { wide: true, textarea: true, rows: 4 })}
     </div>
   </fieldset>`;

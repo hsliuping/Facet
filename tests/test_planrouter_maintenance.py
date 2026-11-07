@@ -661,7 +661,7 @@ class ProviderModelsEndpointTests(unittest.TestCase):
     def patch_models_fetch(self, result):
         original = maint.fetch_models_json
 
-        def fake(url, proxy=""):
+        def fake(url, proxy="", api_key=""):
             if isinstance(result, Exception):
                 raise result
             return result
@@ -693,6 +693,169 @@ class ProviderModelsEndpointTests(unittest.TestCase):
             maint.parse_models_payload('{"object": 1}')
         with self.assertRaises(ValueError):
             maint.parse_models_payload('{"data": {"a": 1}}')
+
+    def test_parse_models_payload_supports_bailian_output_shape(self):
+        # Bailian GET /api/v1/models: {"output": {"total": N, "models": [...]}}
+        # with per-item "model" ids.
+        self.assertEqual(
+            maint.parse_models_payload(
+                '{"output":{"total":2,"models":[{"model":"qwen-plus"},'
+                '{"model":"qwen-max"}]}}'),
+            ["qwen-max", "qwen-plus"])
+        self.assertEqual(
+            maint.parse_models_payload(
+                '{"output":{"models":[{"model":"a"},{"model":"a"}]}}'),
+            ["a"])
+
+    def test_fetch_models_json_sends_bearer_when_key_given(self):
+        captured = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_open(req, timeout, proxy=""):
+            captured["timeout"] = timeout
+            captured["headers"] = dict(req.headers)
+            return FakeResp()
+
+        original = maint.open_with_proxy
+        maint.open_with_proxy = fake_open
+        self.addCleanup(setattr, maint, "open_with_proxy", original)
+        maint.fetch_models_json("https://api.example.com/models")
+        self.assertNotIn("Authorization", captured["headers"])
+        maint.fetch_models_json("https://api.example.com/models", api_key="sk-k")
+        self.assertEqual(captured["headers"].get("Authorization"), "Bearer sk-k")
+        self.assertEqual(captured["timeout"], 10)
+
+    def test_models_url_borrows_channel_key_and_proxy(self):
+        data = maintenance_config()
+        data["channels"][0]["provider"] = "volcengine"
+        data["channels"][0]["proxy"] = "http://127.0.0.1:7890"
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        vendor = providers_registry_fixture()
+        vendor["modes"]["coding"]["docs_url"] = ""  # keep the test offline
+        vendor["modes"]["payg"]["models_url"] = "https://ark.example.com/api/v3/models"
+        self.app.providers = [vendor]
+        self.app.subscriptions = []
+        captured = []
+        original = maint.fetch_models_json
+
+        def fake(url, proxy="", api_key=""):
+            captured.append((url, proxy, api_key))
+            return '{"data":[{"id":"m1"}]}'
+
+        maint.fetch_models_json = fake
+        self.addCleanup(setattr, maint, "fetch_models_json", original)
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(
+            captured[0],
+            ("https://ark.example.com/api/v3/models",
+             "http://127.0.0.1:7890", "sk-fixture"))
+
+    def test_models_url_prefers_channel_with_same_base_url(self):
+        # Bailian payg (sk-...) and Token Plan (sk-sp-...) live on different
+        # endpoints; the mode's own base_url must pick the matching channel.
+        data = maintenance_config()
+        data["channels"][0]["provider"] = "bailian"
+        data["channels"][0]["base_url"] = (
+            "https://dashscope.example.com/compatible-mode/v1")
+        data["channels"][1]["provider"] = "bailian"
+        data["channels"][1]["base_url"] = (
+            "https://token-plan.example.com/compatible-mode/v1")
+        data["channels"][1]["api_key"] = "sk-sp-plan"
+        data["channels"][1]["proxy"] = "http://127.0.0.1:7890"
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        vendor = providers_registry_fixture()
+        vendor["id"] = "bailian"
+        vendor["modes"]["coding"]["docs_url"] = ""  # keep the test offline
+        vendor["modes"]["payg"]["models_url"] = ""  # only agent pulls here
+        vendor["modes"]["agent"] = {
+            "label": "Token Plan 套餐", "protocol": "openai",
+            "base_url": "https://token-plan.example.com/compatible-mode/v1",
+            "docs_url": "",
+            "models_url":
+                "https://token-plan.example.com/compatible-mode/v1/models",
+            "tier": "paid", "models": [],
+        }
+        self.app.providers = [vendor]
+        self.app.subscriptions = []
+        captured = []
+        original = maint.fetch_models_json
+
+        def fake(url, proxy="", api_key=""):
+            captured.append((url, proxy, api_key))
+            return '{"data":[{"id":"m1"}]}'
+
+        maint.fetch_models_json = fake
+        self.addCleanup(setattr, maint, "fetch_models_json", original)
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(
+            captured,
+            [("https://token-plan.example.com/compatible-mode/v1/models",
+              "http://127.0.0.1:7890", "sk-sp-plan")])
+
+    def test_models_url_follows_bailian_pagination(self):
+        calls = []
+        pages = {
+            1: '{"output":{"total":3,"models":[{"model":"m-a"}]}}',
+            2: '{"output":{"total":3,"models":[{"model":"m-b"}]}}',
+            3: '{"output":{"total":3,"models":[{"model":"m-c"}]}}',
+        }
+        original = maint.fetch_models_json
+
+        def fake(url, proxy="", api_key=""):
+            calls.append(url)
+            for page_no, body in pages.items():
+                if f"page_no={page_no}" in url or (
+                        page_no == 1 and "page_no=" not in url):
+                    return body
+            return '{"output":{"total":3,"models":[]}}'
+
+        maint.fetch_models_json = fake
+        self.addCleanup(setattr, maint, "fetch_models_json", original)
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        vendor = self.app.providers[0]
+        vendor["modes"]["coding"]["docs_url"] = ""  # keep the test offline
+        changed = maint._refresh_provider_mode(
+            self.app, vendor, "payg", vendor["modes"]["payg"], report)
+        self.assertTrue(changed)
+        self.assertEqual(vendor["modes"]["payg"]["models"],
+                         ["m-a", "m-b", "m-c"])
+        self.assertEqual(len(calls), 3)
+        self.assertIn("page_no=2", calls[1])
+        self.assertIn("page_size=100", calls[1])
+        self.assertEqual(report["alerts"], [])
+
+    def test_models_url_pagination_failure_keeps_old_list(self):
+        original = maint.fetch_models_json
+
+        def fake(url, proxy="", api_key=""):
+            if "page_no=" in url:
+                raise OSError("network down mid-paging")
+            return '{"output":{"total":2,"models":[{"model":"m-a"}]}}'
+
+        maint.fetch_models_json = fake
+        self.addCleanup(setattr, maint, "fetch_models_json", original)
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        vendor = self.app.providers[0]
+        changed = maint._refresh_provider_mode(
+            self.app, vendor, "payg", vendor["modes"]["payg"], report)
+        self.assertFalse(changed)
+        self.assertEqual(vendor["modes"]["payg"]["models"], ["old-model"])
+        self.assertIn("provider_models_fetch",
+                      [a["kind"] for a in report["alerts"]])
+        self.assertIn("分页", report["alerts"][0]["message"])
 
     def test_models_url_refresh_updates_and_persists(self):
         self.patch_models_fetch(
@@ -750,7 +913,7 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         def fake_doc(url, proxy=""):
             return "<html><body><ul><li>from-doc</li></ul></body></html>"
 
-        def fake_api(url, proxy=""):  # must never be called while docs_url wins
+        def fake_api(url, proxy="", api_key=""):  # must never be called while docs_url wins
             raise AssertionError("models_url fetch must not run")
 
         maint.fetch_plan_doc = fake_doc
