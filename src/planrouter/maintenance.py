@@ -688,6 +688,37 @@ def save_maintenance_pool(app) -> None:
         pass  # a failed pool write must never break maintenance
 
 
+def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
+    """Return the last `limit` non-empty JSONL lines plus whether older exist.
+
+    Reads the file backwards in chunks so a long history never forces the
+    caller to load the whole log into memory.
+    """
+    limit = max(1, int(limit))
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return [], False
+    chunk = 65536
+    pos = size
+    buf = b""
+    lines: list[bytes] = []
+    with path.open("rb") as fh:
+        while True:
+            segs = buf.split(b"\n")
+            if pos > 0 and segs:
+                segs = segs[1:]  # head segment may be cut mid-line
+            lines = [s for s in segs if s.strip()]
+            if pos == 0 or len(lines) > limit:
+                break
+            step = min(chunk, pos)
+            pos -= step
+            fh.seek(pos)
+            buf = fh.read(step) + buf
+    has_more = pos > 0 or len(lines) > limit
+    return [s.decode("utf-8", "replace") for s in lines[-limit:]], has_more
+
+
 def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
     """Quiz candidates: verified queue members first, then :free catalog ids.
 

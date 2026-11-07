@@ -825,6 +825,42 @@ class App:
             "reports": list(reversed(reports)),
         }
 
+    def maintenance_log_payload(self, limit: int = 50) -> dict:
+        """History of maintenance runs, newest first, from maintenance.jsonl.
+
+        Reads the file tail so a long history cannot grow the response; falls
+        back to the in-memory reports when no log file exists (e.g. tests).
+        """
+        try:
+            limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        entries: list[dict] = []
+        source = "memory"
+        path = (self.config_path.parent / "maintenance.jsonl"
+                if self.config_path else None)
+        if path is not None and path.is_file():
+            source = "file"
+            raw_lines, has_more = maint.read_jsonl_tail(path, limit)
+            for line in raw_lines:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue  # skip torn or hand-edited lines
+                if isinstance(entry, dict):
+                    entries.append(entry)
+            entries.reverse()
+        else:
+            with self.maintenance_lock:
+                reports = [
+                    {k: v for k, v in report.items() if k != "patch"}
+                    for report in self.maintenance_reports
+                ]
+            has_more = len(reports) > limit
+            entries = list(reversed(reports[-limit:]))
+        return {"logs": entries, "source": source, "has_more": has_more,
+                "limit": limit}
+
     def apply_maintenance_suggestion(self, payload) -> dict:
         """One-click apply for `add_model` suggestions: map the model verbatim."""
         if not isinstance(payload, dict):

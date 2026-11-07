@@ -253,6 +253,59 @@ class RunMaintenanceTests(unittest.TestCase):
         entry = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
         self.assertEqual(entry["trigger"], "manual")
 
+    def test_read_jsonl_tail(self):
+        path = self.path.parent / "maintenance.jsonl"
+        filler = "x" * 200
+        lines = [json.dumps({"i": i, "filler": filler}) for i in range(500)]
+        tail, has_more = maint.read_jsonl_tail(path, 10)  # missing file
+        self.assertEqual((tail, has_more), ([], False))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tail, has_more = maint.read_jsonl_tail(path, 10)
+        self.assertTrue(has_more)
+        self.assertEqual([json.loads(s)["i"] for s in tail], list(range(490, 500)))
+        tail, has_more = maint.read_jsonl_tail(path, 1000)
+        self.assertFalse(has_more)
+        self.assertEqual(len(tail), 500)
+        path.write_text("\n".join(lines), encoding="utf-8")  # no trailing newline
+        tail, _ = maint.read_jsonl_tail(path, 3)
+        self.assertEqual([json.loads(s)["i"] for s in tail], [497, 498, 499])
+
+    def test_maintenance_log_payload_reads_file_tail(self):
+        log = self.path.parent / "maintenance.jsonl"
+        lines = [json.dumps({
+            "ts": f"2026-01-0{i + 1}T10:00:00", "trigger": "scheduled",
+            "finished_at": 1000.0 + i, "channels_total": 2,
+            "applied": [], "suggestions": [], "alerts": [],
+            "note": f"run-{i}",
+        }, ensure_ascii=False) for i in range(7)]
+        log.write_text("not-json\n" + "\n".join(lines) + "\n", encoding="utf-8")
+
+        payload = self.app.maintenance_log_payload(3)
+        self.assertEqual(payload["source"], "file")
+        self.assertTrue(payload["has_more"])
+        self.assertEqual([e["note"] for e in payload["logs"]],
+                         ["run-6", "run-5", "run-4"])
+
+        full = self.app.maintenance_log_payload(50)
+        self.assertFalse(full["has_more"])
+        self.assertEqual(len(full["logs"]), 7)  # broken line skipped, newest first
+        self.assertEqual(full["logs"][0]["note"], "run-6")
+        self.assertEqual(full["logs"][-1]["note"], "run-0")
+
+    def test_maintenance_log_payload_memory_fallback(self):
+        app = self.app
+        app.store.record_catalog("a", ["gpt-x"], "http://upstream/v1")
+        app.probe_channel_models = lambda payload: (
+            {"ok": True, "name": payload.get("name"), "models": ["gpt-x"],
+             "endpoint": "http://upstream/v1"})
+        app.run_maintenance("manual")
+        (self.path.parent / "maintenance.jsonl").unlink()
+        payload = app.maintenance_log_payload(50)
+        self.assertEqual(payload["source"], "memory")
+        self.assertEqual(len(payload["logs"]), 1)
+        self.assertEqual(payload["logs"][0]["trigger"], "manual")
+        self.assertNotIn("patch", payload["logs"][0])
+
 
 PLAN_DOC_MARKDOWN = """## 支持的模型
 

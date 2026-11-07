@@ -36,6 +36,7 @@
       <button class="tab" data-tab="subscriptions">套餐订阅</button>
       <button class="tab" data-tab="vendors">厂家</button>
       <button class="tab" data-tab="status">运行状态</button>
+      <button class="tab" data-tab="maintlog">维护日志</button>
     </nav>
 
     <main>
@@ -182,12 +183,27 @@
             </div>
             <div class="actions">
               <button class="btn small ghost" id="btn-test-maintenance-models" title="用内置提取考题实测免费模型，通过者进入维护模型队列">测试维护模型</button>
+              <button class="btn small ghost" id="btn-view-maintlog">查看日志</button>
               <button class="btn small ghost" id="btn-refresh-maintenance">刷新</button>
               <button class="btn small" id="btn-run-maintenance">立即运行</button>
             </div>
           </div>
           <div id="maintenance-body"></div>
         </div>
+      </section>
+
+      <section class="panel" id="panel-maintlog">
+        <div class="panel-head">
+          <div>
+            <h2>维护日志</h2>
+            <p>历次自动运维的完整报告，保存在配置目录的 <code>maintenance.jsonl</code>，重启不丢失。点开一条可查看全部明细。</p>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" id="btn-refresh-maintlog">刷新</button>
+          </div>
+        </div>
+        <p class="sub-note" id="maintlog-note"></p>
+        <div id="maintlog-body"></div>
       </section>
 
       <section class="panel" id="panel-subscriptions">

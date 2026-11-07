@@ -332,6 +332,16 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.maintenance_payload())
         return True
 
+    if (path == "/api/maintenance/logs"
+            or path.startswith("/api/maintenance/logs/")) and method == "GET":
+        parts = path.split("/")
+        try:
+            limit = int(parts[3]) if len(parts) > 3 and parts[3] else 50
+        except ValueError:
+            limit = 50
+        _json(h, 200, app.maintenance_log_payload(limit))
+        return True
+
     if path == "/api/maintenance/run" and method == "POST":
         _json(h, 200, app.run_maintenance("manual"))
         return True

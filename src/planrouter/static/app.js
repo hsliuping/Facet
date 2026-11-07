@@ -39,6 +39,7 @@ const state = {
   notify: null,
   report: null,
   maintenance: null,
+  maintlog: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -514,6 +515,7 @@ function switchTab(name) {
     loadRequests().catch(() => {});
     loadMaintenance().catch(() => {});
   }
+  if (name === 'maintlog') loadMaintLogs().catch((e) => toast(e.message, 'bad'));
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -1279,7 +1281,6 @@ function renderMaintenance() {
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
     + ` · LLM 分析：${llm} · 由 defaults.maintenance_model 控制（留空自动探测）`;
   const reports = data.reports || [];
-  const tierTag = (name) => channelTierBadge(name);
   const body = $('maintenance-body');
   if (!reports.length) {
     body.innerHTML = '<p class="sub-note">还没有运维报告。点「立即运行」会拉取各渠道模型目录，'
@@ -1288,39 +1289,49 @@ function renderMaintenance() {
     return;
   }
   body.innerHTML = reports.map((r) => {
-    const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString() : '';
-    const head = `<div class="maint-head"><strong>${esc(when)}</strong>`
-      + `<span class="sub-note">${esc(MAINT_TRIGGER[r.trigger] || r.trigger || '')}`
-      + ` · ${esc(r.channels_total ?? 0)} 个渠道</span></div>`;
-    const rows = [];
-    (r.applied || []).forEach((a) => {
-      const detail = a.action === 'repoint_auto'
-        ? `auto：<code>${esc(a.from)}</code> → <code>${esc(a.to)}</code>`
-        : (a.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
-      rows.push(maintItem('自动应用', 'active',
-        `<strong>${esc(a.channel)}</strong> ${tierTag(a.channel)} ${esc(a.reason || '')}：${detail}`));
-    });
-    (r.suggestions || []).forEach((s) => {
-      const btn = s.kind === 'add_model' && (s.models || []).length
-        ? ` <button class="btn small" data-apply="${esc(JSON.stringify(s.models))}"`
-          + ` data-channel="${esc(s.channel)}">一键采纳</button>` : '';
-      rows.push(maintItem(s.source === 'llm' ? 'AI 建议' : '建议', 'unknown',
-        `${s.channel ? `<strong>${esc(s.channel)}</strong>${tierTag(s.channel)} ` : ''}${esc(s.message)}${btn}`));
-    });
-    (r.alerts || []).forEach((a) => {
-      rows.push(maintItem('注意', 'expired',
-        `${a.channel ? `<strong>${esc(a.channel)}</strong>${tierTag(a.channel)} ` : ''}${esc(a.message)}`));
-    });
-    (r.llm_notes || []).forEach((n) => {
-      rows.push(maintItem('AI', 'active', `<span class="sub-note">${esc(n)}</span>`));
-    });
-    if (r.llm_error) {
-      rows.push(maintItem('AI', 'expired', `LLM 分析失败：${esc(r.llm_error)}`));
-    }
-    return `<div class="maint-report">${head}`
+    const rows = maintReportRows(r, true);
+    return `<div class="maint-report">${maintReportHead(r)}`
       + (rows.length ? rows.join('') : '<p class="sub-note">本次运行未发现需要处理的变更。</p>')
       + '</div>';
   }).join('');
+}
+
+function maintReportHead(r) {
+  const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString()
+    : (r.ts || '');
+  return `<div class="maint-head"><strong>${esc(when)}</strong>`
+    + `<span class="sub-note">${esc(MAINT_TRIGGER[r.trigger] || r.trigger || '')}`
+    + ` · ${esc(r.channels_total ?? 0)} 个渠道</span></div>`;
+}
+
+function maintReportRows(r, withApply) {
+  const tierTag = (name) => channelTierBadge(name);
+  const rows = [];
+  (r.applied || []).forEach((a) => {
+    const detail = a.action === 'repoint_auto'
+      ? `auto：<code>${esc(a.from)}</code> → <code>${esc(a.to)}</code>`
+      : (a.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
+    rows.push(maintItem('自动应用', 'active',
+      `<strong>${esc(a.channel)}</strong> ${tierTag(a.channel)} ${esc(a.reason || '')}：${detail}`));
+  });
+  (r.suggestions || []).forEach((s) => {
+    const btn = withApply && s.kind === 'add_model' && (s.models || []).length
+      ? ` <button class="btn small" data-apply="${esc(JSON.stringify(s.models))}"`
+        + ` data-channel="${esc(s.channel)}">一键采纳</button>` : '';
+    rows.push(maintItem(s.source === 'llm' ? 'AI 建议' : '建议', 'unknown',
+      `${s.channel ? `<strong>${esc(s.channel)}</strong>${tierTag(s.channel)} ` : ''}${esc(s.message)}${btn}`));
+  });
+  (r.alerts || []).forEach((a) => {
+    rows.push(maintItem('注意', 'expired',
+      `${a.channel ? `<strong>${esc(a.channel)}</strong>${tierTag(a.channel)} ` : ''}${esc(a.message)}`));
+  });
+  (r.llm_notes || []).forEach((n) => {
+    rows.push(maintItem('AI', 'active', `<span class="sub-note">${esc(n)}</span>`));
+  });
+  if (r.llm_error) {
+    rows.push(maintItem('AI', 'expired', `LLM 分析失败：${esc(r.llm_error)}`));
+  }
+  return rows;
 }
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
@@ -1381,6 +1392,47 @@ $('maintenance-body').addEventListener('click', async (e) => {
     b.disabled = false;
   }
 });
+
+async function loadMaintLogs() {
+  state.maintlog = await api('/api/maintenance/logs');
+  renderMaintLogs();
+}
+
+const MAINT_LOG_CHIPS = [
+  ['applied', '应用', 'active'], ['suggestions', '建议', 'unknown'],
+  ['alerts', '注意', 'expired'], ['llm_notes', 'AI 备注', 'active'],
+];
+
+function renderMaintLogs() {
+  const data = state.maintlog;
+  if (!data) return;
+  const logs = data.logs || [];
+  const body = $('maintlog-body');
+  if (!logs.length) {
+    $('maintlog-note').textContent = '';
+    body.innerHTML = '<p class="sub-note">还没有维护日志。每次「自动运维」运行（定时或手动）'
+      + '完成后都会在这里留档。</p>';
+    return;
+  }
+  $('maintlog-note').textContent = `显示最近 ${logs.length} 次运行`
+    + (data.has_more ? ' · 更早的记录未加载' : '');
+  body.innerHTML = logs.map((r) => {
+    const chips = MAINT_LOG_CHIPS
+      .map(([k, label, cls]) => (r[k] || []).length
+        ? `<span class="tag ${cls}">${label} ${(r[k] || []).length}</span>` : '')
+      .join('');
+    const rows = maintReportRows(r, false);
+    return `<details class="maint-log"><summary>${maintReportHead(r)}`
+      + `<span class="maint-chips">${chips}</span></summary>`
+      + '<div class="maint-log-body">'
+      + (rows.length ? rows.join('') : '<p class="sub-note">本次运行未发现需要处理的变更。</p>')
+      + '</div></details>';
+  }).join('');
+}
+
+$('btn-refresh-maintlog').onclick = () =>
+  loadMaintLogs().catch((e) => toast(e.message, 'bad'));
+$('btn-view-maintlog').onclick = () => switchTab('maintlog');
 
 $('btn-admin-key').onclick = async () => {
   const answer = await askText({
