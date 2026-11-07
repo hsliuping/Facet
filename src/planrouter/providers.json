@@ -100,6 +100,62 @@
           "models": []
         }
       }
+    },
+    {
+      "id": "bailian",
+      "name": "阿里云百炼",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "docs_url": "https://help.aliyun.com/zh/model-studio/models",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "hunyuan",
+      "name": "腾讯元宝（混元）",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
+          "docs_url": "https://cloud.tencent.com/document/product/1729",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "qianfan",
+      "name": "百度千帆",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://qianfan.baidubce.com/v2",
+          "docs_url": "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "xai",
+      "name": "Grok（xAI）",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.x.ai/v1",
+          "docs_url": "https://docs.x.ai/docs/models",
+          "tier": "paid",
+          "models": []
+        }
+      }
     }
   ]
 }
