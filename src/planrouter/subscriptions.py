@@ -90,6 +90,15 @@ def normalize(record: dict) -> dict:
     expires = _date(record.get("expires_at"), "expires_at")
     if started and expires and expires < started:
         raise ValueError("expires_at 不能早于 started_at")
+    models_url = str(record.get("models_url") or "").strip()
+    if models_url and not models_url.startswith(("http://", "https://")):
+        raise ValueError("models_url 必须是 http(s) URL")
+    raw_models = record.get("models") or []
+    if isinstance(raw_models, str):
+        raw_models = raw_models.replace(",", "\n").splitlines()
+    elif not isinstance(raw_models, (list, tuple)):
+        raw_models = []
+    models = [str(x).strip() for x in raw_models if str(x).strip()]
     return {
         "id": str(record.get("id") or ("sub-" + uuid.uuid4().hex[:10])).strip(),
         "vendor": vendor,
@@ -108,6 +117,8 @@ def normalize(record: dict) -> dict:
         "quota_used": quota_used,
         "quota_unit": quota_unit,
         "quota_updated_at": quota_updated.isoformat() if quota_updated else "",
+        "models_url": models_url,
+        "models": models,
         "note": str(record.get("note") or "").strip(),
     }
 

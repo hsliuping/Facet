@@ -167,6 +167,7 @@ tr:last-child td { border-bottom: none; }
 .pick.missing { border-color: var(--warn); }
 .pick.missing small { color: var(--warn); }
 .pick-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+#catalog-items { max-height: 280px; overflow: auto; display: grid; gap: 4px 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin: 8px 0 0; padding-right: 4px; }
 .test-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 15px; }
 .test-row input { flex: 1; min-width: 180px; }
 .catalog-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -216,6 +217,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .tag.free { background: rgba(63, 191, 120, .14); color: var(--ok); }
 .tag.paid { background: rgba(91, 157, 255, .16); color: var(--accent); }
 .tag.mixed { background: rgba(224, 166, 58, .14); color: var(--warn); }
+.tag.plan { background: rgba(240, 150, 60, .16); color: var(--warn, #f0963c); }
+.provider-tag { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .tier-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
 .tier-row code { font-size: 12px; word-break: break-all; }
 .tier-row select { max-width: 130px; }

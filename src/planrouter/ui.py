@@ -124,6 +124,10 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.ui_state())
         return True
 
+    if path == "/api/providers" and method == "GET":
+        _json(h, 200, {"providers": app.providers})
+        return True
+
     if (path == "/api/report" or path.startswith("/api/report/")) and method == "GET":
         parts = path.split("/")
         month = parts[3] if len(parts) > 3 and parts[3] else None

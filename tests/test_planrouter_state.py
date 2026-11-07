@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
-from planrouter.core import StateStore, parse_config
+from planrouter.core import StateStore, load_config, parse_config
 from planrouter.persistence import StatePersistence, capture, restore
 from planrouter.server import App, channel_tier, model_tier
 
@@ -204,6 +204,44 @@ class TierTests(unittest.TestCase):
         self.assertEqual(model_tier(by_name["a"], subs, "other"), "free")
         self.assertEqual(model_tier(by_name["b"], subs, "model-b"), "free")
         self.assertEqual(model_tier(by_name["b"], subs, "other"), "paid")
+
+
+class ProviderModeTests(unittest.TestCase):
+    """Vendor registry bookkeeping on channels: optional free-form strings
+    (provider id + billing mode key) that survive parse and disk reload."""
+
+    def test_defaults_are_empty(self):
+        config = parse_config(config_dict())
+        self.assertEqual((config.channels[0].provider,
+                          config.channels[0].mode), ("", ""))
+
+    def test_parse_strips_and_keeps_values(self):
+        raw = config_dict()
+        raw["channels"][0]["provider"] = " volcengine "
+        raw["channels"][0]["mode"] = " coding "
+        config = parse_config(raw)
+        self.assertEqual((config.channels[0].provider,
+                          config.channels[0].mode), ("volcengine", "coding"))
+
+    def test_mode_is_not_enum_checked(self):
+        raw = config_dict()
+        raw["channels"][0]["provider"] = "custom"
+        raw["channels"][0]["mode"] = "whatever"
+        config = parse_config(raw)
+        self.assertEqual((config.channels[0].provider,
+                          config.channels[0].mode), ("custom", "whatever"))
+
+    def test_round_trip_through_disk(self):
+        raw = config_dict()
+        raw["channels"][0]["provider"] = "zhipu"
+        raw["channels"][0]["mode"] = "coding"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps(raw, ensure_ascii=False),
+                            encoding="utf-8")
+            config = load_config(path)
+        self.assertEqual((config.channels[0].provider,
+                          config.channels[0].mode), ("zhipu", "coding"))
 
 
 if __name__ == "__main__":

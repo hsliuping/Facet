@@ -1,14 +1,37 @@
 """Daily self-maintenance: analyze pass, LLM output parsing, apply flows."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from planrouter import maintenance as maint
+from planrouter import providers as providers_mod
+from planrouter import subscriptions as subs
 from planrouter.core import load_config, parse_config
 from planrouter.server import App
+
+
+def providers_registry_fixture() -> dict:
+    """One fake vendor entry with a coding mode exposing a docs_url."""
+    return {
+        "id": "volcengine", "name": "火山引擎方舟",
+        "modes": {
+            "coding": {
+                "label": "Coding 套餐", "protocol": "openai",
+                "base_url": "https://ark.example.com/api/coding/v3",
+                "docs_url": "https://docs.example.com/coding-plan",
+                "tier": "paid", "models": ["old-model"],
+            },
+            "payg": {
+                "label": "按量付费", "protocol": "openai",
+                "base_url": "https://ark.example.com/api/v3",
+                "docs_url": "", "tier": "paid", "models": [],
+            },
+        },
+    }
 
 
 def maintenance_config() -> dict:
@@ -177,6 +200,7 @@ class RunMaintenanceTests(unittest.TestCase):
         self.path = Path(tmp.name)
         self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
         self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = []  # provider doc refresh is covered elsewhere
 
     def tearDown(self):
         self.path.unlink(missing_ok=True)
@@ -225,6 +249,245 @@ class RunMaintenanceTests(unittest.TestCase):
         self.assertTrue(log.is_file())
         entry = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
         self.assertEqual(entry["trigger"], "manual")
+
+
+PLAN_DOC_MARKDOWN = """## 支持的模型
+
+Coding Plan 个人版当前支持以下模型：
+
+- `doubao-seed-evolving`（默认模型）
+- `doubao-seed-2.1-pro`
+- `doubao-seed-2.1-lite`
+- `doubao-seed-2.0-mini`
+- `glm-5.3`（别名 `glm-latest`）
+- `glm-5.3-flash`
+- `deepseek-v4.1-flash`
+- `deepseek-v4.1-flash-economy`
+- `deepseek-v4-flash`
+- `deepseek-v4-pro`
+- `kimi-k2.8-preview`
+- `kimi-k3`
+- `kimi-k3.1-pro`
+
+* 完整说明见 https://www.volcengine.com/docs/85508/1434618
+
+以上内容摘自官方文档，仅供参考。
+"""
+
+PLAN_DOC_MODELS = [
+    "doubao-seed-evolving", "doubao-seed-2.1-pro", "doubao-seed-2.1-lite",
+    "doubao-seed-2.0-mini", "glm-5.3", "glm-latest", "glm-5.3-flash",
+    "deepseek-v4.1-flash", "deepseek-v4.1-flash-economy", "deepseek-v4-flash",
+    "deepseek-v4-pro", "kimi-k2.8-preview", "kimi-k3", "kimi-k3.1-pro",
+]
+
+
+class ExtractPlanModelsTests(unittest.TestCase):
+    def test_extracts_models_from_volcengine_style_markdown(self):
+        self.assertEqual(maint.extract_plan_models(PLAN_DOC_MARKDOWN), PLAN_DOC_MODELS)
+
+    def test_ignores_plain_lines_and_urls(self):
+        text = ("普通文字行没有清单。\n"
+                "访问 https://www.volcengine.com/docs 获取帮助\n"
+                "- https://only-an-url.example.com/a/b\n"
+                "* 无分隔符的 plainword 不算\n")
+        self.assertEqual(maint.extract_plan_models(text), [])
+
+    def test_html_to_text_strips_script_style_and_tags(self):
+        raw = ("<html><head><style>.x{color:red}</style></head><body>"
+               "<h1>Coding Plan</h1><ul><li>glm-5.3</li><li>kimi-k3</li></ul>"
+               "<script>var token=1;</script><p>A &amp; B</p></body></html>")
+        text = maint.html_to_text(raw)
+        self.assertNotIn("var token", text)
+        self.assertNotIn("color:red", text)
+        self.assertNotIn("<li>", text)
+        self.assertIn("A & B", text)
+        self.assertEqual(maint.extract_plan_models(text), ["glm-5.3", "kimi-k3"])
+
+    def test_parse_plan_models_reply(self):
+        self.assertEqual(maint.parse_plan_models_reply('["a-b", "c.d"]'), ["a-b", "c.d"])
+        self.assertEqual(maint.parse_plan_models_reply('答案：["a-b"] 以上'), ["a-b"])
+        self.assertEqual(maint.parse_plan_models_reply("抱歉，无法解析"), [])
+        self.assertEqual(maint.parse_plan_models_reply(""), [])
+        self.assertEqual(maint.parse_plan_models_reply(None), [])
+
+
+class RefreshPlanModelsTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.probe_channel_models = lambda payload: {"ok": False, "name": payload.get("name")}
+        self.app.providers = []  # provider doc refresh is covered elsewhere
+        self.app.subscriptions = [subs.normalize({
+            "vendor": "火山引擎", "plan": "coding plan", "channels": ["a"],
+            "models_url": "https://docs.example.com/coding-plan",
+            "models": ["old-model"],
+        })]
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        Path(str(self.path) + ".maintenance.bak").unlink(missing_ok=True)
+        (self.path.parent / "maintenance.jsonl").unlink(missing_ok=True)
+
+    def patch_fetch(self, result):
+        original = maint.fetch_plan_doc
+
+        def fake(url):
+            if isinstance(result, Exception):
+                raise result
+            return result
+        maint.fetch_plan_doc = fake
+        self.addCleanup(setattr, maint, "fetch_plan_doc", original)
+
+    def test_run_maintenance_updates_plan_models_from_doc(self):
+        self.patch_fetch("<html><body><ul>"
+                         "<li>doubao-seed-2.1-pro</li>"
+                         "<li>doubao-seed-2.0-mini</li>"
+                         "</ul></body></html>")
+        report = self.app.run_maintenance("manual")
+        record = self.app.subscriptions[0]
+        self.assertEqual(record["models"], ["doubao-seed-2.1-pro", "doubao-seed-2.0-mini"])
+        entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
+        self.assertEqual(entry["source"], "regex")
+        self.assertEqual((entry["added"], entry["removed"]), (2, 1))
+        self.assertEqual(entry["vendor"], "火山引擎")
+        self.assertEqual(entry["plan"], "coding plan")
+        self.assertIn("新增 2 个", entry["reason"])
+        self.assertIn("来源 regex", entry["reason"])
+        log = self.path.parent / "maintenance.jsonl"
+        line = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+        self.assertIn("update_plan_models", [e["action"] for e in line["applied"]])
+
+    def test_fetch_failure_alerts_and_keeps_old_models(self):
+        self.patch_fetch(OSError("network down"))
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"], ["old-model"])
+        alert = next(a for a in report["alerts"] if a["kind"] == "plan_models_fetch")
+        self.assertIn("火山引擎", alert["message"])
+        self.assertIn("coding plan", alert["message"])
+
+    def test_llm_fallback_updates_when_regex_extraction_empty(self):
+        self.patch_fetch("<html><body><p>套餐包含 kimi-k3.1-pro 等模型</p></body></html>")
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            defaults=dataclasses.replace(self.app.config.defaults,
+                                         maintenance_model="gpt-x"))
+        self.app._maintenance_llm_call = lambda model, prompt: '["kimi-k3.1-pro", "kimi-k3"]'
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"], ["kimi-k3.1-pro", "kimi-k3"])
+        entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
+        self.assertEqual(entry["source"], "llm")
+
+    def test_llm_unparsable_reply_alerts_and_keeps_old_models(self):
+        self.patch_fetch("<html><body><p>没有可提取的清单</p></body></html>")
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            defaults=dataclasses.replace(self.app.config.defaults,
+                                         maintenance_model="gpt-x"))
+        self.app._maintenance_llm_call = lambda model, prompt: "抱歉，我无法完成该任务"
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"], ["old-model"])
+        self.assertIn("plan_models_llm", [a["kind"] for a in report["alerts"]])
+
+    def test_no_change_is_silent(self):
+        self.patch_fetch("<html><body><ul><li>old-model</li></ul></body></html>")
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"], ["old-model"])
+        self.assertEqual([e for e in report["applied"]
+                          if e["action"] == "update_plan_models"], [])
+
+
+class RefreshProvidersTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = [providers_registry_fixture()]
+        self.app.subscriptions = []
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        Path(str(self.path) + ".maintenance.bak").unlink(missing_ok=True)
+        (self.path.parent / "maintenance.jsonl").unlink(missing_ok=True)
+        overlay = self.path.parent / "providers.json"
+        overlay.unlink(missing_ok=True)
+        Path(str(overlay) + ".bak").unlink(missing_ok=True)
+
+    def patch_fetch(self, result):
+        original = maint.fetch_plan_doc
+
+        def fake(url):
+            if isinstance(result, Exception):
+                raise result
+            return result
+        maint.fetch_plan_doc = fake
+        self.addCleanup(setattr, maint, "fetch_plan_doc", original)
+
+    def test_updates_models_and_writes_overlay(self):
+        self.patch_fetch("<html><body><ul>"
+                         "<li>doubao-seed-2.1-pro</li>"
+                         "<li>kimi-k3</li>"
+                         "</ul></body></html>")
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        coding = self.app.providers[0]["modes"]["coding"]
+        self.assertEqual(coding["models"], ["doubao-seed-2.1-pro", "kimi-k3"])
+        entry = next(e for e in report["applied"]
+                     if e["action"] == "update_provider_models")
+        self.assertEqual((entry["added"], entry["removed"]), (2, 1))
+        self.assertEqual(entry["vendor"], "火山引擎方舟")
+        self.assertEqual(entry["mode"], "coding")
+        self.assertIn("新增 2 个", entry["reason"])
+        self.assertIn("火山引擎方舟", entry["reason"])
+        overlay = self.path.parent / "providers.json"
+        self.assertTrue(overlay.is_file())
+        data = json.loads(overlay.read_text(encoding="utf-8"))
+        saved = next(p for p in data["providers"] if p["id"] == "volcengine")
+        self.assertEqual(saved["modes"]["coding"]["models"],
+                         ["doubao-seed-2.1-pro", "kimi-k3"])
+        # Reloaded registry (builtin + overlay) sees the refreshed list too.
+        reloaded = providers_mod.load_providers(self.path.parent)
+        saved2 = next(p for p in reloaded if p["id"] == "volcengine")
+        self.assertEqual(saved2["modes"]["coding"]["models"],
+                         ["doubao-seed-2.1-pro", "kimi-k3"])
+
+    def test_empty_extraction_alerts_and_keeps_data(self):
+        self.patch_fetch("<html><body><p>页面里没有模型清单</p></body></html>")
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(report["applied"], [])
+        self.assertIn("provider_models_empty",
+                      [a["kind"] for a in report["alerts"]])
+        self.assertIn("火山引擎方舟", report["alerts"][0]["message"])
+        self.assertEqual(self.app.providers[0]["modes"]["coding"]["models"],
+                         ["old-model"])
+        self.assertFalse((self.path.parent / "providers.json").exists())
+
+    def test_fetch_failure_alerts_and_keeps_data(self):
+        self.patch_fetch(OSError("network down"))
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(report["applied"], [])
+        self.assertIn("provider_models_fetch",
+                      [a["kind"] for a in report["alerts"]])
+        self.assertEqual(self.app.providers[0]["modes"]["coding"]["models"],
+                         ["old-model"])
+        self.assertFalse((self.path.parent / "providers.json").exists())
+
+    def test_no_change_is_silent(self):
+        self.patch_fetch("<html><body><ul><li>old-model</li></ul></body></html>")
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(report["applied"], [])
+        self.assertEqual(report["alerts"], [])
+        self.assertFalse((self.path.parent / "providers.json").exists())
 
 
 if __name__ == "__main__":

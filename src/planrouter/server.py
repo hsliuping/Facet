@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from . import subscriptions as subs
 from . import ui
 from . import maintenance as maint
+from . import providers as providers_mod
 from .audit import RequestLog
 from .core import (
     ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
@@ -269,6 +270,13 @@ class App:
         except (OSError, ValueError):
             self.subscriptions = []
             self.subscription_settings = dict(subs.DEFAULT_SETTINGS)
+        # Vendor registry (builtin providers.json + optional user overlay in
+        # the config dir); a broken overlay must not keep the gateway down.
+        try:
+            self.providers = providers_mod.load_providers(
+                self.config_path.parent if self.config_path else None)
+        except (OSError, ValueError):
+            self.providers = providers_mod.load_providers(None)
         self.persistence = StatePersistence(state_file, lambda: self.store) if state_file else None
         if self.persistence:
             self.persistence.restore_from_disk()
@@ -618,6 +626,9 @@ class App:
                     "channel": "", "kind": "apply_failed",
                     "message": f"自动应用变更失败，配置已回读未提交：{exc}",
                 })
+
+        maint.refresh_plan_models(self, report)
+        maint.refresh_providers(self, report)
 
         model = self.config.defaults.maintenance_model
         if model:

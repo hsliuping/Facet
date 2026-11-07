@@ -140,6 +140,36 @@ class SubscriptionMathTests(unittest.TestCase):
         record = subs.normalize({"vendor": "v", "plan": "p", "channels": "ch-a, ch-b"})
         self.assertEqual(record["channels"], ["ch-a", "ch-b"])
 
+    def test_models_url_and_models_normalization(self):
+        record = subs.normalize({
+            "vendor": "v", "plan": "p",
+            "models_url": " https://example.com/docs ",
+            "models": "Doubao-Seed-2.1-Pro, glm-5.3\n\ndoubao-seed-evolving\n",
+        })
+        self.assertEqual(record["models_url"], "https://example.com/docs")
+        self.assertEqual(record["models"],
+                         ["Doubao-Seed-2.1-Pro", "glm-5.3", "doubao-seed-evolving"])
+
+    def test_models_accept_list_and_default_to_empty(self):
+        record = subs.normalize({"vendor": "v", "plan": "p", "models": ["a-b", " c.d ", ""]})
+        self.assertEqual(record["models"], ["a-b", "c.d"])
+        plain = subs.normalize({"vendor": "v", "plan": "p"})
+        self.assertEqual((plain["models_url"], plain["models"]), ("", []))
+
+    def test_models_url_must_be_http(self):
+        for bad in ("ftp://example.com/x", "example.com/docs"):
+            with self.assertRaisesRegex(ValueError, "models_url 必须是 http"):
+                subs.normalize({"vendor": "v", "plan": "p", "models_url": bad})
+
+    def test_enrich_keeps_plan_model_fields(self):
+        record = subs.normalize({
+            "vendor": "v", "plan": "p",
+            "models_url": "https://e.com/d", "models": ["a-b"],
+        })
+        enriched = subs.enrich(record, TODAY)
+        self.assertEqual(enriched["models_url"], "https://e.com/d")
+        self.assertEqual(enriched["models"], ["a-b"])
+
     def test_file_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "subscriptions.json"

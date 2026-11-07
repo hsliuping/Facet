@@ -1,0 +1,105 @@
+{
+  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 后写入，手工勿改。",
+  "providers": [
+    {
+      "id": "volcengine",
+      "name": "火山引擎方舟",
+      "modes": {
+        "coding": {
+          "label": "Coding 套餐",
+          "protocol": "openai",
+          "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "docs_url": "https://console.volcengine.com/ark/region:cn-beijing/docs/coding-plan-personal-get-started",
+          "tier": "paid",
+          "models": []
+        },
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "modes": {
+        "coding": {
+          "label": "Coding 套餐",
+          "protocol": "openai",
+          "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        },
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.deepseek.com/v1",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "moonshot",
+      "name": "Kimi",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.moonshot.cn/v1",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic 直连",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "anthropic",
+          "base_url": "https://api.anthropic.com",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI 直连",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    }
+  ]
+}

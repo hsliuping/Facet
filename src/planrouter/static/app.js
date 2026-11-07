@@ -33,6 +33,7 @@ const state = {
   subs: null,
   subDirty: false,
   editingSub: -1,
+  providers: null,
   usage: null,
   usageRange: 30,
   notify: null,
@@ -304,13 +305,21 @@ function catalogSummary(name) {
 }
 
 function channelCard(c, i) {
-  const modelBits = Object.entries(c.models || {}).map(([k, v]) => {
+  const entries = Object.entries(c.models || {});
+  const bit = ([k, v]) => {
     const badge = tierBadge(tierFor(c.name, c.tier, k));
     return `${esc(k)} → ${esc(v)}${badge ? ' ' + badge : ''}`;
-  }).join(' · ');
+  };
+  // Long mappings (aggregators can hold hundreds of models) collapse to the
+  // first few plus an expander so the card cannot stretch the page.
+  const SHOW = 8;
+  const modelBits = entries.length > SHOW
+    ? `${entries.slice(0, SHOW).map(bit).join(' · ')} <button type="button" class="btn small ghost" data-action="toggle-models" data-total="${entries.length}">… 共 ${entries.length} 个</button><span class="models-more" hidden>${entries.slice(SHOW).map(bit).join(' · ')}</span>`
+    : entries.map(bit).join(' · ');
+  const ptag = providerTag(c);
   return `<article class="card">
     <div class="card-top">
-      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${channelTierBadge(c.name, c.tier)}</div>
+      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${channelTierBadge(c.name, c.tier)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}</div>
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
     </div>
     <dl>
@@ -459,6 +468,16 @@ function clearSubDirty() {
 async function loadSubscriptions() {
   state.subs = await api('/api/subscriptions');
   renderSubscriptions();
+}
+
+// Vendor registry for the channel editor: load once, tolerate absence so
+// a console served by an older backend still works.
+async function loadProviders() {
+  try {
+    state.providers = (await api('/api/providers')).providers || [];
+  } catch (_) {
+    state.providers = [];
+  }
 }
 
 function renderBanner() {
@@ -630,7 +649,9 @@ function openSubEditor(index) {
     billing_cycle: 'monthly', started_at: todayISO(), expires_at: '',
     auto_renew: false, remind_days: 7, channels: [], note: '',
     quota_limit: '', quota_used: '', quota_unit: '', quota_updated_at: '',
+    models_url: '', models: [],
   };
+  const modelsText = Array.isArray(r.models) ? r.models.join('\n') : String(r.models || '');
   const currencies = ['CNY', 'USD', 'EUR', 'HKD'].map((c) =>
     `<option value="${c}" ${r.currency === c ? 'selected' : ''}>${c}</option>`).join('');
   const cycles = [['monthly', '月付'], ['quarterly', '季付'], ['yearly', '年付'],
@@ -658,6 +679,8 @@ function openSubEditor(index) {
             .map(([v, l]) => `<option value="${v}" ${(r.quota_unit || '') === v ? 'selected' : ''}>${l}</option>`).join('')}
         </select></div>
         ${field('备注', 'note', r.note, { wide: true, textarea: true })}
+        ${field('套餐文档 URL', 'models_url', r.models_url || '', { wide: true, placeholder: 'https://…', hint: '填写官方说明页，自动维护会抓取并更新下方清单' })}
+        ${field('套餐内模型', 'models', modelsText, { wide: true, textarea: true, rows: 6, hint: '每行一个，自动维护会定期更新' })}
       </div>
       <div class="test-row">
         <span class="test-hint">测试勾选的渠道是否可用（会各发一次最小请求）</span>
@@ -700,6 +723,8 @@ function saveSubEditor() {
       quota_unit: val('quota_unit'),
       quota_updated_at: state.editingSub >= 0
         ? (state.subs.subscriptions[state.editingSub].quota_updated_at || '') : '',
+      models_url: val('models_url'),
+      models: f.elements.namedItem('models')?.value ?? '',
       note: val('note'),
     };
     if (!record.vendor || !record.plan) throw new Error('厂家和套餐名称不能为空');
@@ -1162,22 +1187,31 @@ function renderAll() {
   renderReport();
 }
 
+let modalReturnFocus = null;
+
 function openModal(title, html) {
   $('modal-title').textContent = title;
   $('modal-body').innerHTML = html;
   $('modal').hidden = false;
+  modalReturnFocus = document.activeElement;
+  const target = $('modal').querySelector('.modal input, .modal select, .modal textarea')
+    || $('modal').querySelector('.modal button');
+  if (target) target.focus();
 }
 
 function closeModal() {
   $('modal').hidden = true;
+  if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
+  modalReturnFocus = null;
 }
 
 const field = (label, name, value, opts = {}) => `
   <div class="field ${opts.wide ? 'wide' : ''}">
     <label for="f-${name}">${label}</label>
     ${opts.textarea
-      ? `<textarea id="f-${name}" name="${name}" rows="4">${esc(value)}</textarea>`
+      ? `<textarea id="f-${name}" name="${name}" rows="${opts.rows || 4}">${esc(value)}</textarea>`
       : `<input id="f-${name}" name="${name}" type="${opts.type || 'text'}" value="${esc(value)}" ${opts.type === 'number' ? 'min="0"' : ''} placeholder="${esc(opts.placeholder || '')}">`}
+    ${opts.hint ? `<small class="hint">${esc(opts.hint)}</small>` : ''}
   </div>`;
 
 function draftChannelFromEditor() {
@@ -1289,13 +1323,66 @@ function renderCatalogList(models) {
     list.innerHTML = '<div class="hint">上游返回了空清单，请确认该密钥有模型权限</div>';
     return;
   }
+  // No manual one-by-one picking: pre-check what is already mapped, take
+  // everything on small catalogs (plan bridges), and on big aggregators
+  // default to the free ids. The filter and bulk buttons cover the rest.
+  // When a linked subscription lists plan models, those win: pre-check the
+  // plan intersection instead of the ≤30 / :free heuristic, and tag hits.
   const current = parseModels($('editor-form').elements.namedItem('models').value);
+  const mapped = new Set(Object.keys(current).filter((k) => k !== 'auto' && k !== '*'));
+  const FREE_ID = /(:free|-free)$/i;
+  const channelName = ($('editor-form').elements.namedItem('name')?.value || '').trim();
+  const planModels = new Set();
+  (state.subs?.subscriptions || []).forEach((rec) => {
+    if ((rec.channels || []).includes(channelName)) {
+      (Array.isArray(rec.models) ? rec.models : []).forEach((m) => planModels.add(String(m)));
+    }
+  });
+  // Registry models for the channel's vendor + billing mode count as plan
+  // models too: same 套餐 tag, same pre-check behaviour.
+  const regMode = registryMode(
+    $('editor-form').elements.namedItem('provider')?.value || '',
+    $('editor-form').elements.namedItem('mode')?.value || '');
+  (regMode?.models || []).forEach((m) => planModels.add(String(m)));
+  const inPlan = planModels.size > 0;
+  const precheck = (m) => inPlan
+    ? (mapped.has(m) || planModels.has(m))
+    : (mapped.has(m) || models.length <= 30 || FREE_ID.test(m));
   list.hidden = false;
-  list.innerHTML = models.map((m) => {
-    const checked = m in current && current[m] === m;
-    return `<label class="pick"><input type="checkbox" value="${esc(m)}" ${checked ? 'checked' : ''}><span><strong>${esc(m)}</strong></span></label>`;
-  }).join('') +
-  `<div class="test-row"><button type="button" class="btn small" id="catalog-apply">把勾选写入模型映射</button><span class="hint">保留 auto=、*=* 与别名映射，勾选的模型按原名写入</span></div>`;
+  list.innerHTML = `
+    <div class="test-row" style="margin-top:8px">
+      <input id="catalog-filter" type="text" placeholder="输入关键字筛选，如 free / qwen" autocomplete="off">
+      <button type="button" class="btn small" data-cat="all">全选</button>
+      <button type="button" class="btn small" data-cat="none">全不选</button>
+      <button type="button" class="btn small" data-cat="free">只选免费</button>
+      ${inPlan ? '<button type="button" class="btn small" data-cat="plan">只选套餐内</button>' : ''}
+    </div>
+    <div id="catalog-items">${models.map((m) =>
+      `<label class="pick"><input type="checkbox" value="${esc(m)}" ${precheck(m) ? 'checked' : ''}><span><strong>${esc(m)}</strong>${planModels.has(m) ? ' <span class="tag plan">套餐</span>' : ''}</span></label>`
+    ).join('')}</div>
+    <div class="test-row"><button type="button" class="btn small" id="catalog-apply">把勾选写入模型映射</button><span class="hint" id="catalog-count"></span></div>`;
+  const boxes = () => Array.from(list.querySelectorAll('#catalog-items input[type="checkbox"]'));
+  const visible = () => boxes().filter((b) => b.parentElement.style.display !== 'none');
+  const count = () => {
+    $('catalog-count').textContent =
+      `已勾选 ${boxes().filter((b) => b.checked).length} / ${models.length} 个`;
+  };
+  $('catalog-filter').addEventListener('input', () => {
+    const kw = $('catalog-filter').value.trim().toLowerCase();
+    boxes().forEach((b) => {
+      b.parentElement.style.display = (!kw || b.value.toLowerCase().includes(kw)) ? '' : 'none';
+    });
+  });
+  list.querySelectorAll('[data-cat]').forEach((b) => {
+    b.onclick = () => {
+      if (b.dataset.cat === 'none') boxes().forEach((x) => { x.checked = false; });
+      else if (b.dataset.cat === 'free') visible().forEach((x) => { x.checked = FREE_ID.test(x.value); });
+      else if (b.dataset.cat === 'plan') visible().forEach((x) => { x.checked = planModels.has(x.value); });
+      else visible().forEach((x) => { x.checked = true; });
+      count();
+    };
+  });
+  count();
   $('catalog-apply').onclick = applyCatalogSelection;
 }
 
@@ -1311,6 +1398,7 @@ function applyCatalogSelection() {
   const merged = Object.fromEntries(keep);
   picked.forEach((m) => { merged[m] = m; });
   modelsField.value = serializeModels(merged);
+  renderModelTierRows();
   toast(`已写入 ${picked.length} 个模型，记得保存渠道`);
 }
 
@@ -1358,6 +1446,57 @@ function renderModelTierRows() {
   }).join('');
 }
 
+function providerOptions(selected) {
+  return ['<option value="">自定义 / 不选</option>']
+    .concat((state.providers || []).map((p) =>
+      `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name || p.id)}</option>`))
+    .join('');
+}
+
+function providerModeOptions(pid, selected) {
+  const p = (state.providers || []).find((x) => x.id === pid);
+  return ['<option value="">自定义</option>']
+    .concat(Object.entries(p?.modes || {}).map(([key, mode]) =>
+      `<option value="${esc(key)}" ${key === selected ? 'selected' : ''}>${esc(mode.label || key)}</option>`))
+    .join('');
+}
+
+// Registry lookup for a provider id + mode key; null when custom/unknown.
+function registryMode(pid, modeKey) {
+  const p = (state.providers || []).find((x) => x.id === pid);
+  if (!p || !modeKey) return null;
+  return p.modes?.[modeKey] || null;
+}
+
+// 「厂家 · 模式label」 text for the channel card; '' when unlinked.
+function providerTag(c) {
+  if (!c.provider) return '';
+  const p = (state.providers || []).find((x) => x.id === c.provider);
+  const name = p ? (p.name || p.id) : c.provider;
+  const label = p && c.mode ? (p.modes?.[c.mode]?.label || '') : '';
+  return label ? `${name} · ${label}` : name;
+}
+
+// Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
+// the pair in the draft; switching back to 自定义 clears the pair but keeps
+// whatever base_url the user has already entered.
+function applyProviderPreset() {
+  const f = $('editor-form');
+  if (!f) return;
+  const pid = f.elements.namedItem('provider').value;
+  const modeKey = f.elements.namedItem('mode').value;
+  const mode = registryMode(pid, modeKey);
+  if (!mode) return;
+  if (mode.protocol === 'openai' || mode.protocol === 'anthropic') {
+    f.elements.namedItem('protocol').value = mode.protocol;
+  }
+  if (mode.base_url) f.elements.namedItem('base_url').value = mode.base_url;
+  if (mode.tier) {
+    const tierSel = f.elements.namedItem('tier');
+    if (tierSel) tierSel.value = mode.tier;
+  }
+}
+
 function openChannelEditor(index) {
   state.editing = index;
   const c = index >= 0 ? state.config.channels[index] : {
@@ -1369,6 +1508,10 @@ function openChannelEditor(index) {
     <form id="editor-form">
       <div class="form-grid">
         ${field('渠道名称', 'name', c.name, { placeholder: 'my-coding-plan' })}
+        <div class="field"><label for="f-provider">厂家</label>
+          <select id="f-provider" name="provider">${providerOptions(c.provider || '')}</select></div>
+        <div class="field"><label for="f-mode">计费模式</label>
+          <select id="f-mode" name="mode">${providerModeOptions(c.provider || '', c.mode || '')}</select></div>
         <div class="field"><label for="f-protocol">协议</label>
           <select id="f-protocol" name="protocol">
             <option value="openai" ${c.protocol === 'openai' ? 'selected' : ''}>openai</option>
@@ -1416,6 +1559,13 @@ function openChannelEditor(index) {
   $('editor-fetch-models').onclick = fetchChannelModels;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
   $('f-models').addEventListener('input', renderModelTierRows);
+  const fProvider = $('f-provider');
+  const fMode = $('f-mode');
+  fProvider.onchange = () => {
+    fMode.innerHTML = providerModeOptions(fProvider.value, '');
+    applyProviderPreset();
+  };
+  fMode.onchange = applyProviderPreset;
   renderModelTierRows();
 }
 
@@ -1433,6 +1583,7 @@ function saveChannelEditor() {
     $('model-tier-rows').querySelectorAll('select').forEach((s) => {
       if (s.value) tiers[s.dataset.model] = s.value;
     });
+    const provider = val('provider');
     const channel = {
       name,
       protocol: val('protocol'),
@@ -1445,6 +1596,8 @@ function saveChannelEditor() {
       enabled: f.elements.namedItem('enabled').checked,
       tier: val('tier'),
       tiers,
+      provider,
+      mode: provider ? val('mode') : '',
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
     };
     if (state.editing >= 0) {
@@ -1569,14 +1722,39 @@ function bindEvents() {
     toast('已导出（不含密钥明文）', 'warn');
   };
   $('modal-close').onclick = closeModal;
-  $('modal').onclick = (e) => { if (e.target === $('modal')) closeModal(); };
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  // Truly modal: clicking the backdrop or the page behind does nothing and
+  // Tab cycles inside the dialog, so a stray click cannot discard a draft.
+  // Only the close button, a save/cancel action or Escape dismisses it.
+  const focusable = (box) => Array.from(box.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter((el) => el.offsetParent !== null);
+  document.addEventListener('keydown', (e) => {
+    if ($('modal').hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+    if (e.key !== 'Tab') return;
+    const box = $('modal').querySelector('.modal');
+    const list = focusable(box);
+    if (!list.length) return;
+    if (!box.contains(document.activeElement)) { e.preventDefault(); list[0].focus(); return; }
+    const firstEl = list[0], lastEl = list[list.length - 1];
+    if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
+    else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+  });
 
   $('channel-list').addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
     const i = Number(b.dataset.index);
     const action = b.dataset.action;
+    if (action === 'toggle-models') {
+      const more = b.parentElement.querySelector('.models-more');
+      if (more) {
+        const open = !more.hidden;
+        more.hidden = open;
+        b.textContent = open ? `… 共 ${b.dataset.total} 个` : '收起';
+      }
+      return;
+    }
     if (action === 'edit') openChannelEditor(i);
     if (action === 'catalog') {
       const name = b.dataset.name;
@@ -1701,6 +1879,7 @@ async function boot() {
   try {
     await loadConfig();
     await loadSubscriptions();
+    await loadProviders();
     await restoreDrafts();
     await loadState();
     await loadUsage();

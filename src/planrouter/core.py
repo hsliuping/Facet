@@ -188,6 +188,10 @@ class Channel:
     # like Bailian mixes free-quota and billed models on one channel, and the
     # mix moves over time, so each model can be switched by hand.
     tiers: dict[str, str] = field(default_factory=dict)
+    # Vendor registry bookkeeping: provider id + billing mode key from the
+    # builtin providers.json registry; empty means a custom/unknown channel.
+    provider: str = ""
+    mode: str = ""
 
 
 @dataclass(frozen=True)
@@ -463,6 +467,8 @@ def parse_config(raw: dict) -> Config:
             upstream_path=upstream_path,
             tier=tier,
             tiers=tiers,
+            provider=str(item.get("provider") or "").strip(),
+            mode=str(item.get("mode") or "").strip(),
         ))
     if not channels:
         raise ValueError("at least one channel is required")

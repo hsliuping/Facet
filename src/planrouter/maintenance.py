@@ -15,12 +15,18 @@ things really break:
 """
 from __future__ import annotations
 
+import html
 import json
 import re
+from urllib.request import Request, urlopen
 
+from . import providers as providers_mod
 from .core import AUTO_MODEL, QUOTA_MARKERS
 
 JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+PLAN_LIST_BLOCK = re.compile(r"\[.*\]", re.DOTALL)
+PLAN_MODEL_TOKEN = re.compile(r"[a-z0-9][a-z0-9._-]{3,60}")
+URL_RE = re.compile(r"https?://\S+")
 
 
 def _common_prefix_len(a: str, b: str) -> int:
@@ -232,3 +238,202 @@ def parse_llm_output(text: str) -> dict:
             })
         result["suggestions"] = clean[:10]
     return result
+
+
+# ------------------------------------------------------- plan model refresh
+def fetch_plan_doc(url: str) -> str:
+    """GET a subscription's plan documentation page (no auth, 10s timeout)."""
+    req = Request(url, headers={"User-Agent": "planrouter-maintenance/1.0"})
+    with urlopen(req, timeout=10) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+def html_to_text(raw: str) -> str:
+    """Reduce an HTML page to plain text: drop script/style, tags, entities.
+
+    <li> items become "- " lines so the list-line extractor still sees them
+    after tag stripping.
+    """
+    raw = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1\s*>", " ", raw)
+    raw = re.sub(r"(?is)<li\b[^>]*>", "\n- ", raw)
+    raw = re.sub(r"(?s)<[^>]+>", " ", raw)
+    raw = html.unescape(raw)
+    out: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line or (out and out[-1]):
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+def extract_plan_models(text: str) -> list[str]:
+    """Deterministic pull of plan model ids from list lines of the doc text.
+
+    Only lines that look like list items (-, *, <li>) are considered; from
+    each line keep lowercase tokens matching the model-id shape that contain
+    a separator (- or .) and are not URL fragments.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(("-", "*", "<li>")):
+            continue
+        for token in PLAN_MODEL_TOKEN.findall(URL_RE.sub(" ", stripped).lower()):
+            if ("-" not in token and "." not in token) \
+                    or "http" in token or "://" in token or "/" in token:
+                continue
+            if token not in seen:
+                seen.add(token)
+                found.append(token)
+    return found
+
+
+def build_plan_models_prompt(doc_text: str) -> str:
+    return (
+        "从以下文档文本提取套餐支持的模型 id，仅输出 JSON 字符串数组，"
+        "不要输出其他文字：\n" + doc_text[:12000]
+    )
+
+
+def parse_plan_models_reply(text: str) -> list[str]:
+    """Extract a JSON string array from the LLM reply; empty list on failure."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+    match = PLAN_LIST_BLOCK.search(text[:6000])
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(m).strip() for m in data if str(m).strip()]
+
+
+def refresh_plan_models(app, report: dict) -> None:
+    """Refresh each subscription's plan model list from its documentation URL.
+
+    Fetch failures keep the old list and land in the report alerts; a changed
+    list is written back onto the in-memory subscription record and reported
+    as applied (which also lands in maintenance.jsonl via the caller).
+    """
+    for record in app.subscriptions:
+        url = str(record.get("models_url") or "").strip()
+        if not url:
+            continue
+        label = f"{record.get('vendor') or '—'} / {record.get('plan') or '—'}"
+        try:
+            text = html_to_text(fetch_plan_doc(url))
+        except Exception as exc:  # any fetch failure must keep the old list
+            report["alerts"].append({
+                "channel": "", "kind": "plan_models_fetch",
+                "message": f"抓取套餐文档失败：{label}（{str(exc)[:160]}），保留原模型清单",
+            })
+            continue
+        extracted = extract_plan_models(text)
+        source = "regex"
+        if not extracted:
+            model = app.config.defaults.maintenance_model
+            if not model:
+                continue
+            try:
+                reply = app._maintenance_llm_call(model, build_plan_models_prompt(text))
+            except Exception as exc:
+                report["alerts"].append({
+                    "channel": "", "kind": "plan_models_llm",
+                    "message": f"LLM 提取套餐模型请求失败：{label}（{str(exc)[:160]}），保留原模型清单",
+                })
+                continue
+            parsed = parse_plan_models_reply(str(reply)[:6000])
+            if not parsed:
+                report["alerts"].append({
+                    "channel": "", "kind": "plan_models_llm",
+                    "message": f"LLM 未能从套餐文档提取出模型清单：{label}，保留原模型清单",
+                })
+                continue
+            extracted, source = parsed, "llm"
+        old = [str(m) for m in record.get("models") or []]
+        new = [str(m).strip() for m in extracted if str(m).strip()]
+        added = [m for m in new if m not in old]
+        removed = [m for m in old if m not in new]
+        if not new or (not added and not removed):
+            continue
+        record["models"] = new
+        report["applied"].append({
+            "channel": ", ".join(record.get("channels") or []) or record.get("vendor") or "",
+            "action": "update_plan_models",
+            "vendor": record.get("vendor") or "",
+            "plan": record.get("plan") or "",
+            "models": new,
+            "added": len(added), "removed": len(removed), "source": source,
+            "reason": f"套餐文档更新模型清单：新增 {len(added)} 个、移除 {len(removed)} 个（来源 {source}）",
+        })
+
+
+def refresh_providers(app, report: dict) -> None:
+    """Refresh each registry mode's model list from its docs_url page.
+
+    For every vendor mode that exposes a docs_url, the model list is pulled
+    with the same deterministic extraction used for subscription plans. A
+    changed list is written onto the in-memory registry entry and persisted
+    into the user overlay file (with a backup); failures only raise alerts
+    and never touch the data.
+    """
+    changed: list[dict] = []
+    for provider in getattr(app, "providers", None) or []:
+        if not isinstance(provider, dict):
+            continue
+        for mode_key, mode in (provider.get("modes") or {}).items():
+            if not isinstance(mode, dict):
+                continue
+            url = str(mode.get("docs_url") or "").strip()
+            if not url:
+                continue
+            label = f"{provider.get('name') or provider.get('id') or '—'} / {mode.get('label') or mode_key}"
+            try:
+                text = html_to_text(fetch_plan_doc(url))
+            except Exception as exc:  # any fetch failure must keep the old list
+                report["alerts"].append({
+                    "channel": "", "kind": "provider_models_fetch",
+                    "message": f"抓取厂家文档失败：{label}（{str(exc)[:160]}），保留原模型清单",
+                })
+                continue
+            extracted = extract_plan_models(text)
+            if not extracted:
+                report["alerts"].append({
+                    "channel": "", "kind": "provider_models_empty",
+                    "message": f"未能从厂家文档提取出模型清单：{label}，保留原模型清单",
+                })
+                continue
+            old = [str(m) for m in mode.get("models") or []]
+            new = [str(m).strip() for m in extracted if str(m).strip()]
+            added = [m for m in new if m not in old]
+            removed = [m for m in old if m not in new]
+            if not added and not removed:
+                continue
+            mode["models"] = new
+            if not any(p is provider for p in changed):
+                changed.append(provider)
+            report["applied"].append({
+                "channel": provider.get("id") or "",
+                "action": "update_provider_models",
+                "vendor": provider.get("name") or "",
+                "mode": mode_key,
+                "models": new,
+                "added": len(added), "removed": len(removed), "source": "regex",
+                "reason": f"厂家文档更新模型清单：{label} 新增 {len(added)} 个、移除 {len(removed)} 个",
+            })
+    if not changed:
+        return
+    config_dir = app.config_path.parent if getattr(app, "config_path", None) else None
+    if not config_dir:
+        return
+    try:
+        providers_mod.save_overlay(config_dir, changed)
+    except OSError as exc:
+        report["alerts"].append({
+            "channel": "", "kind": "provider_overlay_write",
+            "message": f"写入厂家注册表覆盖文件失败（{str(exc)[:160]}），本次变更仅在内存生效",
+        })
