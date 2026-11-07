@@ -264,6 +264,35 @@ class CatalogAppTests(unittest.TestCase):
         self.assertNotIn("catalog", result)
         self.assertNotIn("draft-x", self.app.store.catalogs)
 
+    def test_probe_channel_models_uses_registry_plan_list(self):
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"coding": {"label": "Coding 套餐",
+                                 "base_url": "https://ark.example.com/api/coding/v3",
+                                 "models": ["glm-5.3", "kimi-k3"]}},
+        }]
+        result = self.app.probe_channel_models(
+            {"name": "plan-a", "provider": "volcengine", "mode": "coding"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "registry")
+        self.assertEqual(result["endpoint"], "registry:volcengine/coding")
+        self.assertEqual(result["models"], ["glm-5.3", "kimi-k3"])
+        # plan list is recorded as the channel catalog; upstream not contacted
+        view = self.app.store.catalog_view("plan-a")
+        self.assertEqual(view["endpoint"], "registry:volcengine/coding")
+        self.assertEqual(self.upstream.seen, [])
+
+    def test_probe_channel_models_payg_mode_still_uses_upstream(self):
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
+        }]
+        result = self.app.probe_channel_models(
+            {"name": "plan-a", "provider": "volcengine", "mode": "payg"})
+        self.assertTrue(result["ok"])
+        self.assertNotIn("source", result)
+        self.assertEqual(result["models"], ["model-a", "model-b"])
+
     def test_probe_channel_models_unknown_channel(self):
         result = self.app.probe_channel_models({"name": "ghost"})
         self.assertFalse(result["ok"])

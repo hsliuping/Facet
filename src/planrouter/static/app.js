@@ -519,6 +519,9 @@ function switchTab(name) {
     loadReport($('report-month').value).catch(() => {});
     if (!state.subDirty) loadSubscriptions().catch((e) => toast(e.message, 'bad'));
   }
+  if (name === 'vendors') {
+    loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
+  }
 }
 
 function renderSubscriptions() {
@@ -803,6 +806,235 @@ async function deleteSub(id) {
   renderSubscriptions();
 }
 
+// ---------------------------------------------------------- vendor registry
+const VENDOR_FETCH_LABEL = { docs: '文档提取', api: '接口拉取', manual: '手动' };
+const VENDOR_MODE_KEYS = ['coding', 'agent', 'payg'];
+const VENDOR_TIER_LABEL = { free: '免费', paid: '收费' };
+
+function vendorFetchMethod(mode) {
+  if (mode.docs_url) return 'docs';
+  if (mode.models_url) return 'api';
+  return 'manual';
+}
+
+function renderVendors() {
+  const el = $('vendor-list');
+  if (!el) return;
+  const vendors = state.providers || [];
+  if (!vendors.length) {
+    el.innerHTML = '<p class="sub-note">注册表为空。点「新增厂家」添加，或检查 providers 配置。</p>';
+    return;
+  }
+  el.innerHTML = vendors.map((p) => {
+    const modes = Object.entries(p.modes || {}).map(([key, mode]) => {
+      const method = vendorFetchMethod(mode);
+      const models = (mode.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
+      const listHtml = models
+        ? `<button type="button" class="btn small ghost" data-action="toggle-vendor-models" data-total="${mode.models.length}">… 共 ${mode.models.length} 个</button>
+           <div class="models-more" hidden>${models}</div>`
+        : '<span class="sub-note">无模型清单</span>';
+      return `<div class="vendor-mode">
+        <div class="vendor-mode-head">
+          <span class="tag active">${esc(mode.label || key)}</span>
+          <span class="sub-note"><code>${esc(key)}</code></span>
+          <span class="sub-note">${esc(mode.protocol)}</span>
+          <span class="tag unknown">${esc(VENDOR_TIER_LABEL[mode.tier] || (mode.tier ? mode.tier : '档位未标'))}</span>
+          <span class="tag ${method === 'manual' ? 'unknown' : 'active'}">${VENDOR_FETCH_LABEL[method]}</span>
+        </div>
+        <div class="vendor-mode-body">
+          <span class="sub-note">${esc(mode.base_url)}</span>
+          ${listHtml}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="card vendor-card">
+      <div class="vendor-head">
+        <div class="vendor-title">
+          <h3>${esc(p.name || p.id)}</h3>
+          <span class="sub-note"><code>${esc(p.id)}</code></span>
+          <span class="tag ${p.origin === 'overlay' ? 'warn' : 'unknown'}">${p.origin === 'overlay' ? '自定义' : '内置'}</span>
+        </div>
+        <div class="vendor-actions">
+          <button type="button" class="btn small ghost" data-action="edit-vendor" data-id="${esc(p.id)}">编辑</button>
+          <button type="button" class="btn small ghost" data-action="maintain-vendor" data-id="${esc(p.id)}">立即维护</button>
+          ${p.origin === 'overlay'
+            ? `<button type="button" class="btn small ghost" data-action="restore-vendor" data-id="${esc(p.id)}">恢复内置</button>` : ''}
+        </div>
+      </div>
+      ${modes || '<p class="sub-note">该厂家没有配置模式。</p>'}
+    </div>`;
+  }).join('');
+}
+
+async function maintainVendor(id) {
+  try {
+    const report = await api('/api/providers/maintain', {
+      method: 'POST', body: id ? { id } : {},
+    });
+    const applied = (report.applied || []).length;
+    const alerts = report.alerts || [];
+    const mode = report.extraction === 'llm' ? 'LLM 提取' : '规则提取';
+    let summary = applied ? `已应用 ${applied} 项` : '模型清单无变化';
+    if (alerts.length) summary += `，警报 ${alerts.length} 条`;
+    toast(`维护完成（${mode}）：` + summary, alerts.length ? 'warn' : 'ok');
+    if (report.extraction !== 'llm') {
+      toast('没有可用的 LLM 维护模型（未配置 maintenance_model 且队列空/探测失败），'
+        + '本次为规则提取；可点「测试维护模型」探测免费模型', 'warn');
+    }
+    alerts.forEach((a) => toast(a.message, 'warn'));
+    await loadProviders();
+    renderVendors();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+async function restoreVendor(id) {
+  const p = (state.providers || []).find((x) => x.id === id);
+  if (!(await askConfirm('恢复内置', `删除厂家「${p?.name || id}」的覆盖条目，恢复为内置注册表？`))) return;
+  try {
+    await api('/api/providers/' + encodeURIComponent(id), { method: 'DELETE' });
+    await loadProviders();
+    renderVendors();
+    toast(`已恢复厂家 ${id} 为内置定义`);
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+function vendorModeFieldset(index, modeKey, mode) {
+  const m = mode || { label: '', protocol: 'openai', base_url: '', tier: '',
+    docs_url: '', models_url: '', models: [] };
+  const method = vendorFetchMethod(m);
+  const opt = (v, cur, text) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${text}</option>`;
+  return `<fieldset class="vendor-mode-fieldset" data-index="${index}">
+    <legend>模式 ${index + 1}
+      <button type="button" class="btn small ghost" data-remove-mode="${index}">删除该模式</button>
+    </legend>
+    <div class="form-grid">
+      <div class="field"><label for="f-mode-key-${index}">模式 key</label>
+        <select id="f-mode-key-${index}" name="mode-key">
+          ${VENDOR_MODE_KEYS.map((k) => opt(k, modeKey, k)).join('')}
+        </select></div>
+      ${field('显示名', `mode-label-${index}`, m.label, { placeholder: '如 coding 月度套餐' })}
+      <div class="field"><label for="f-mode-protocol-${index}">协议</label>
+        <select id="f-mode-protocol-${index}" name="mode-protocol">
+          ${opt('openai', m.protocol, 'openai')}${opt('anthropic', m.protocol, 'anthropic')}
+        </select></div>
+      ${field('base_url', `mode-base-${index}`, m.base_url, { wide: true, placeholder: 'https://api.example.com/v1' })}
+      <div class="field"><label for="f-mode-tier-${index}">档位</label>
+        <select id="f-mode-tier-${index}" name="mode-tier">
+          ${opt('', m.tier || '', '自动推断（按订阅）')}${opt('free', m.tier, '免费')}${opt('paid', m.tier, '收费')}
+        </select></div>
+      <div class="field"><label for="f-mode-method-${index}">获取方式</label>
+        <select id="f-mode-method-${index}" name="mode-method">
+          ${FETCH_METHOD_CHOICES.map(([v, text]) => opt(v, method, text)).join('')}
+        </select></div>
+      ${field('文档 URL（文档提取用）', `mode-docs-${index}`, m.docs_url || '', { wide: true, placeholder: 'https://docs.example.com/pricing' })}
+      ${field('模型接口 URL（接口拉取用）', `mode-models-${index}`, m.models_url || '', { wide: true, placeholder: 'https://api.example.com/v1/models' })}
+      ${field('模型清单（每行一个；自动维护成功后会覆盖）', `mode-model-list-${index}`, (m.models || []).join('\n'), { wide: true, textarea: true, rows: 4 })}
+    </div>
+  </fieldset>`;
+}
+
+const FETCH_METHOD_CHOICES = [
+  ['docs', '文档提取（docs_url）'],
+  ['api', '接口拉取（models_url）'],
+  ['manual', '手动维护'],
+];
+
+function openVendorEditor(id) {
+  const existing = id ? (state.providers || []).find((x) => x.id === id) : null;
+  const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
+    id: '', name: '',
+    modes: { payg: { label: '', protocol: 'openai', base_url: '', tier: '',
+      docs_url: '', models_url: '', models: [] } },
+  };
+  const entries = Object.entries(draft.modes || {});
+  openModal(existing ? '编辑厂家 · ' + (existing.name || id) : '新增厂家', `
+    <form id="vendor-form">
+      <div class="form-grid">
+        ${field('厂家 id（小写字母、数字、连字符）', 'vendor-id', draft.id,
+          { placeholder: 'zhipu', hint: '保存后不可修改' })}
+        ${field('名称', 'vendor-name', draft.name, { placeholder: '智谱' })}
+      </div>
+      <div id="vendor-mode-list">${entries.map(([k, m], i) =>
+        vendorModeFieldset(i, k, m)).join('')}</div>
+      <div class="vendor-mode-foot">
+        <button type="button" class="btn ghost" id="vendor-add-mode">+ 添加模式</button>
+        <small class="hint">模式 key 限定 coding / agent / payg，每个厂家每种模式最多一个。</small>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" id="vendor-cancel">取消</button>
+        <button type="submit" class="btn primary">保存厂家</button>
+      </div>
+    </form>`);
+  $('vendor-cancel').onclick = closeModal;
+  if (existing) $('f-vendor-id').disabled = true;  // id is immutable once saved
+
+  const list = $('vendor-mode-list');
+  const bindRemoveButtons = () => {
+    list.querySelectorAll('button[data-remove-mode]').forEach((b) => {
+      b.onclick = () => b.closest('.vendor-mode-fieldset').remove();
+    });
+  };
+  $('vendor-add-mode').onclick = () => {
+    const count = list.querySelectorAll('.vendor-mode-fieldset').length;
+    if (count >= VENDOR_MODE_KEYS.length) return toast('每个厂家最多 ' + VENDOR_MODE_KEYS.length + ' 个模式', 'warn');
+    list.insertAdjacentHTML('beforeend', vendorModeFieldset(count, 'coding', null));
+    bindRemoveButtons();
+  };
+  bindRemoveButtons();
+
+  $('vendor-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const vendorId = (existing ? existing.id : $('f-vendor-id').value.trim()).toLowerCase();
+    const name = $('f-vendor-name').value.trim();
+    if (!vendorId) return toast('厂家 id 必填', 'bad');
+    if (!/^[a-z0-9-]+$/.test(vendorId)) return toast('厂家 id 只能包含小写字母、数字和连字符', 'bad');
+    if (!name) return toast('厂家名称必填', 'bad');
+    const modes = {};
+    let bad = null;
+    list.querySelectorAll('.vendor-mode-fieldset').forEach((fs) => {
+      if (bad) return;
+      const idx = fs.dataset.index;
+      const q = (suffix) => (fs.querySelector(`[name="${suffix}-${idx}"]`)?.value ?? '').trim();
+      const key = fs.querySelector('[name="mode-key"]').value;
+      if (modes[key]) { bad = `模式 key 重复：${key}`; return; }
+      const label = q('mode-label');
+      const base = q('mode-base');
+      if (!label) { bad = `模式 ${key} 的显示名必填`; return; }
+      if (!base) { bad = `模式 ${key} 的 base_url 必填`; return; }
+      const method = fs.querySelector('[name="mode-method"]').value;
+      let docsUrl = q('mode-docs');
+      let modelsUrl = q('mode-models');
+      if (method === 'docs' && !docsUrl) { bad = `模式 ${key} 选择了文档提取但未填文档 URL`; return; }
+      if (method === 'api' && !modelsUrl) { bad = `模式 ${key} 选择了接口拉取但未填模型接口 URL`; return; }
+      if (method === 'manual' && (docsUrl || modelsUrl)) {
+        bad = `模式 ${key} 选择了手动维护但仍填了 URL，请改选获取方式或清空 URL`;
+        return;
+      }
+      if (method === 'manual') { docsUrl = ''; modelsUrl = ''; }
+      modes[key] = {
+        label,
+        protocol: fs.querySelector('[name="mode-protocol"]').value,
+        base_url: base,
+        tier: fs.querySelector('[name="mode-tier"]').value,
+        docs_url: docsUrl,
+        models_url: modelsUrl,
+        models: q('mode-model-list').split('\n').map((s) => s.trim()).filter(Boolean),
+      };
+    });
+    if (bad) return toast(bad, 'bad');
+    if (!Object.keys(modes).length) return toast('厂家至少需要配置一个模式', 'bad');
+    try {
+      const result = await api('/api/providers', {
+        method: 'POST', body: { id: vendorId, name, modes },
+      });
+      closeModal();
+      await loadProviders();
+      renderVendors();
+      toast(`已保存厂家 ${result.provider?.name || vendorId}`);
+    } catch (err) { toast(err.message, 'bad'); }
+  };
+}
+
 function bars(values, color) {
   const max = Math.max(...values, 1);
   const w = 560, h = 100, pad = 6;
@@ -1037,11 +1269,15 @@ function maintItem(tag, cls, html) {
 function renderMaintenance() {
   const data = state.maintenance;
   if (!data) return;
+  const queue = data.llm_queue || [];
+  const queueText = queue.length
+    ? `自动队列 ${queue.length} 个（${queue.slice(0, 3).map(esc).join('、')}${queue.length > 3 ? '…' : ''}）`
+    : '自动（队列为空，将探测免费模型）';
   const llm = data.llm_model
     ? esc(data.llm_model) + (data.llm_available ? '' : '（暂无可用渠道承担）')
-    : '未配置';
+    : queueText;
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
-    + ` · LLM 分析：${llm} · 由 defaults.maintenance_hours / maintenance_model 控制`;
+    + ` · LLM 分析：${llm} · 由 defaults.maintenance_model 控制（留空自动探测）`;
   const reports = data.reports || [];
   const tierTag = (name) => channelTierBadge(name);
   const body = $('maintenance-body');
@@ -1088,6 +1324,28 @@ function renderMaintenance() {
 }
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+
+$('btn-test-maintenance-models').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '探测中…';
+  try {
+    const r = await api('/api/maintenance/test-models', { method: 'POST' });
+    const passed = (r.queue || []).length;
+    const failed = (r.results || []).filter((x) => !x.ok);
+    let msg = `维护模型探测完成：候选 ${r.candidates} 个，通过 ${passed} 个`;
+    if (passed) msg += `：${(r.queue || []).join('、')}`;
+    if (failed.length) msg += `；未通过示例：${failed[0].model}（${failed[0].error || '答案不符'}）`;
+    toast(msg, passed ? 'ok' : 'warn');
+    await loadMaintenance();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
 
 $('btn-run-maintenance').onclick = async (e) => {
   const b = e.target;
@@ -1179,6 +1437,7 @@ function renderAll() {
   renderSummary();
   renderStatus();
   renderSubscriptions();
+  renderVendors();
   renderBanner();
   renderUsage();
   renderNotifications();
@@ -1226,6 +1485,8 @@ function draftChannelFromEditor() {
     cooldown_minutes: Number(val('cooldown_minutes') || 300),
     rate, models: parseModels(val('models')),
     enabled: f.elements.namedItem('enabled').checked,
+    provider: val('provider'),
+    mode: val('mode'),
     ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
   };
 }
@@ -1304,7 +1565,7 @@ async function fetchChannelModels() {
       throw new Error((result.error || '拉取失败') + (result.hint ? ' — ' + result.hint : ''));
     }
     renderCatalogList(result.models || []);
-    toast(`拉取成功：${result.count} 个模型`);
+    toast(`拉取成功：${result.count} 个模型${result.source === 'registry' ? '（厂家套餐清单）' : ''}`);
   } catch (err) {
     list.hidden = false;
     list.innerHTML = `<div class="hint">${esc(err.message)}</div>`;
@@ -1848,6 +2109,27 @@ function bindEvents() {
       const index = state.subs.subscriptions.findIndex((x) => x.id === id);
       if (index >= 0) openSubEditor(index);
     }
+  });
+
+  $('btn-add-provider').onclick = () => openVendorEditor(null);
+  $('btn-maintain-providers').onclick = () => maintainVendor(null);
+  $('vendor-list').addEventListener('click', (e) => {
+    const toggle = e.target.closest('button[data-action="toggle-vendor-models"]');
+    if (toggle) {
+      const more = toggle.parentElement.querySelector('.models-more');
+      if (more) {
+        const open = !more.hidden;
+        more.hidden = open;
+        toggle.textContent = open ? `… 共 ${toggle.dataset.total} 个` : '收起';
+      }
+      return;
+    }
+    const b = e.target.closest('button[data-action]');
+    if (!b) return;
+    const id = b.dataset.id;
+    if (b.dataset.action === 'edit-vendor') openVendorEditor(id);
+    if (b.dataset.action === 'maintain-vendor') maintainVendor(id);
+    if (b.dataset.action === 'restore-vendor') restoreVendor(id);
   });
 }
 

@@ -18,6 +18,12 @@ router.state.json
 usage.json
 notifications.json
 requests.jsonl
+maintenance.jsonl
+probe.jsonl
+maintenance_models.json
+providers.json
+providers.json.bak
+*.maintenance.bak
 # Live config: never commit, real keys entered from the console land here
 router.example.json
 *.tmp

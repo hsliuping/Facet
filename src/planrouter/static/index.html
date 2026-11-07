@@ -34,6 +34,7 @@
       <button class="tab" data-tab="routes">路由链</button>
       <button class="tab" data-tab="models">模型接入</button>
       <button class="tab" data-tab="subscriptions">套餐订阅</button>
+      <button class="tab" data-tab="vendors">厂家</button>
       <button class="tab" data-tab="status">运行状态</button>
     </nav>
 
@@ -180,6 +181,7 @@
               <p class="sub-note" id="maintenance-note">每日分析渠道模型目录变化：目录确证的变更自动应用，新模型与限流建议一键采纳，密钥失效只报告</p>
             </div>
             <div class="actions">
+              <button class="btn small ghost" id="btn-test-maintenance-models" title="用内置提取考题实测免费模型，通过者进入维护模型队列">测试维护模型</button>
               <button class="btn small ghost" id="btn-refresh-maintenance">刷新</button>
               <button class="btn small" id="btn-run-maintenance">立即运行</button>
             </div>
@@ -259,6 +261,21 @@
           </div>
           <div id="report-channels" class="sub-note" style="margin-top:10px"></div>
         </div>
+      </section>
+
+      <section class="panel" id="panel-vendors">
+        <div class="panel-head">
+          <div>
+            <h2>厂家与模式</h2>
+            <p>维护厂家注册表：厂家 → 模式 → 每个模式的模型获取方法与模型清单。自动维护按模式的「获取方式」刷新模型清单，变化写回覆盖层并持久化。</p>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" id="btn-maintain-providers">立即维护全部</button>
+            <button class="btn" id="btn-add-provider">新增厂家</button>
+          </div>
+        </div>
+        <div class="grid" id="vendor-list"></div>
+        <p class="hint">标「自定义」的厂家来自覆盖层（<code>config/providers.json</code>），整条覆盖内置注册表；「恢复内置」会删除该厂家的覆盖条目。获取方式：<b>文档提取</b>解析 <code>docs_url</code> 页面；<b>接口拉取</b>请求 <code>models_url</code> 返回的 JSON（支持 <code>{"data":[{"id":...}]}</code>、<code>{"models":[...]}</code> 或纯数组）；<b>手动</b>则不参与自动刷新。两者都填时文档提取优先。</p>
       </section>
     </main>
 

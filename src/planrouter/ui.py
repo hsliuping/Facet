@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from . import providers as providers_mod
+
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 CONTENT_TYPES = {
@@ -125,7 +127,69 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         return True
 
     if path == "/api/providers" and method == "GET":
-        _json(h, 200, {"providers": app.providers})
+        overlay = providers_mod.overlay_ids(
+            app.config_path.parent if getattr(app, "config_path", None) else None)
+        providers = []
+        for entry in app.providers:
+            if not isinstance(entry, dict):
+                continue
+            item = dict(entry)
+            item["origin"] = ("overlay"
+                              if str(item.get("id") or "") in overlay
+                              else "builtin")
+            providers.append(item)
+        _json(h, 200, {"providers": providers})
+        return True
+
+    if path == "/api/providers/maintain" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        vendor_id = incoming.get("id")
+        if vendor_id is not None:
+            if not isinstance(vendor_id, str) or not vendor_id.strip():
+                _json(h, 400, {"error": {"message": "id 必须是非空字符串"}})
+                return True
+            vendor_id = vendor_id.strip()
+        _json(h, 200, app.maintain_providers(vendor_id))
+        return True
+
+    if path == "/api/providers" and method == "POST":
+        try:
+            incoming = json.loads(raw)
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            provider = app.save_provider(incoming)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write providers: {exc}"}})
+            return True
+        _json(h, 200, {"ok": True, "provider": provider})
+        return True
+
+    if path.startswith("/api/providers/") and method == "DELETE":
+        provider_id = unquote(path[len("/api/providers/"):])
+        if not provider_id or "/" in provider_id:
+            _json(h, 400, {"error": {"message": "invalid provider id"}})
+            return True
+        try:
+            providers = app.delete_provider(provider_id)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write providers: {exc}"}})
+            return True
+        _json(h, 200, {"ok": True, "providers": providers})
         return True
 
     if (path == "/api/report" or path.startswith("/api/report/")) and method == "GET":
@@ -270,6 +334,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
 
     if path == "/api/maintenance/run" and method == "POST":
         _json(h, 200, app.run_maintenance("manual"))
+        return True
+
+    if path == "/api/maintenance/test-models" and method == "POST":
+        # Quiz candidate maintenance models now and rebuild the verified queue.
+        _json(h, 200, app.probe_maintenance_models())
         return True
 
     if path == "/api/maintenance/apply" and method == "POST":

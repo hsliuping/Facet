@@ -290,6 +290,9 @@ class App:
         self.maintenance_runner: "MaintenanceRunner | None" = None
         self.maintenance_reports: list[dict] = []
         self.maintenance_lock = threading.Lock()
+        # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
+        self.maintenance_pool = maint.load_maintenance_pool(self)
+        self.maintenance_pool_lock = threading.Lock()
 
     def log_request(self, **fields) -> None:
         if self.audit:
@@ -441,6 +444,40 @@ class App:
                 return subs.enrich(updated)
         raise ValueError(f"订阅不存在: {subscription_id}")
 
+    # ------------------------------------------------------- vendor registry
+    def save_provider(self, payload) -> dict:
+        """Validate one vendor entry and persist it into the user overlay."""
+        entry = providers_mod.normalize_vendor(payload)
+        if self.config_path:
+            providers_mod.save_overlay(self.config_path.parent, [entry])
+        self.providers = providers_mod.load_providers(
+            self.config_path.parent if self.config_path else None)
+        merged = next((p for p in self.providers
+                       if str(p.get("id") or "") == entry["id"]), None)
+        return merged or entry
+
+    def delete_provider(self, provider_id: str) -> list[dict]:
+        """Drop one vendor's overlay entry, restoring the builtin copy."""
+        if self.config_path:
+            providers_mod.delete_overlay_entry(self.config_path.parent, provider_id)
+        self.providers = providers_mod.load_providers(
+            self.config_path.parent if self.config_path else None)
+        return self.providers
+
+    def maintain_providers(self, vendor_id=None) -> dict:
+        """Run the registry refresh on demand and return its report."""
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        # Surface which extractor will run so the console can show it; in
+        # pool mode pick may probe first when the verified queue is empty.
+        try:
+            models, _mode = maint.pick_maintenance_models(self)
+        except Exception:
+            models = []
+        report["extraction"] = "llm" if models else "regex"
+        maint.refresh_providers(self, report, vendor_id=vendor_id)
+        report["finished_at"] = time.time()
+        return report
+
     # ------------------------------------------------------- config management
     def public_config(self) -> dict:
         visible = copy.deepcopy(self.raw)
@@ -553,6 +590,27 @@ class App:
         except OSError:
             pass  # logging must never break the console
 
+    def _registry_plan_models(self, channel: dict) -> tuple[str, list[str]] | None:
+        """Curated plan-model list for a channel linked to a vendor mode.
+
+        Coding/agent plan endpoints do not serve their plan models through
+        the upstream /models route, so when the channel is linked to a vendor
+        mode whose registry models are known, that list is the catalog.
+        Returns None when unlinked, payg, or the registry has no list yet —
+        the caller falls back to the upstream fetch.
+        """
+        pid = str(channel.get("provider") or "").strip()
+        mode_key = str(channel.get("mode") or "").strip()
+        if not pid or not mode_key or mode_key == "payg":
+            return None
+        provider = next((p for p in self.providers
+                         if isinstance(p, dict) and p.get("id") == pid), None)
+        mode = (provider or {}).get("modes", {}).get(mode_key) if provider else None
+        models = [str(m).strip() for m in (mode or {}).get("models") or [] if str(m).strip()]
+        if not models:
+            return None
+        return f"registry:{pid}/{mode_key}", models
+
     def probe_channel_models(self, channel) -> dict:
         """Fetch one channel's upstream model list for the console.
 
@@ -576,7 +634,13 @@ class App:
         merged = merge_secrets({"channels": [{**base, **channel}]}, self.raw)["channels"][0]
         if not merged.get("models"):
             merged["models"] = {"auto": "*"}  # catalog fetch does not need a mapping
-        result = probe_models(merged)
+        plan = self._registry_plan_models(merged)
+        if plan:
+            endpoint, models = plan
+            result = {"ok": True, "name": name, "source": "registry",
+                      "endpoint": endpoint, "models": models, "count": len(models)}
+        else:
+            result = probe_models(merged)
         if result.get("ok") and isinstance(name, str) and self.config.channel(name):
             self.store.record_catalog(name, result["models"], result["endpoint"])
             view = self.store.catalog_view(name)
@@ -591,8 +655,13 @@ class App:
         for channel in list(self.config.channels):
             if not channel.enabled or not channel.api_key:
                 continue
+            payload = {"name": channel.name}
+            if channel.provider:
+                payload["provider"] = channel.provider
+            if channel.mode:
+                payload["mode"] = channel.mode
             try:
-                results.append(self.probe_channel_models({"name": channel.name}))
+                results.append(self.probe_channel_models(payload))
             except Exception as exc:  # one broken channel must not stop the sweep
                 results.append({"ok": False, "name": channel.name,
                                 "error": repr(exc)[:200]})
@@ -630,17 +699,16 @@ class App:
         maint.refresh_plan_models(self, report)
         maint.refresh_providers(self, report)
 
-        model = self.config.defaults.maintenance_model
-        if model:
+        reply, model = self._maintenance_llm_call_any(
+            maint.build_prompt(self.config, catalogs, states, report))
+        if reply is not None:
             try:
-                prompt = maint.build_prompt(self.config, catalogs, states, report)
-                reply = self._maintenance_llm_call(model, prompt)
                 parsed = maint.parse_llm_output(reply)
                 report["llm_model"] = model
                 report["llm_notes"] = parsed["notes"]
                 report["suggestions"].extend(parsed["suggestions"])
-            except Exception as exc:  # LLM analysis is best-effort
-                report["llm_error"] = str(exc)[:200]
+            except Exception:  # LLM analysis is best-effort
+                pass
 
         report["trigger"] = trigger
         report["finished_at"] = time.time()
@@ -660,8 +728,12 @@ class App:
         body = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1200,
-            "temperature": 0.2,
+            # Room for reasoning-style free models so the JSON array survives;
+            # reasoning is disabled via OpenRouter's unified param when the
+            # upstream supports it (ignored otherwise).
+            "max_tokens": 6000,
+            "reasoning": {"enabled": False, "exclude": True},
+            "temperature": 0,
             "stream": False,
         }
         headers = {"Content-Type": "application/json"}
@@ -675,6 +747,36 @@ class App:
         with urlopen(req, timeout=max(60, self.config.defaults.timeout)) as resp:
             data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"]
+
+    def _maintenance_llm_call_any(self, prompt: str,
+                                  validate=None) -> tuple[str | None, str | None]:
+        """Run a maintenance prompt through the first working model.
+
+        Candidates come from defaults.maintenance_model when it lists explicit
+        ids, otherwise from the auto-discovered verified queue (see
+        maintenance.probe_maintenance_models). A queue model that raises or
+        fails validation is dropped on the spot so a dead free model cannot
+        break the next run; returns (None, None) when every candidate failed.
+        """
+        models, mode = maint.pick_maintenance_models(self)
+        for model in models:
+            try:
+                reply = self._maintenance_llm_call(model, prompt)
+            except Exception as exc:
+                if mode == "pool":
+                    maint.drop_maintenance_model(self, model, str(exc))
+                continue
+            reply = str(reply or "")
+            if reply.strip() and (validate is None or validate(reply)):
+                return reply, model
+            if mode == "pool":
+                maint.drop_maintenance_model(
+                    self, model, "空回复" if not reply.strip() else "输出未通过校验")
+        return None, None
+
+    def probe_maintenance_models(self) -> dict:
+        """Quiz candidate maintenance models now and rebuild the queue."""
+        return maint.probe_maintenance_models(self)
 
     def _backup_config(self, tag: str) -> None:
         if not self.config_path or not self.config_path.is_file():
@@ -707,13 +809,19 @@ class App:
                 {k: v for k, v in report.items() if k != "patch"}
                 for report in self.maintenance_reports
             ]
+        with self.maintenance_pool_lock:
+            pool = {k: (list(v) if isinstance(v, list) else v)
+                    for k, v in self.maintenance_pool.items()}
         return {
             "enabled": bool(self.config.defaults.maintenance_hours),
             "hours": self.config.defaults.maintenance_hours,
             "llm_model": self.config.defaults.maintenance_model,
             "llm_available": bool(
-                self.config.defaults.maintenance_model
+                (self.config.defaults.maintenance_model or pool.get("queue"))
                 and any(c.enabled for c in self.config.channels)),
+            "llm_queue": list(pool.get("queue") or []),
+            "llm_queue_verified_at": float(pool.get("verified_at") or 0),
+            "llm_queue_results": list(pool.get("results") or []),
             "reports": list(reversed(reports)),
         }
 
@@ -1241,6 +1349,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         self._run("POST")
+
+    def do_DELETE(self):  # noqa: N802
+        self._run("DELETE")
 
     def _run(self, method: str):
         try:

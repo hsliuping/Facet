@@ -150,5 +150,153 @@ class SaveOverlayTests(unittest.TestCase):
                          ["modes"]["payg"]["models"], ["glm-5.3"])
 
 
+def valid_vendor(**overrides) -> dict:
+    entry = {
+        "id": "acme",
+        "name": "Acme AI",
+        "modes": {"payg": {
+            "label": "按量付费", "protocol": "openai",
+            "base_url": "https://api.acme.com/v1", "tier": "paid",
+            "docs_url": "https://docs.acme.com/pricing",
+            "models_url": "", "models": [" acme-large ", "", "acme-small"],
+        }},
+    }
+    for key, value in overrides.items():
+        entry[key] = value
+    return entry
+
+
+class NormalizeVendorTests(unittest.TestCase):
+    def test_valid_entry_is_normalized(self):
+        entry = pmod.normalize_vendor(valid_vendor())
+        self.assertEqual(entry["id"], "acme")
+        self.assertEqual(entry["name"], "Acme AI")
+        mode = entry["modes"]["payg"]
+        self.assertEqual(mode["label"], "按量付费")
+        self.assertEqual(mode["protocol"], "openai")
+        self.assertEqual(mode["base_url"], "https://api.acme.com/v1")
+        self.assertEqual(mode["tier"], "paid")
+        self.assertEqual(mode["docs_url"], "https://docs.acme.com/pricing")
+        self.assertEqual(mode["models_url"], "")
+        # Models are stripped, empties dropped, whitespace cleaned.
+        self.assertEqual(mode["models"], ["acme-large", "acme-small"])
+
+    def test_tier_defaults_to_empty(self):
+        entry = valid_vendor()
+        del entry["modes"]["payg"]["tier"]
+        self.assertEqual(pmod.normalize_vendor(entry)["modes"]["payg"]["tier"], "")
+
+    def test_missing_id_raises(self):
+        entry = valid_vendor()
+        del entry["id"]
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_bad_id_raises(self):
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(valid_vendor(id="Acme!"))
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(valid_vendor(id=""))
+
+    def test_missing_name_raises(self):
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(valid_vendor(name="  "))
+
+    def test_non_dict_raises(self):
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(["not", "a", "dict"])
+
+    def test_missing_or_empty_modes_raises(self):
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(valid_vendor(modes={}))
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(valid_vendor(modes="nope"))
+
+    def test_unknown_mode_key_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["ultra"] = dict(entry["modes"]["payg"])
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_bad_protocol_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["protocol"] = "grpc"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_missing_label_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["label"] = ""
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_bad_base_url_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["base_url"] = "ftp://api.acme.com"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_bad_docs_url_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["docs_url"] = "javascript:alert(1)"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_bad_models_url_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["models_url"] = "notaurl"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_non_list_models_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["models"] = "acme-large"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+
+class DeleteOverlayEntryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.config_dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_removes_only_target_entry(self):
+        pmod.save_overlay(self.config_dir, [
+            provider_by_id(pmod.load_providers(None), "volcengine"),
+            provider_by_id(pmod.load_providers(None), "zhipu"),
+        ])
+        self.assertTrue(pmod.delete_overlay_entry(self.config_dir, "volcengine"))
+        data = json.loads((self.config_dir / "providers.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual([p["id"] for p in data["providers"]], ["zhipu"])
+
+    def test_missing_id_returns_false_and_keeps_file(self):
+        pmod.save_overlay(self.config_dir, [
+            provider_by_id(pmod.load_providers(None), "zhipu")])
+        self.assertFalse(pmod.delete_overlay_entry(self.config_dir, "nope"))
+        data = json.loads((self.config_dir / "providers.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual([p["id"] for p in data["providers"]], ["zhipu"])
+
+    def test_no_overlay_file_returns_false(self):
+        self.assertFalse(pmod.delete_overlay_entry(self.config_dir, "zhipu"))
+
+    def test_backup_written_on_delete(self):
+        pmod.save_overlay(self.config_dir, [
+            provider_by_id(pmod.load_providers(None), "zhipu")])
+        self.assertTrue(pmod.delete_overlay_entry(self.config_dir, "zhipu"))
+        backup = self.config_dir / "providers.json.bak"
+        self.assertTrue(backup.is_file())
+        data = json.loads(backup.read_text(encoding="utf-8"))
+        self.assertEqual([p["id"] for p in data["providers"]], ["zhipu"])
+
+    def test_overlay_ids_reports_custom_ids(self):
+        self.assertEqual(pmod.overlay_ids(self.config_dir), set())
+        pmod.save_overlay(self.config_dir, [
+            provider_by_id(pmod.load_providers(None), "zhipu")])
+        self.assertEqual(pmod.overlay_ids(self.config_dir), {"zhipu"})
+
+
 if __name__ == "__main__":
     unittest.main()
