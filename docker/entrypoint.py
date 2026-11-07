@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-TEMPLATE = Path("/opt/planrouter/router.example.json")
+TEMPLATE = Path("/opt/planrouter/router.template.json")
 DATA = Path("/data")
 CONFIG = DATA / "router.json"
 

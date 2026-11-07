@@ -18,6 +18,8 @@ router.state.json
 usage.json
 notifications.json
 requests.jsonl
+# Live config: never commit, real keys entered from the console land here
+router.example.json
 *.tmp
 
 # PlanRouter container data (bind-mounted into /data)

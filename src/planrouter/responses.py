@@ -4,7 +4,7 @@ The router still never converts between *channels*: this adapter only
 translates at the client edge, so Codex CLI can keep its default
 `wire_api = "responses"` while every channel stays a plain chat endpoint.
 
-Known limits (documented in router.example.json): non-function tools such as
+Known limits (documented in router.template.json): non-function tools such as
 `web_search` are dropped, reasoning items are flattened to text, and
 `previous_response_id` / the compaction endpoint are not supported. Codex does
 not use `previous_response_id`, so its stateless agent loop works as-is.
