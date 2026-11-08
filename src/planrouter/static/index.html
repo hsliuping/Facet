@@ -51,7 +51,8 @@
             <button class="btn" id="btn-add-channel">新增渠道</button>
           </div>
         </div>
-        <div class="grid" id="channel-list"></div>
+        <input type="search" id="channel-filter" class="filter-input" placeholder="筛选渠道：名称 / 协议 / 端点 / 模型…" aria-label="筛选渠道">
+        <div class="list" id="channel-list"></div>
         <p class="hint">新增渠道请在「密钥」里直接粘贴明文 API Key；只有需要引用容器环境变量时才写 <code>env:VAR</code>（VAR 是变量名，不是密钥本身）。<code>base_url</code> 已含 <code>/v3</code> 等版本段时，「上游路径」留空会自动用 <code>/chat/completions</code>，不会重复拼出 <code>/v3/v1/</code>。编辑已有渠道时留空或保留 <code>***</code> 表示不改动已保存的密钥。改动会自动保存并热加载，无需重启。导出文件不含密钥明文。</p>
       </section>
 
@@ -290,7 +291,8 @@
             <button class="btn" id="btn-add-provider">新增厂家</button>
           </div>
         </div>
-        <div class="grid" id="vendor-list"></div>
+        <input type="search" id="vendor-filter" class="filter-input" placeholder="筛选厂家：名称 / ID / 协议 / 模型…" aria-label="筛选厂家">
+        <div class="list" id="vendor-list"></div>
         <p class="hint">标「自定义」的厂家来自覆盖层（<code>config/providers.json</code>），整条覆盖内置注册表；「恢复内置」会删除该厂家的覆盖条目。获取方式：<b>文档提取</b>解析 <code>docs_url</code> 页面；<b>接口拉取</b>请求 <code>models_url</code> 返回的 JSON（支持 <code>{"data":[{"id":...}]}</code>、<code>{"models":[...]}</code> 或纯数组）；<b>手动</b>则不参与自动刷新。两者都填时文档提取优先。</p>
       </section>
     </main>

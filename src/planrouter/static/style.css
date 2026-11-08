@@ -89,6 +89,23 @@ body {
 .actions { display: flex; gap: 8px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+/* List layout: one full-width row per item (channels, vendors) so long
+   lists stay vertically scannable instead of spreading across columns. */
+.list { display: flex; flex-direction: column; gap: 9px; }
+.list .card { padding: 11px 14px; }
+.list .card:hover { transform: none; }
+.row-card .row-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
+.row-card .row-head h3 { margin: 0; font-size: 14.5px; word-break: break-all; }
+.row-card .row-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.list dl { display: flex; flex-wrap: wrap; }
+.list dl > div { display: inline-flex; align-items: baseline; gap: 6px; border-bottom: none; padding: 2px 18px 2px 0; }
+.list dl.models-line { margin-top: 4px; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,.05); }
+.list .vendor-card { gap: 7px; }
+.list .vendor-mode { gap: 4px; padding: 8px 11px; }
+.list .vendor-mode-body .models-more { line-height: 1.9; }
+.filter-input { max-width: 460px; margin: 0 0 10px; }
+.row-card.cooling { border-color: rgba(224, 166, 58, .55); background: linear-gradient(160deg, rgba(224, 166, 58, .07), var(--panel)); }
+.tag.cooling { background: rgba(224, 166, 58, .14); color: var(--warn); }
 .card {
   background: linear-gradient(160deg, var(--panel), #0f1721);
   border: 1px solid var(--border); border-radius: var(--radius); padding: 17px;

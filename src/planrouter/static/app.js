@@ -25,6 +25,8 @@ const state = {
   config: null,
   snapshot: null,
   tab: 'channels',
+  channelFilter: '',
+  vendorFilter: '',
   key: readStoredKey('gateway'),
   adminKey: readStoredKey('admin'),
   requests: null,
@@ -307,46 +309,64 @@ function catalogSummary(name) {
 
 function channelCard(c, i) {
   const entries = Object.entries(c.models || {});
+  // Runtime status (cooling/blocked) lives in the state snapshot, not the config.
+  const st = (state.snapshot?.channels || []).find((x) => x.name === c.name);
+  const cooling = !!(st && st.cooling);
   const bit = ([k, v]) => {
     const badge = tierBadge(tierFor(c.name, c.tier, k));
     return `${esc(k)} → ${esc(v)}${badge ? ' ' + badge : ''}`;
   };
   // Long mappings (aggregators can hold hundreds of models) collapse to the
-  // first few plus an expander so the card cannot stretch the page.
+  // first few plus an expander so the row cannot stretch the page.
   const SHOW = 8;
   const modelBits = entries.length > SHOW
     ? `${entries.slice(0, SHOW).map(bit).join(' · ')} <button type="button" class="btn small ghost" data-action="toggle-models" data-total="${entries.length}">… 共 ${entries.length} 个</button><span class="models-more" hidden>${entries.slice(SHOW).map(bit).join(' · ')}</span>`
     : entries.map(bit).join(' · ');
   const ptag = providerTag(c);
-  return `<article class="card">
-    <div class="card-top">
-      <div><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span><h3>${esc(c.name)}</h3>${channelTierBadge(c.name, c.tier)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}</div>
+  return `<article class="card row-card${cooling ? ' cooling' : ''}">
+    <div class="row-head">
+      <span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span>
+      <h3>${esc(c.name)}</h3>
+      ${channelTierBadge(c.name, c.tier)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
+      ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>` : ''}
+      <span class="row-actions">
+        <button class="btn small" data-action="edit" data-index="${i}">编辑</button>
+        <button class="btn small ghost" data-action="catalog" data-index="${i}" data-name="${esc(c.name)}">拉取模型</button>
+        <button class="btn small ghost" data-action="test" data-index="${i}">测试</button>
+        <button class="btn small ghost" data-action="toggle" data-index="${i}">${c.enabled === false ? '启用' : '停用'}</button>
+        <button class="btn small ghost" data-action="reset" data-name="${esc(c.name)}">解除冷却</button>
+        <button class="btn small danger" data-action="delete" data-index="${i}">删除</button>
+      </span>
     </div>
     <dl>
       <div><dt>端点</dt><dd>${esc(c.base_url)}</dd></div>
       <div><dt>优先级</dt><dd>${esc(c.priority ?? 100)}</dd></div>
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
-      <div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div>
-      <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
+      <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
     </dl>
-    <div class="card-actions">
-      <button class="btn small" data-action="edit" data-index="${i}">编辑</button>
-      <button class="btn small ghost" data-action="catalog" data-index="${i}" data-name="${esc(c.name)}">拉取模型</button>
-      <button class="btn small ghost" data-action="toggle" data-index="${i}">${c.enabled === false ? '启用' : '停用'}</button>
-      <button class="btn small ghost" data-action="reset" data-name="${esc(c.name)}">解除冷却</button>
-      <button class="btn small danger" data-action="delete" data-index="${i}">删除</button>
-    </div>
+    <dl class="models-line"><div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div></dl>
   </article>`;
+}
+
+function channelHaystack(c) {
+  return [c.name, c.protocol, c.base_url, c.tier || '', providerTag(c),
+    ...Object.entries(c.models || {}).flat()].join(' ').toLowerCase();
 }
 
 function renderChannels() {
   const list = $('channel-list');
-  list.innerHTML = state.config.channels.length
-    ? state.config.channels.map(channelCard).join('')
-    : '<div class="card"><p class="hint">还没有渠道，点击「新增渠道」开始。</p></div>';
+  const kw = (state.channelFilter || '').trim().toLowerCase();
+  const shown = state.config.channels
+    .map((c, i) => [c, i])
+    .filter(([c]) => !kw || channelHaystack(c).includes(kw));
+  list.innerHTML = shown.length
+    ? shown.map(([c, i]) => channelCard(c, i)).join('')
+    : `<div class="card"><p class="hint">${state.config.channels.length
+        ? `没有匹配「${esc(kw)}」的渠道`
+        : '还没有渠道，点击「新增渠道」开始。'}</p></div>`;
 }
 
 function routeCard(r, ri) {
@@ -384,13 +404,21 @@ function renderRoutes() {
 function renderSummary() {
   const s = state.snapshot;
   if (!s) return;
-  const cooling = s.channels.filter((c) => c.cooling).length;
-  const requests = s.channels.reduce((n, c) => n + c.total_requests, 0);
-  const tokens = s.channels.reduce((n, c) => n + c.total_tokens, 0);
+  // With an active channel filter the top metrics reflect the filtered subset.
+  const kw = (state.channelFilter || '').trim().toLowerCase();
+  const rows = kw
+    ? s.channels.filter((c) => {
+        const cfg = (state.config?.channels || []).find((x) => x.name === c.name);
+        return cfg && channelHaystack(cfg).includes(kw);
+      })
+    : s.channels;
+  const cooling = rows.filter((c) => c.cooling).length;
+  const requests = rows.reduce((n, c) => n + c.total_requests, 0);
+  const tokens = rows.reduce((n, c) => n + c.total_tokens, 0);
   const listen = s.listen ? `${s.listen.host}:${s.listen.port}` : '—';
   const items = [
-    ['渠道总数', s.channels.length, ''],
-    ['可用渠道', s.channels.length - cooling, 'ok'],
+    ['渠道总数', kw ? `${rows.length} / ${s.channels.length}` : rows.length, ''],
+    ['可用渠道', rows.length - cooling, 'ok'],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests, ''],
     ['累计 Tokens', tokens.toLocaleString(), ''],
@@ -819,6 +847,15 @@ function vendorFetchMethod(mode) {
   return 'manual';
 }
 
+function vendorHaystack(p) {
+  const parts = [p.id, p.name, p.origin === 'overlay' ? '自定义' : '内置'];
+  for (const [key, mode] of Object.entries(p.modes || {})) {
+    parts.push(key, mode.label || '', mode.protocol || '', mode.base_url || '', mode.tier || '',
+      ...(mode.models || []));
+  }
+  return parts.join(' ').toLowerCase();
+}
+
 function renderVendors() {
   const el = $('vendor-list');
   if (!el) return;
@@ -827,7 +864,13 @@ function renderVendors() {
     el.innerHTML = '<p class="sub-note">注册表为空。点「新增厂家」添加，或检查 providers 配置。</p>';
     return;
   }
-  el.innerHTML = vendors.map((p) => {
+  const kw = (state.vendorFilter || '').trim().toLowerCase();
+  const shown = kw ? vendors.filter((p) => vendorHaystack(p).includes(kw)) : vendors;
+  if (!shown.length) {
+    el.innerHTML = `<div class="card"><p class="hint">没有匹配「${esc(kw)}」的厂家</p></div>`;
+    return;
+  }
+  el.innerHTML = shown.map((p) => {
     const modes = Object.entries(p.modes || {}).map(([key, mode]) => {
       const method = vendorFetchMethod(mode);
       const models = (mode.models || []).map((m) => `<code>${esc(m)}</code>`).join(' ');
@@ -1602,6 +1645,38 @@ function testChannelEditor() {
   return runProbe($('editor-test'), [draftChannelFromEditor()], model);
 }
 
+// Row-level probe: tests the saved channel (bare name resolves server-side)
+// with its persisted test model; a passing probe clears a live cooldown.
+async function testChannelRow(button, i) {
+  const c = state.config.channels[i];
+  if (!c) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '测试中…';
+  try {
+    const body = { channels: [c.name] };
+    if (c.test_model) body.model = c.test_model;
+    const data = await api('/api/test/channels', { method: 'POST', body });
+    const r = (data.results || [])[0] || {};
+    if (!r.ok) throw new Error(r.error || '测试未通过');
+    const st = (state.snapshot?.channels || []).find((x) => x.name === c.name);
+    let extra = '';
+    if (st && (st.cooling || (st.cooling_seconds || 0) > 0)) {
+      await api('/api/channels/' + encodeURIComponent(c.name) + '/reset', { method: 'POST' });
+      extra = '，已解除冷却';
+      await loadState();
+    }
+    const bits = [r.model ? '模型 ' + r.model : '',
+      r.latency_ms != null ? r.latency_ms + 'ms' : ''].filter(Boolean);
+    toast(`${c.name} 测试通过${bits.length ? '（' + bits.join(' · ') + '）' : ''}${extra}`, 'ok');
+  } catch (err) {
+    toast(`${c.name} 测试失败：${err.message}`, 'bad');
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 async function fetchChannelModels() {
   const button = $('editor-fetch-models');
   const list = $('catalog-list');
@@ -1860,7 +1935,7 @@ function openChannelEditor(index) {
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
       </div>
       <div class="test-row">
-        <input id="editor-test-model" placeholder="测试模型（留空自动选择）">
+        <input id="editor-test-model" placeholder="测试模型（留空自动选择，随渠道保存）" value="${esc(c.test_model || '')}">
         <button type="button" class="btn ghost" id="editor-test">测试连接</button>
       </div>
       <div id="test-result" class="test-result" hidden></div>
@@ -1916,6 +1991,7 @@ function saveChannelEditor() {
       tiers,
       provider,
       mode: provider ? val('mode') : '',
+      ...(val('editor-test-model') ? { test_model: val('editor-test-model') } : {}),
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
       ...(val('proxy') ? { proxy: val('proxy') } : {}),
     };
@@ -2011,6 +2087,15 @@ function bindEvents() {
 
   $('btn-save').onclick = saveConfig;
   $('btn-add-channel').onclick = () => openChannelEditor(-1);
+  $('channel-filter').addEventListener('input', (e) => {
+    state.channelFilter = e.target.value;
+    renderChannels();
+    renderSummary();
+  });
+  $('vendor-filter').addEventListener('input', (e) => {
+    state.vendorFilter = e.target.value;
+    renderVendors();
+  });
   $('btn-add-route').onclick = openRouteModal;
   $('btn-refresh').onclick = () => loadState().catch((e) => toast(e.message, 'bad'));
   $('btn-reload').onclick = async () => {
@@ -2104,6 +2189,7 @@ function bindEvents() {
       removeFromRoutes(name);
       markDirty(); renderAll();
     }
+    if (action === 'test') testChannelRow(b, i);
     if (action === 'reset') resetCooldown(b.dataset.name);
   });
 
