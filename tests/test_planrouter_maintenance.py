@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from planrouter import maintenance as maint
 from planrouter import providers as providers_mod
@@ -1012,6 +1013,20 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(maint.free_model_candidates(self.app, limit=5),
                          ["x:free", "y:free"])
 
+    def test_free_candidates_cover_wholly_free_catalogs(self):
+        """A free channel whose catalog has no :free ids donates every model."""
+        self.make_channel_free("a")
+        self.app.store.record_catalog(
+            "a", ["doubao-seed-lite", "doubao-seed-pro"], "http://upstream/v1")
+        self.assertEqual(maint.free_model_candidates(self.app, limit=5),
+                         ["doubao-seed-lite", "doubao-seed-pro"])
+
+    def test_free_candidates_fall_back_to_channel_mapping(self):
+        """No catalog yet: the channel's own model mapping donates ids."""
+        self.make_channel_free("b")
+        self.assertEqual(maint.free_model_candidates(self.app, limit=5),
+                         ["gpt-x"])
+
     def test_pool_empty_triggers_probe_and_fills_queue(self):
         self.make_channel_free("a")
         self.app.store.record_catalog("a", ["probe:free"], "http://upstream/v1")
@@ -1079,6 +1094,49 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(self.app.maintenance_pool["queue"], ["m-2"])
         dropped = self.app.maintenance_pool["results"][0]
         self.assertEqual((dropped["model"], dropped["ok"]), ("m-1", False))
+
+    def test_maintenance_dispatch_prefers_free_channel(self):
+        """Route membership is irrelevant: the id's owning channel wins,
+        a tier-free owner first; branded ids fall back to the loopback."""
+        self.make_channel_free("a")
+        self.app.config.channels[0].models["m-shared"] = "m-shared"
+        self.app.config.channels[1].models["m-shared"] = "m-shared"
+        self.assertEqual(self.app._maintenance_channel_for("m-shared").name, "a")
+        self.assertEqual(self.app._maintenance_channel_for("gpt-x").name, "b")
+        self.assertIsNone(self.app._maintenance_channel_for("facet-auto"))
+
+    def test_maintenance_direct_call_targets_owning_channel(self):
+        """A mapped upstream id is posted straight to its channel's endpoint."""
+        channel = self.app.config.channels[1]  # "b", openai
+        captured: dict = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def fake_open(req, timeout, proxy=""):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data.decode())
+            captured["auth"] = req.headers.get("Authorization")
+            captured["timeout"] = timeout
+            return FakeResp()
+
+        with mock.patch("planrouter.server.open_with_proxy", fake_open):
+            reply = self.app._maintenance_direct_call(channel, "gpt-x", "p")
+        self.assertEqual(reply, "ok")
+        self.assertEqual(captured["url"],
+                         "http://127.0.0.1:9202/v1/chat/completions")
+        self.assertEqual(captured["body"]["model"], "gpt-x")
+        self.assertIn(channel.api_key, captured["auth"])
+        self.assertEqual(captured["timeout"],
+                         max(60, self.app.config.defaults.timeout))
 
 
 if __name__ == "__main__":

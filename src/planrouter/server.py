@@ -730,12 +730,60 @@ class App:
         return report
 
     def _maintenance_llm_call(self, model: str, prompt: str) -> str:
-        """Route the analysis prompt through the gateway itself.
+        """Answer a maintenance prompt with one model id.
 
-        The request is an ordinary client request, so it lands on the route's
-        (preferably free) channels with normal failover — free quota maintains
-        the free pool.
+        The id is usually an upstream id taken from a channel's own mapping
+        (or its catalog), so the owning channel is addressed directly —
+        maintenance must not depend on route membership. Only ids that no
+        channel exposes (branded names such as facet-auto) fall back to the
+        loopback gateway call, i.e. ordinary routing.
         """
+        channel = self._maintenance_channel_for(model)
+        if channel is not None:
+            return self._maintenance_direct_call(channel, model, prompt)
+        return self._maintenance_loopback_call(model, prompt)
+
+    def _maintenance_channel_for(self, model: str):
+        """First enabled channel whose own mapping exposes this upstream id,
+        tier-free channels first, config order otherwise."""
+        hits = [c for c in self.config.channels
+                if c.enabled and model in c.models.values()]
+        hits.sort(key=lambda c: c.tier != "free")
+        return hits[0] if hits else None
+
+    def _maintenance_direct_call(self, channel, model: str, prompt: str) -> str:
+        """One non-streaming chat turn straight against the owning channel."""
+        protocol = channel.protocol
+        if protocol == ANTHROPIC:
+            payload = {"model": model, "max_tokens": 6000,
+                       "messages": [{"role": "user", "content": prompt}]}
+        else:
+            payload = {"model": model, "max_tokens": 6000, "temperature": 0,
+                       "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Content-Type": "application/json"}
+        if channel.api_key:
+            if protocol == ANTHROPIC:
+                headers["x-api-key"] = channel.api_key
+                headers["anthropic-version"] = "2023-06-01"
+            else:
+                headers["Authorization"] = f"Bearer {channel.api_key}"
+        req = Request(
+            channel.base_url + upstream_path_for(
+                channel.base_url, channel.upstream_path, protocol),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers, method="POST",
+        )
+        with open_with_proxy(req, max(60, self.config.defaults.timeout),
+                             channel.proxy) as resp:
+            data = json.loads(resp.read())
+        if protocol == ANTHROPIC:
+            return "".join(b.get("text") or "" for b in data.get("content") or []
+                           if isinstance(b, dict))
+        return data["choices"][0]["message"]["content"]
+
+    def _maintenance_loopback_call(self, model: str, prompt: str) -> str:
+        """Ordinary client request through the gateway itself, so the model
+        lands on the selected route's channels with normal failover."""
         listen = self.config.listen
         host = "127.0.0.1" if listen.host in ("0.0.0.0", "::", "") else listen.host
         body = {

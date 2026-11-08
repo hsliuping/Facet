@@ -54,6 +54,7 @@
           "protocol": "openai",
           "base_url": "https://api.deepseek.com/v1",
           "docs_url": "",
+          "models_url": "https://api.deepseek.com/models",
           "tier": "paid",
           "models": []
         }
@@ -68,6 +69,30 @@
           "protocol": "openai",
           "base_url": "https://api.moonshot.cn/v1",
           "docs_url": "",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "xiaomi",
+      "name": "小米 MiMo",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "docs_url": "",
+          "models_url": "https://api.xiaomimimo.com/v1/models",
+          "tier": "paid",
+          "models": []
+        },
+        "agent": {
+          "label": "Token Plan 套餐",
+          "protocol": "openai",
+          "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+          "docs_url": "",
+          "models_url": "https://token-plan-cn.xiaomimimo.com/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -162,6 +187,45 @@
           "protocol": "openai",
           "base_url": "https://api.x.ai/v1",
           "docs_url": "https://docs.x.ai/docs/models",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "modes": {
+        "payg": {
+          "label": "按量付费（Models）",
+          "protocol": "openai",
+          "base_url": "https://opencode.ai/inference/openai/v1",
+          "docs_url": "",
+          "models_url": "https://opencode.ai/inference/v1/models",
+          "tier": "paid",
+          "models": []
+        },
+        "agent": {
+          "label": "Go 订阅套餐",
+          "protocol": "openai",
+          "base_url": "https://opencode.ai/inference/go/openai/v1",
+          "docs_url": "",
+          "models_url": "https://opencode.ai/inference/go/v1/models",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "commandcode",
+      "name": "Command Code",
+      "modes": {
+        "agent": {
+          "label": "套餐 API",
+          "protocol": "openai",
+          "base_url": "https://api.commandcode.ai/provider/v1",
+          "docs_url": "",
+          "models_url": "https://api.commandcode.ai/provider/v1/models",
           "tier": "paid",
           "models": []
         }

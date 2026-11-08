@@ -1892,6 +1892,9 @@ function saveChannelEditor() {
     const models = parseModels(val('models'));
     if (!name) throw new Error('渠道名称不能为空');
     if (!Object.keys(models).length) throw new Error('至少配置一条模型映射');
+    const clash = state.config.channels.some(
+      (c, i) => c.name === name && i !== state.editing);
+    if (clash) throw new Error('渠道名称与已有渠道重复：' + name);
     const rate = {};
     ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => { if (val(k)) rate[k] = Number(val(k)); });
     const tiers = {};

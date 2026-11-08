@@ -825,10 +825,14 @@ def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
 
 
 def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
-    """Quiz candidates: verified queue members first, then :free catalog ids.
+    """Quiz candidates: verified queue members first, then free catalog ids.
 
-    Only channels marked tier "free" contribute catalog ids, so probing never
-    burns paid quota; the queue is re-verified on every probe.
+    Only channels marked tier "free" contribute ids, so probing never burns
+    paid quota; the queue is re-verified on every probe. A catalog that mixes
+    :free-suffixed and unsuffixed ids (OpenRouter style) donates only its
+    :free subset; a catalog without any :free id belongs to a wholly-free
+    channel, so every model is a candidate. Before the first catalog fetch
+    the channel's own model mapping stands in for the catalog.
     """
     with app.maintenance_pool_lock:
         queue = [str(m) for m in (app.maintenance_pool.get("queue") or [])]
@@ -837,9 +841,13 @@ def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
         if channel.tier != "free":
             continue
         catalog = app.store.catalogs.get(channel.name) or {}
-        free.extend(str(m) for m in catalog.get("models") or []
-                    if str(m).endswith(":free"))
-    rest = [m for m in free if m not in queue]
+        models = [str(m) for m in catalog.get("models") or []]
+        if not models:
+            models = [str(v) for v in channel.models.values()
+                      if v and v not in (AUTO_MODEL, "*")]
+        marked = [m for m in models if m.endswith(":free")]
+        free.extend(marked if marked else models)
+    rest = [m for m in dict.fromkeys(free) if m not in queue]
     filler = sorted(random.sample(rest, min(len(rest), max(0, limit - len(queue)))))
     return (queue + filler)[:limit]
 
