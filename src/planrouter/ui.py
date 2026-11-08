@@ -11,11 +11,21 @@ from . import providers as providers_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+# Bundled usage manual (docs/api-key-guide.md in the repository checkout),
+# rendered by the console in a floating panel; absent when planrouter runs
+# from an installed wheel, which the UI degrades on with a hint.
+GUIDE_PATH = Path(__file__).resolve().parents[2] / "docs" / "api-key-guide.md"
+GUIDE_IMG_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
 }
 
 
@@ -144,6 +154,26 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         if not key:
             return _json(h, 404, {"error": f"unresolved: {name}"})
         return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
+    if path == "/api/guide" and method == "GET":
+        if GUIDE_PATH.is_file():
+            _json(h, 200, {"available": True,
+                           "markdown": GUIDE_PATH.read_text(encoding="utf-8")})
+        else:
+            _json(h, 200, {"available": False, "markdown": ""})
+        return True
+
+    if path.startswith("/api/guide/img/") and method == "GET":
+        rel = unquote(path[len("/api/guide/img/"):])
+        root = GUIDE_PATH.parent.resolve()
+        img = (root / rel).resolve() if GUIDE_IMG_NAME.fullmatch(rel) else None
+        # Screenshots live under docs/ next to the manual; anything escaping
+        # that directory (../) is rejected before touching the disk.
+        if img is None or root not in img.parents or not img.is_file():
+            _json(h, 404, {"error": {"message": "guide image not found"}})
+            return True
+        _send(h, 200, img.read_bytes(), CONTENT_TYPES.get(img.suffix, "image/png"))
+        return True
+
     if path == "/api/providers" and method == "GET":
         overlay = providers_mod.overlay_ids(
             app.config_path.parent if getattr(app, "config_path", None) else None)

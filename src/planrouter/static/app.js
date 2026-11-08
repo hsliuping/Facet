@@ -1885,20 +1885,21 @@ function renderProviderLinks() {
   if (!box) return;
   const f = $('editor-form');
   const pid = f?.elements.namedItem('provider')?.value || '';
-  const modeKey = f?.elements.namedItem('mode')?.value || '';
-  const links = providerLinks(pid, modeKey);
-  if (links && (links.keys_url || links.docs_url)) {
-    const parts = [];
-    if (links.keys_url) {
-      parts.push(`<a class="btn small ghost provider-link" href="${esc(links.keys_url)}" target="_blank" rel="noreferrer">注册 / 获取 Key ↗</a>`);
-    }
-    if (links.docs_url) {
-      parts.push(`<a class="btn small ghost provider-link" href="${esc(links.docs_url)}" target="_blank" rel="noreferrer">使用文档 ↗</a>`);
-    }
-    box.innerHTML = parts.join(' ');
-  } else {
+  if (!pid) {
     box.innerHTML = '<small class="hint">选择厂家后，这里会显示注册 / 获取 Key 与使用文档按钮</small>';
+    return;
   }
+  const links = providerLinks(pid, f?.elements.namedItem('mode')?.value || '');
+  const parts = [];
+  if (links?.keys_url) {
+    parts.push(`<a class="btn small ghost provider-link" href="${esc(links.keys_url)}" target="_blank" rel="noreferrer">注册 / 获取 Key ↗</a>`);
+  }
+  // 使用文档 opens the bundled manual section for this vendor in an overlay;
+  // it intentionally does not jump to the vendor's own docs site.
+  parts.push(`<button type="button" class="btn small ghost provider-link" data-guide="${esc(pid)}">使用文档</button>`);
+  box.innerHTML = parts.join(' ');
+  const btn = box.querySelector('[data-guide]');
+  if (btn) btn.onclick = () => showGuideOverlay(btn.dataset.guide);
 }
 
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
@@ -1919,6 +1920,281 @@ function applyProviderPreset() {
   if (mode.tier) {
     const tierSel = f.elements.namedItem('tier');
     if (tierSel) tierSel.value = mode.tier;
+  }
+}
+
+// --- Bundled usage manual (docs/api-key-guide.md) --------------------------
+// The channel editor's 使用文档 renders our own guide section in an overlay
+// instead of jumping to the vendor's docs site; a small link to the official
+// docs stays available inside the overlay.
+
+// Heading text in the guide that documents each builtin vendor; vendors not
+// listed here fall back to the whole manual.
+const GUIDE_SECTIONS = {
+  pollinations: '3.1 Pollinations（免注册、免 Key）',
+  nvidia: '3.2 NVIDIA NIM（免费层）',
+  openrouter: '3.3 OpenRouter（免费池）',
+  google: '3.4 Google AI Studio',
+  llm7: '3.5 LLM7（免注册、免 Key）',
+  ovhcloud: '3.6 OVHcloud AI Endpoints（免注册、免 Key）',
+  volcengine: '4.1 火山引擎方舟（豆包）',
+  zhipu: '4.2 智谱 GLM',
+  bailian: '4.3 阿里云百炼',
+  hunyuan: '4.4 腾讯元宝（混元）',
+  qianfan: '4.5 百度千帆',
+  deepseek: '4.6 DeepSeek',
+  moonshot: '4.7 Kimi（Moonshot）',
+  xiaomi: '4.8 小米 MiMo',
+  anthropic: '5.1 Anthropic 直连',
+  openai: '5.2 OpenAI 直连',
+  xai: '5.3 xAI Grok',
+  zai: '5.4 Z.AI（智谱海外）',
+  opencode: '6.1 OpenCode',
+  commandcode: '6.2 Command Code',
+};
+
+let guidePayload = null;    // cached /api/guide response
+let guideCurrentPid = '';
+let guideFullMode = false;  // true while the overlay shows the whole manual
+
+async function loadGuide() {
+  if (!guidePayload) guidePayload = await api('/api/guide');
+  return guidePayload;
+}
+
+// GitHub-style anchor slug so the guide's internal links (目录 / 总览表)
+// scroll inside the overlay instead of navigating away.
+function mdSlug(text) {
+  return String(text).toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '-');
+}
+
+// Content of one guide section: from the exact heading to the next heading of
+// the same or higher level. Falls back to the whole manual when not found.
+function extractGuideSection(markdown, heading) {
+  if (!heading) return markdown;
+  const lines = String(markdown).split('\n');
+  const start = lines.findIndex((l) => {
+    const m = l.match(/^(#{1,6})\s+(.*?)\s*$/);
+    return m && m[2] === heading;
+  });
+  if (start < 0) return markdown;
+  const level = lines[start].match(/^#+/)[0].length;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+/);
+    if (m && m[1].length <= level) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+// Inline markdown for already-block-split text. Input is HTML-escaped first,
+// so guide content can never inject markup into the console.
+function mdInline(text) {
+  let s = esc(text);
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, src) => {
+    const href = /^https?:/.test(src) ? src : '/api/guide/img/' + src.replace(/^\.\//, '');
+    return `<img data-src="${href}" alt="${alt}">`;
+  });
+  s = s.replace(/\[([^\]]+)\]\(#([^)\s]+)\)/g, '<a href="#$2" class="guide-anchor">$1</a>');
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  return s;
+}
+
+function mdTable(rows) {
+  const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '')
+    .split('|').map((c) => c.trim());
+  const head = cells(rows[0]);
+  const body = rows.slice(2).map(cells);
+  return `<div class="md-table"><table><thead><tr>${
+    head.map((c) => `<th>${mdInline(c)}</th>`).join('')
+  }</tr></thead><tbody>${
+    body.map((r) => `<tr>${r.map((c) => `<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+// Minimal block renderer for the guide: headings, tables, fenced code, lists
+// (with indented continuations such as screenshots), quotes, hr, paragraphs.
+function renderMarkdown(text) {
+  const lines = String(text).split('\n');
+  const out = [];
+  const isListItem = (l) => /^\s*([-*]|\d+[.)])\s+/.test(l);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      const buf = [];
+      i += 1;
+      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i += 1; }
+      i += 1;
+      out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`);
+      continue;
+    }
+    const head = line.match(/^(#{1,6})\s+(.*?)\s*$/);
+    if (head) {
+      const lvl = head[1].length;
+      out.push(`<h${lvl} id="${esc(mdSlug(head[2]))}">${mdInline(head[2])}</h${lvl}>`);
+      i += 1;
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { rows.push(lines[i]); i += 1; }
+      out.push(mdTable(rows));
+      continue;
+    }
+    if (isListItem(line)) {
+      const ordered = /^\s*\d/.test(line);
+      const items = [];
+      while (i < lines.length) {
+        const l = lines[i];
+        if (isListItem(l)) {
+          items.push(mdInline(l.replace(/^\s*([-*]|\d+[.)])\s+/, '')));
+          i += 1;
+        } else if (items.length && /^\s{2,}\S/.test(l)) {
+          items[items.length - 1] += '<br>' + mdInline(l.trim());
+          i += 1;
+        } else break;
+      }
+      const tag = ordered ? 'ol' : 'ul';
+      out.push(`<${tag}>${items.map((t) => `<li>${t}</li>`).join('')}</${tag}>`);
+      continue;
+    }
+    if (/^\s*>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ''));
+        i += 1;
+      }
+      out.push(`<blockquote>${buf.map(mdInline).join('<br>')}</blockquote>`);
+      continue;
+    }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { out.push('<hr>'); i += 1; continue; }
+    if (!line.trim()) { i += 1; continue; }
+    const para = [line];
+    i += 1;
+    while (i < lines.length && lines[i].trim() && !isListItem(lines[i])
+      && !/^(#{1,6}\s|```|\s*>|\s*\|)/.test(lines[i])) {
+      para.push(lines[i]);
+      i += 1;
+    }
+    out.push(`<p>${para.map(mdInline).join('<br>')}</p>`);
+  }
+  return out.join('\n');
+}
+
+// <img data-src> points at the admin-gated /api/guide/img route, so a plain
+// src would 401; fetch with the admin key and swap in a blob URL instead.
+async function hydrateGuideImages() {
+  const body = $('guide-body');
+  for (const img of Array.from(body.querySelectorAll('img[data-src]'))) {
+    const src = img.getAttribute('data-src');
+    const alt = img.alt || '';
+    img.remove();
+    const note = document.createElement('em');
+    note.className = 'hint';
+    try {
+      if (!state.adminKey) throw new Error('no admin key');
+      const res = await fetch(src, { headers: { 'X-Admin-Key': state.adminKey } });
+      if (!res.ok) throw new Error(String(res.status));
+      img.src = URL.createObjectURL(await res.blob());
+      body.appendChild(img);
+    } catch {
+      note.textContent = `截图待补：${alt || src}`;
+      body.appendChild(note);
+    }
+  }
+}
+
+function renderGuideBody() {
+  const md = guidePayload?.markdown || '';
+  const section = guideFullMode
+    ? md
+    : extractGuideSection(md, GUIDE_SECTIONS[guideCurrentPid] || '');
+  const body = $('guide-body');
+  body.innerHTML = renderMarkdown(section);
+  body.scrollTop = 0;
+  hydrateGuideImages();
+}
+
+function closeGuideOverlay() {
+  const wrap = $('guide-backdrop');
+  if (wrap) wrap.hidden = true;
+}
+
+// Capture phase: with the channel editor open underneath, the page-wide
+// Escape handler must not close the editor while the guide overlay is up.
+function guideEscape(e) {
+  if (e.key === 'Escape' && !$('guide-backdrop')?.hidden) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeGuideOverlay();
+  }
+}
+
+async function showGuideOverlay(pid) {
+  guideCurrentPid = pid;
+  guideFullMode = false;
+  const vendor = (state.providers || []).find((p) => p.id === pid);
+  let wrap = $('guide-backdrop');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'guide-backdrop';
+    wrap.className = 'modal-backdrop guide-backdrop';
+    wrap.innerHTML = `<div class="modal guide-modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="guide-title"></h2>
+        <div class="guide-head-actions">
+          <button type="button" class="btn small ghost" id="guide-toggle">完整手册</button>
+          <a class="btn small ghost" id="guide-official" target="_blank" rel="noreferrer" hidden>厂家官方文档 ↗</a>
+          <button type="button" class="btn small ghost" id="guide-close">关闭</button>
+        </div>
+      </div>
+      <div class="guide-body" id="guide-body"></div>
+    </div>`;
+    document.body.appendChild(wrap);
+    $('guide-close').onclick = closeGuideOverlay;
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) closeGuideOverlay(); });
+    $('guide-toggle').onclick = () => {
+      if (!guidePayload?.available) return;
+      guideFullMode = !guideFullMode;
+      $('guide-toggle').textContent = guideFullMode ? '返回本节' : '完整手册';
+      renderGuideBody();
+    };
+    $('guide-body').addEventListener('click', (e) => {
+      const a = e.target.closest('a.guide-anchor');
+      if (!a) return;
+      e.preventDefault();
+      const target = $('guide-body').querySelector(
+        `[id="${CSS.escape(a.getAttribute('href').slice(1))}"]`);
+      if (target) target.scrollIntoView({ block: 'start' });
+    });
+    document.addEventListener('keydown', guideEscape, true);
+  }
+  $('guide-title').textContent = `${vendor ? (vendor.name || pid) : pid} · 使用文档`;
+  const docs = providerLinks(pid, '');
+  if (docs?.docs_url) {
+    $('guide-official').href = docs.docs_url;
+    $('guide-official').hidden = false;
+  } else {
+    $('guide-official').hidden = true;
+  }
+  $('guide-toggle').textContent = '完整手册';
+  wrap.hidden = false;
+  $('guide-body').innerHTML = '<p class="hint">正在加载使用手册…</p>';
+  try {
+    const guide = await loadGuide();
+    if (!guide.available) {
+      $('guide-toggle').hidden = true;
+      $('guide-body').innerHTML = '<p class="hint">本地使用手册不可用（docs/api-key-guide.md 不在运行环境中），可点右上角查看厂家官方文档。</p>';
+      return;
+    }
+    $('guide-toggle').hidden = false;
+    renderGuideBody();
+  } catch (err) {
+    $('guide-body').innerHTML = `<p class="hint">手册加载失败：${esc(err.message)}</p>`;
   }
 }
 

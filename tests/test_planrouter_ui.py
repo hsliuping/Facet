@@ -169,6 +169,23 @@ class ConsoleTests(unittest.TestCase):
         _, _, body = self.call(base, "GET", "/api/config")
         self.assertEqual(json.loads(body)["channels"][0]["priority"], 99)
 
+    def test_guide_endpoint_serves_manual(self):
+        base = self.start()
+        status, _, body = self.call(base, "GET", "/api/guide")
+        self.assertEqual(status, 200)
+        guide = json.loads(body)
+        self.assertTrue(guide["available"])
+        self.assertIn("3.1 Pollinations", guide["markdown"])
+        self.assertIn("5.4 Z.AI（智谱海外）", guide["markdown"])
+
+    def test_guide_image_route_confines_to_docs(self):
+        base = self.start()
+        # A real file that exists in the repo but outside docs/ must be off-limits.
+        status, _, _ = self.call(base, "GET", "/api/guide/img/..%2F..%2Fsrc%2Fplanrouter%2Fproviders.json")
+        self.assertEqual(status, 404)
+        status, _, _ = self.call(base, "GET", "/api/guide/img/images/api-key-guide/missing.png")
+        self.assertEqual(status, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
