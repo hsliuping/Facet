@@ -39,8 +39,10 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
   stdlib、快照缺失时退化为"不可用"。网关的**路由**依然只看维护层观测到的
   渠道数据，绝不依赖表格的新鲜度。
 - **`quota_tier`**——人工标注（`registry/manual-overrides.json`）为新手指引
-  （`facet --free`）与将来的零密钥首启供料；维护层的探测结果只能**建议**更新
-  该文件，同步流程绝不自动填写。
+  （`facet --free`）供料；零密钥首启已内置：`facet serve` 在没有
+  `router.json` 时自动生成种子配置（匿名 Pollinations + 禁用的免费层模板
+  渠道）并直接启动。维护层的探测结果只能**建议**更新该文件，同步流程绝不
+  自动填写。
 
 ```
 facet "glm-5.3"            # 事实层：解析并显示一个模型

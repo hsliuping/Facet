@@ -42,7 +42,9 @@ The bridge between them:
   the snapshot is missing. The gateway's *routing* still runs purely on what
   its maintenance layer observes; routing never depends on table freshness.
 - **`quota_tier`** — manual annotations (`registry/manual-overrides.json`)
-  seed onboarding (`facet --free`) and future zero-key start. Maintenance
+  seed onboarding (`facet --free`). Zero-key start is built in: `facet serve`
+  with no `router.json` auto-generates a seed config (anonymous Pollinations
+  plus disabled free-tier templates) and starts serving. Maintenance
   probe results only ever *suggest* updates to this file; the sync never
   auto-fills it.
 
