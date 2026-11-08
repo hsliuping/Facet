@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO / "src"))
 import facet  # noqa: E402
 import facet.cli  # noqa: E402
 from facet import _table  # noqa: E402
+from planrouter import _alias as planrouter_alias  # noqa: E402
 
 FIXTURE = {
     "schema_version": 1,
@@ -55,6 +56,7 @@ FIXTURE = {
         "free/mirror-model": {
             "provider": "free", "aliases": ["mirror-model"],
             "context_window": 1000000, "tool_call": True,
+            "quota_tier": "free_daily",
             "cost": {"input_per_mtok": 0, "output_per_mtok": 0},
         },
     },
@@ -249,6 +251,44 @@ class CliTests(unittest.TestCase):
             code, out, _ = self.run_cli(["--reasoning", "--json", "--table", str(write_fixture(tmp))])
         self.assertEqual(code, 0)
         self.assertIn("Nothing matched", out)
+
+    def test_free_filter_keeps_only_quota_tier_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, _ = self.run_cli(
+                ["--free", "--emit-json", "--table", str(write_fixture(tmp))])
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(json.loads(out)), ["free/mirror-model"])
+
+
+class ServeDispatchTests(unittest.TestCase):
+    """`facet serve` delegates to the gateway CLI; `planrouter` stays as a
+    deprecated transition alias with identical argv semantics."""
+
+    def run_main(self, main_fn, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main_fn(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_serve_delegates_with_rest_of_argv(self):
+        with mock.patch("planrouter.cli.main", return_value=7) as serve_main:
+            code, _, _ = self.run_main(facet.cli.main, ["serve", "--port", "1234"])
+        self.assertEqual(code, 7)
+        serve_main.assert_called_once_with(["--port", "1234"])
+
+    def test_serve_bare_delegates_empty_argv(self):
+        with mock.patch("planrouter.cli.main", return_value=0) as serve_main:
+            code, _, _ = self.run_main(facet.cli.main, ["serve"])
+        self.assertEqual(code, 0)
+        serve_main.assert_called_once_with([])
+
+    def test_alias_warns_on_stderr_then_serves(self):
+        with mock.patch("planrouter._alias._serve", return_value=3) as serve_main:
+            code, _, err = self.run_main(planrouter_alias.main, ["--port", "9"])
+        self.assertEqual(code, 3)
+        serve_main.assert_called_once_with(["--port", "9"])
+        self.assertIn("deprecated", err)
+        self.assertIn("facet serve", err)
 
 
 class VersionTests(unittest.TestCase):
