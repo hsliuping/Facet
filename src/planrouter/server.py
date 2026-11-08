@@ -151,12 +151,21 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
         if isinstance(c, dict)
     }
     for channel in (merged.get("channels") or []):
-        if isinstance(channel, dict) and channel.get("api_key") in (None, "", "***"):
+        if not isinstance(channel, dict):
+            continue
+        if channel.get("api_key") in (None, "", "***"):
             key = previous.get(channel.get("name"), {}).get("api_key")
             if key:
                 channel["api_key"] = key
             else:
                 channel.pop("api_key", None)
+        # Vendor bookkeeping is newer than some open console tabs: a stale
+        # editor omits provider/mode entirely and would otherwise erase them
+        # one channel per save. Absent keys inherit; explicit values win.
+        prev = previous.get(channel.get("name"), {})
+        for field in ("provider", "mode"):
+            if field not in channel and prev.get(field):
+                channel[field] = prev[field]
     listen = merged.setdefault("listen", {})
     for field in ("api_key", "admin_key"):
         if listen.get(field) in (None, "", "***"):

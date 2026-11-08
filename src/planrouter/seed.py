@@ -22,6 +22,8 @@ def build_seed() -> dict:
             {
                 "name": "pollinations",
                 "protocol": "openai",
+                "provider": "pollinations",
+                "mode": "payg",
                 "base_url": "https://gen.pollinations.ai/v1",
                 "api_key": "",
                 "tier": "free",
@@ -32,6 +34,8 @@ def build_seed() -> dict:
             {
                 "name": "nvidia-nim",
                 "protocol": "openai",
+                "provider": "nvidia",
+                "mode": "payg",
                 "base_url": "https://integrate.api.nvidia.com/v1",
                 "api_key": "env:NVIDIA_API_KEY",
                 "enabled": False,
@@ -41,6 +45,8 @@ def build_seed() -> dict:
             {
                 "name": "google-ai-studio",
                 "protocol": "openai",
+                "provider": "google",
+                "mode": "payg",
                 "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
                 "api_key": "env:GOOGLE_AI_STUDIO_API_KEY",
                 "enabled": False,
@@ -50,6 +56,8 @@ def build_seed() -> dict:
             {
                 "name": "z-ai-glm",
                 "protocol": "openai",
+                "provider": "zai",
+                "mode": "payg",
                 "base_url": "https://api.z.ai/api/paas/v4",
                 "api_key": "env:ZAI_API_KEY",
                 "enabled": False,
@@ -59,6 +67,8 @@ def build_seed() -> dict:
             {
                 "name": "anthropic-template",
                 "protocol": "anthropic",
+                "provider": "anthropic",
+                "mode": "payg",
                 "base_url": "https://api.anthropic.com",
                 "api_key": "env:ANTHROPIC_API_KEY",
                 "enabled": False,

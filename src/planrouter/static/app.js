@@ -1836,7 +1836,7 @@ function renderModelTierRows() {
 }
 
 function providerOptions(selected) {
-  return ['<option value="">自定义 / 不选</option>']
+  return ['<option value="">请选择厂家</option>']
     .concat((state.providers || []).map((p) =>
       `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name || p.id)}</option>`))
     .join('');
@@ -1887,23 +1887,24 @@ function renderProviderLinks() {
   const pid = f?.elements.namedItem('provider')?.value || '';
   const modeKey = f?.elements.namedItem('mode')?.value || '';
   const links = providerLinks(pid, modeKey);
-  const parts = [];
-  if (links?.keys_url) {
-    parts.push(`<a href="${esc(links.keys_url)}" target="_blank" rel="noreferrer">注册 / 获取 Key ↗</a>`);
+  if (links && (links.keys_url || links.docs_url)) {
+    const parts = [];
+    if (links.keys_url) {
+      parts.push(`<a class="btn small ghost provider-link" href="${esc(links.keys_url)}" target="_blank" rel="noreferrer">注册 / 获取 Key ↗</a>`);
+    }
+    if (links.docs_url) {
+      parts.push(`<a class="btn small ghost provider-link" href="${esc(links.docs_url)}" target="_blank" rel="noreferrer">使用文档 ↗</a>`);
+    }
+    box.innerHTML = parts.join(' ');
+  } else {
+    box.innerHTML = '<small class="hint">选择厂家后，这里会显示注册 / 获取 Key 与使用文档按钮</small>';
   }
-  if (links?.docs_url) {
-    parts.push(`<a href="${esc(links.docs_url)}" target="_blank" rel="noreferrer">使用文档 ↗</a>`);
-  }
-  box.innerHTML = parts.length
-    ? `<label>官方入口</label><div class="provider-links">${parts.join('<span>·</span>')}</div>
-       <small class="hint">先到厂家平台拿到 API Key，再粘贴到下方密钥栏</small>`
-    : '';
-  box.hidden = !parts.length;
 }
 
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
-// the pair in the draft; switching back to 自定义 clears the pair but keeps
-// whatever base_url the user has already entered.
+// the pair in the draft; the vendor itself is mandatory (a channel without a
+// vendor is rejected on save), so the registry entry buttons in the key field
+// label row always resolve to a real vendor.
 function applyProviderPreset() {
   const f = $('editor-form');
   if (!f) return;
@@ -1950,8 +1951,13 @@ function openChannelEditor(index) {
         ${field('上游 base_url', 'base_url', c.base_url, { wide: true, placeholder: 'http://127.0.0.1:8080' })}
         ${field('上游路径（留空自动选择）', 'upstream_path', c.upstream_path || '', { wide: true, placeholder: 'base_url 已含 /v3 时留空即可；需要覆盖时填 /chat/completions' })}
         ${field('出站代理（可选）', 'proxy', c.proxy || '', { wide: true, placeholder: '留空直连；国外上游填 http://127.0.0.1:7890，支持 env:HTTP_PROXY' })}
-        <div class="field wide" id="provider-links" hidden></div>
-        ${field('密钥（直接粘贴明文 API Key）', 'api_key', c.api_key || '', { wide: true, placeholder: '直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY' })}
+        <div class="field wide">
+          <div class="label-row">
+            <label for="f-api_key">密钥（直接粘贴明文 API Key）</label>
+            <span id="provider-links"></span>
+          </div>
+          <input id="f-api_key" name="api_key" type="text" value="${esc(c.api_key || '')}" placeholder="直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY">
+        </div>
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
         ${field('RPM', 'rpm', rate.rpm ?? '', { type: 'number' })}
@@ -2015,6 +2021,7 @@ function saveChannelEditor() {
       if (s.value) tiers[s.dataset.model] = s.value;
     });
     const provider = val('provider');
+    if (!provider) throw new Error('必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
     const channel = {
       name,
       protocol: val('protocol'),

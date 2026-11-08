@@ -311,6 +311,52 @@
           "models": []
         }
       }
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "modes": {
+        "payg": {
+          "label": "按量付费（积分，含 :free 模型）",
+          "protocol": "openai",
+          "base_url": "https://openrouter.ai/api/v1",
+          "docs_url": "https://openrouter.ai/docs",
+          "keys_url": "https://openrouter.ai/settings/keys",
+          "models_url": "https://openrouter.ai/api/v1/models",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "google",
+      "name": "Google AI Studio",
+      "modes": {
+        "payg": {
+          "label": "免费额度",
+          "protocol": "openai",
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "docs_url": "https://ai.google.dev/gemini-api/docs",
+          "keys_url": "https://aistudio.google.com/apikey",
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "zai",
+      "name": "Z.AI（智谱海外）",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.z.ai/api/paas/v4",
+          "docs_url": "https://docs.z.ai",
+          "keys_url": "https://z.ai/manage-api-key/apikey-keys",
+          "tier": "paid",
+          "models": []
+        }
+      }
     }
   ]
 }
