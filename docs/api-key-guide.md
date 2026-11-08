@@ -113,22 +113,18 @@
 **步骤**
 
 1. 打开 [build.nvidia.com](https://build.nvidia.com)，用邮箱注册 / 登录；
-   **注册需要手机验证码**（部分国家地区不在支持列表时，可发邮件到
-   help@build.nvidia.com 申诉）。
-
-   📷 **截图 3-2** ｜ 拍什么：build.nvidia.com 注册页（输入手机号之前的状态） ｜ 存为：`nvidia-01-signup.png`
-
+   注册需完成**邮箱验证**——验证码发到邮箱，填回页面验证通过后才能注册成功；
    ![NVIDIA 注册页](images/api-key-guide/nvidia-01-signup.png)
+   然后还需**手机验证码**（部分国家地区不在支持列表时，可发邮件到
+   help@build.nvidia.com 申诉）。
+   ![NVIDIA 手机验证码](images/api-key-guide/nvidia-02-signup.png)
+
 
 2. 登录后点右上角头像 → **API Keys**（直链：[build.nvidia.com/settings/api-keys](https://build.nvidia.com/settings/api-keys)）。
-
-   📷 **截图 3-3** ｜ 拍什么：API Keys 页面（无 Key 或已有 Key 列表均可） ｜ 存为：`nvidia-02-keys-page.png`
 
    ![NVIDIA API Keys 页](images/api-key-guide/nvidia-02-keys-page.png)
 
 3. 点 **Generate API Key**，复制生成的 Key（`nvapi-` 开头，**只显示一次**）。
-
-   📷 **截图 3-4** ｜ 拍什么：生成成功弹窗（Key 值打码） ｜ 存为：`nvidia-03-key-created.png`
 
    ![NVIDIA 生成 Key](images/api-key-guide/nvidia-03-key-created.png)
 
