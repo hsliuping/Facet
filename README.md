@@ -33,7 +33,7 @@ The package ships both layers; there is one command family.
 | Layer | Owns | Lives in |
 |---|---|---|
 | **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` → bundled snapshot |
-| **Gateway** (runtime) | channels, routes, the free pool, maintenance L1–L4 | `src/planrouter/` |
+| **Gateway** (runtime) | channels, routes, the free pool, daily self-maintenance | `src/planrouter/` |
 
 The bridge between them:
 
@@ -273,8 +273,8 @@ POST /api/maintenance/apply        # adopt a suggestion ({"channel", "models"})
 With `defaults.maintenance_model` empty or `auto`, every maintenance LLM call
 runs on a verified queue of free models instead of a pinned id:
 
-- Only channels marked `tier: "free"` (or with the tier inferred from a linked
-  subscription) donate candidates — probing never burns paid quota.
+- Only channels explicitly marked `tier: "free"` donate candidates — probing
+  never burns paid quota.
 - A catalog that mixes `:free`-suffixed and unsuffixed ids (OpenRouter style)
   donates only its `:free` subset; a catalog without any `:free` id belongs to
   a wholly-free channel, so all of its models are candidates. Before the first

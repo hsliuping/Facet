@@ -31,7 +31,7 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
 | 层 | 负责 | 落在 |
 |---|---|---|
 | **事实层**（数据） | 模型级能力、价格、`quota_tier`、别名 | `registry/model-registry.json` → 内置快照 |
-| **网关层**（运行时） | 渠道、路由、免费池、维护 L1–L4 | `src/planrouter/` |
+| **网关层**（运行时） | 渠道、路由、免费池、每日自我维护 | `src/planrouter/` |
 
 两层之间的桥：
 
@@ -249,8 +249,7 @@ POST /api/maintenance/apply        # 采纳建议（{"channel", "models"}）
 `defaults.maintenance_model` 留空或设为 `auto` 时，所有维护 LLM 调用都跑在
 一个「已验证免费模型队列」上，而不是钉死某个 id：
 
-- 只有标记 `tier: "free"` 的渠道（或经关联订阅推断为 free 的渠道）捐出候选
-  ——探测绝不烧付费额度。
+- 只有显式标记 `tier: "free"` 的渠道捐出候选——探测绝不烧付费额度。
 - 混合目录（OpenRouter 式，带 `:free` 后缀）只捐 `:free` 子集；一个目录里
   没有任何 `:free` id，说明整个渠道都免费，全部模型都是候选。首次目录拉取
   之前，用渠道自身的 models 映射顶替。
