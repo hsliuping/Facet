@@ -245,6 +245,21 @@
           "models": []
         }
       }
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
+      "modes": {
+        "payg": {
+          "label": "免费层",
+          "protocol": "openai",
+          "base_url": "https://integrate.api.nvidia.com/v1",
+          "docs_url": "https://docs.api.nvidia.com/nim/",
+          "models_url": "https://integrate.api.nvidia.com/v1/models",
+          "tier": "free",
+          "models": []
+        }
+      }
     }
   ]
 }
