@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from . import facts as facts_mod
 from . import providers as providers_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -126,6 +127,23 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.ui_state())
         return True
 
+    if path == "/api/facts" and method == "GET":
+        facts = facts_mod.snapshot()
+        return _json(h, 200, {
+            "available": facts.available,
+            "coverage": facts.coverage(),
+            "free_tiers": list(facts_mod.FREE_TIERS),
+        })
+    if path == "/api/facts/free" and method == "GET":
+        facts = facts_mod.snapshot()
+        return _json(h, 200, {"candidates": facts.free_candidates(limit=50)})
+    if path.startswith("/api/facts/resolve/") and method == "GET":
+        name = unquote(path[len("/api/facts/resolve/"):])
+        facts = facts_mod.snapshot()
+        key = facts.resolve(name)
+        if not key:
+            return _json(h, 404, {"error": f"unresolved: {name}"})
+        return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
     if path == "/api/providers" and method == "GET":
         overlay = providers_mod.overlay_ids(
             app.config_path.parent if getattr(app, "config_path", None) else None)
