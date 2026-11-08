@@ -19,6 +19,9 @@
   - [NVIDIA NIM（免费层）](#32-nvidia-nim免费层)
   - [OpenRouter 免费池](#33-openrouter免费池)
   - [Google AI Studio](#34-google-ai-studio)
+  - [LLM7（免注册）](#35-llm7免注册免-key)
+  - [OVHcloud AI Endpoints（免注册）](#36-ovhcloud-ai-endpoints免注册)
+  - [魔搭 ModelScope（免费推理）](#37-魔搭-modelscope免费推理)
 - [四、国内按量付费厂家](#四国内按量付费厂家)
   - [火山引擎方舟（豆包）](#41-火山引擎方舟豆包)
   - [智谱 GLM](#42-智谱-glm)
@@ -71,9 +74,10 @@
 | Google AI Studio | 有免费额度 | Google 账号 | `AIza…` | [3.4](#34-google-ai-studio) |
 | LLM7 | 免费匿名（token 可选提额） | 无需注册 | 无 Key | [3.5](#35-llm7免注册免-key) |
 | OVHcloud AI Endpoints | 免费匿名（2 RPM） | 无需注册 | 无 Key | [3.6](#36-ovhcloud-ai-endpoints免注册) |
+| 魔搭 ModelScope | 每日登录领 250 魔粒（约 250–500 次调用） | 手机号（需绑阿里云） | `ms-` | [3.7](#37-魔搭-modelscope免费推理) |
 | 火山引擎方舟 | 按量 + 部分免费模型 + Coding 套餐 | 实名认证 | 火山方舟 Key | [4.1](#41-火山引擎方舟豆包) |
 | 智谱 GLM | 按量 + 新人额度 + Coding 套餐 | 手机号 | `id.` 长串 | [4.2](#42-智谱-glm) |
-| 阿里云百炼 | 按量 + 新人免费额度 + Token Plan | 实名认证 | `sk-` | [4.3](#43-阿里云百炼) |
+| 阿里云百炼 | 按量 + 新人免费额度（新模型 90 天窗口）+ Token Plan | 实名认证 | `sk-` | [4.3](#43-阿里云百炼) |
 | 腾讯元宝（混元） | 按量 | 实名认证 | 混元 API KEY | [4.4](#44-腾讯元宝混元) |
 | 百度千帆 | 按量 + ERNIE-Speed 永久免费 | 实名认证 | `bce-v3/ALTAK-…` | [4.5](#45-百度千帆) |
 | DeepSeek | 按量（便宜） | 手机号 | `sk-` | [4.6](#46-deepseek) |
@@ -242,6 +246,38 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 | 协议 | `openai` |
 | 端点 | `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1` |
 | 限额 | 匿名 2 RPM/IP/模型；超限 429 |
+
+### 3.7 魔搭 ModelScope（免费推理）
+
+**官方入口**：[注册/登录](https://modelscope.cn) ｜ [访问令牌页](https://modelscope.cn/my/myaccesstoken) ｜ [接口文档](https://modelscope.cn/docs)
+
+阿里魔搭社区的免费推理 API（API-Inference）：OpenAI 兼容，覆盖 4 万+ 开源模型（Qwen / DeepSeek / GLM 系基本都在）。免费额度走「魔粒」积分制：**每天登录魔搭领 250 魔粒**（登录 +200，绑定阿里云后每日再 +50），单次调用约消耗 0.5–1 魔粒，折算下来每天约 250–500 次调用。两个要点：魔粒**当日有效、不累积**，不领就作废；「每日登录领魔粒」是网页上的手动动作，网关代不了——哪天忘了领，这个渠道当天就没额度，Facet 的冷却与故障转移会自动落到下一渠道。
+
+**步骤**
+
+1. 打开 [modelscope.cn](https://modelscope.cn)，手机号注册 / 登录（支持阿里云等第三方登录；**建议绑定阿里云账号**——每日魔粒从 200 涨到 250）。
+2. 登录后进入「访问令牌」页（直链：[modelscope.cn/my/myaccesstoken](https://modelscope.cn/my/myaccesstoken)），点 **创建访问令牌**，复制生成的令牌（`ms-` 开头）。
+3. **之后每天登录一次**魔搭领当日魔粒——「我的魔粒」页可查发放与消耗记录，不领当日作废。
+
+📷 **截图 3-11** ｜ 拍什么：魔搭「访问令牌」页创建令牌后的界面 ｜ 存为：`modelscope-01-token.png`
+
+![魔搭访问令牌](images/api-key-guide/modelscope-01-token.png)
+
+📷 **截图 3-12** ｜ 拍什么：「我的魔粒」页的发放记录（每日 250 魔粒的构成一目了然） ｜ 存为：`modelscope-02-moli.png`
+
+![魔搭我的魔粒](images/api-key-guide/modelscope-02-moli.png)
+
+**渠道参数**：
+
+| 项 | 值 |
+|---|---|
+| 协议 | `openai` |
+| 端点 | `https://api-inference.modelscope.cn/v1` |
+| 上游路径 | `/chat/completions`（端点已含 `/v1`，防止重复拼接） |
+| 建议优先级 | 45（排 OpenRouter 免费池之后，当日常补充燃料） |
+| 限额 | 每日登录领 250 魔粒（登录 200 + 绑阿里云 50），单次调用约 0.5–1 魔粒，当日有效不累积；渠道限速建议 `rpd: 250` |
+
+新增渠道保存后点「拉取模型」拉取目录，挑带 **Free 限免** 标记的模型填映射与「测试模型」，再启用渠道即可。
 
 ---
 

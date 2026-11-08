@@ -163,6 +163,22 @@
       }
     },
     {
+      "id": "modelscope",
+      "name": "魔搭 ModelScope",
+      "modes": {
+        "payg": {
+          "label": "免费推理（API-Inference）",
+          "protocol": "openai",
+          "base_url": "https://api-inference.modelscope.cn/v1",
+          "docs_url": "https://modelscope.cn/docs",
+          "keys_url": "https://modelscope.cn/my/myaccesstoken",
+          "models_url": "https://api-inference.modelscope.cn/v1/models",
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
       "id": "hunyuan",
       "name": "腾讯元宝（混元）",
       "modes": {
