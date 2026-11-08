@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -999,6 +1000,38 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(maint.load_maintenance_pool(self.app)["queue"],
                          ["good-model"])
 
+    def test_probe_is_serial_within_a_channel(self):
+        """Free tiers like OpenRouter allow one concurrent request (429)."""
+        self.make_channel_free("a")
+        self.make_channel_free("b")
+        a_models = self.app.config.channels[0].models
+        a_models.clear()
+        a_models.update({"m1": "a-model-1", "m2": "a-model-2"})
+        b_models = self.app.config.channels[1].models
+        b_models.clear()
+        b_models.update({"m1": "b-model-1", "m2": "b-model-2"})
+        peak: dict[str, int] = {}
+        in_flight: dict[str, int] = {}
+        lock = threading.Lock()
+
+        def fake_call(model, prompt):
+            name = self.app._maintenance_channel_for(model).name
+            with lock:
+                in_flight[name] = in_flight.get(name, 0) + 1
+                peak[name] = max(peak.get(name, 0), in_flight[name])
+            time.sleep(0.05)
+            with lock:
+                in_flight[name] -= 1
+            return self.quiz_reply()
+
+        self.app._maintenance_llm_call = fake_call
+        report = maint.probe_maintenance_models(
+            self.app, candidates=["a-model-1", "a-model-2",
+                                  "b-model-1", "b-model-2"])
+        self.assertEqual(len(report["results"]), 4)
+        self.assertEqual(report["queue"], sorted(report["queue"]))
+        self.assertEqual(peak, {"a": 1, "b": 1})
+
     def make_channel_free(self, name: str) -> None:
         """Channel is frozen; rebuild the config with one tier="free" channel."""
         self.app.config = dataclasses.replace(
@@ -1007,19 +1040,22 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                       else c for c in self.app.config.channels])
 
     def test_free_candidates_come_from_free_tier_catalogs(self):
+        """Own mapping ids probe first, then the catalog's usable subset."""
         self.make_channel_free("a")
-        self.app.store.record_catalog("a", ["x:free", "y:free", "paid-model"],
+        self.app.store.record_catalog("a", ["x", "y"],
                                       "http://upstream/v1")
-        self.assertEqual(maint.free_model_candidates(self.app, limit=5),
-                         ["x:free", "y:free"])
+        self.assertEqual(
+            maint.free_model_candidates(self.app, limit=5),
+            ["gpt-old", "gpt-keep", "x", "y"])
 
     def test_free_candidates_cover_wholly_free_catalogs(self):
         """A free channel whose catalog has no :free ids donates every model."""
         self.make_channel_free("a")
         self.app.store.record_catalog(
             "a", ["doubao-seed-lite", "doubao-seed-pro"], "http://upstream/v1")
-        self.assertEqual(maint.free_model_candidates(self.app, limit=5),
-                         ["doubao-seed-lite", "doubao-seed-pro"])
+        self.assertEqual(
+            maint.free_model_candidates(self.app, limit=5),
+            ["gpt-old", "gpt-keep", "doubao-seed-lite", "doubao-seed-pro"])
 
     def test_free_candidates_fall_back_to_channel_mapping(self):
         """No catalog yet: the channel's own model mapping donates ids."""
@@ -1027,11 +1063,110 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(maint.free_model_candidates(self.app, limit=5),
                          ["gpt-x"])
 
+    def test_free_candidates_round_robin_across_channels(self):
+        """A channel stuffed with dead mappings cannot starve the others."""
+        self.make_channel_free("a")
+        self.make_channel_free("b")
+        good = self.app.config.channels[0].models
+        good.clear()
+        good["good"] = "good-model"
+        junk = self.app.config.channels[1].models
+        junk.clear()
+        junk.update({f"junk-{i}": f"junk-{i}" for i in range(8)})
+        self.assertEqual(
+            maint.free_model_candidates(self.app, limit=4),
+            ["good-model", "junk-0", "junk-1", "junk-2"])
+
+    def test_single_model_quiz_updates_pool_and_queue(self):
+        """A manual pass records the outcome and joins the verified queue."""
+        self.make_channel_free("a")
+        self.app._maintenance_direct_call = (
+            lambda channel, model, prompt: self.quiz_reply())
+        row = maint.test_single_model(self.app, "a", "gpt-old")
+        self.assertEqual((row["ok"], row["channel"], row["model"]),
+                         (True, "a", "gpt-old"))
+        pool = maint.load_maintenance_pool(self.app)
+        self.assertEqual(pool["queue"], ["gpt-old"])
+        self.assertTrue(pool["tests"]["gpt-old"]["ok"])
+
+    def test_single_model_failure_is_recorded_not_raised(self):
+        self.make_channel_free("a")
+
+        def boom(channel, model, prompt):
+            raise RuntimeError("HTTP Error 503: Service Unavailable")
+
+        self.app._maintenance_direct_call = boom
+        row = maint.test_single_model(self.app, "a", "gpt-old")
+        self.assertFalse(row["ok"])
+        self.assertIn("503", row["error"])
+        pool = maint.load_maintenance_pool(self.app)
+        self.assertEqual(pool["queue"], [])
+        self.assertFalse(pool["tests"]["gpt-old"]["ok"])
+
+    def test_single_model_rejects_unknown_channel_or_model(self):
+        with self.assertRaises(ValueError):
+            maint.test_single_model(self.app, "ghost", "gpt-old")
+        with self.assertRaises(ValueError):
+            maint.test_single_model(self.app, "a", "not-offered")
+
+    def test_free_models_payload_lists_channels_and_last_quiz(self):
+        self.make_channel_free("a")
+        self.app.store.record_catalog("a", ["gpt-old"],
+                                      "http://upstream/v1")
+        self.app.maintenance_pool["tests"] = {
+            "gpt-old": {"model": "gpt-old", "channel": "a", "ok": False,
+                        "hit": 0, "expected": 11, "error": "HTTP Error 503",
+                        "tested_at": 1.0}}
+        self.app.maintenance_pool["queue"] = ["gpt-keep"]
+        payload = maint.free_models_payload(self.app)
+        self.assertEqual([c["name"] for c in payload["channels"]], ["a"])
+        channel = payload["channels"][0]
+        self.assertEqual(channel["excluded"], 0)
+        models = {m["model"]: m for m in channel["models"]}
+        self.assertEqual(models["gpt-old"]["source"], "mapping")
+        self.assertFalse(models["gpt-old"]["test"]["ok"])
+        self.assertTrue(models["gpt-keep"]["in_queue"])
+        self.assertIsNone(models["gpt-keep"]["test"])
+
+    def test_mixed_catalog_hides_paid_mapping_values(self):
+        """An OpenRouter-style mixed catalog demotes non-:free mappings."""
+        self.make_channel_free("a")
+        self.app.store.record_catalog(
+            "a", ["vendor/paid", "vendor/mix:free"], "http://upstream/v1")
+        models = self.app.config.channels[0].models
+        models.clear()
+        models["paid"] = "vendor/paid"
+        models["free"] = "vendor/mix:free"
+        self.assertEqual(maint.free_model_candidates(self.app, limit=4),
+                         ["vendor/mix:free"])
+        (channel,) = maint.free_models_payload(self.app)["channels"]
+        self.assertEqual([e["model"] for e in channel["models"]],
+                         ["vendor/mix:free"])
+        self.assertEqual(channel["excluded"], 1)
+
+    def test_non_chat_models_are_skipped(self):
+        """Embedding/reward ids cannot answer the quiz and stay out."""
+        self.make_channel_free("a")
+        self.app.store.record_catalog("a", ["x", "y"], "http://upstream/v1")
+        models = self.app.config.channels[0].models
+        models.clear()
+        models["good"] = "nvidia/chat-9b"
+        models["reward"] = "nvidia/nemotron-4-340b-reward"
+        models["embed"] = "snowflake/arctic-embed-l"
+        self.assertEqual(maint.free_model_candidates(self.app, limit=4),
+                         ["nvidia/chat-9b", "x", "y"])
+        (channel,) = maint.free_models_payload(self.app)["channels"]
+        self.assertEqual([e["model"] for e in channel["models"]],
+                         ["nvidia/chat-9b"])
+        self.assertEqual((channel["excluded"], channel["skipped"]), (0, 2))
+
     def test_pool_empty_triggers_probe_and_fills_queue(self):
         self.make_channel_free("a")
         self.app.store.record_catalog("a", ["probe:free"], "http://upstream/v1")
         self.app._maintenance_llm_call = lambda model, prompt: self.quiz_reply()
         models, mode = maint.pick_maintenance_models(self.app)
+        # The catalog mixes :free ids, so only the :free mapping/catalog ids
+        # are candidates; the plain mappings stay out.
         self.assertEqual((mode, models), ("pool", ["probe:free"]))
 
     def test_probe_cooldown_prevents_probing_storms(self):

@@ -23,7 +23,7 @@ import os
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import Request
 
@@ -743,8 +743,19 @@ MAINTENANCE_QUIZ_ANSWER = frozenset({
 })
 
 PROBE_CANDIDATES = 10         # models quizzed per probe run
-PROBE_WORKERS = 5             # concurrent quiz calls
+PROBE_WORKERS = 5             # channel groups quizzed concurrently;
+                              # models inside one group stay serial (429)
 PROBE_COOLDOWN = 6 * 3600     # never re-probe more often than this
+MODEL_TEST_LIMIT = 200        # per-model quiz outcomes kept in the pool file
+
+
+def _trim_tests(tests: dict) -> None:
+    """Keep only the newest MODEL_TEST_LIMIT per-model quiz outcomes."""
+    if len(tests) <= MODEL_TEST_LIMIT:
+        return
+    oldest = sorted(tests, key=lambda m: float(tests[m].get("tested_at") or 0))
+    for model in oldest[:len(tests) - MODEL_TEST_LIMIT]:
+        tests.pop(model, None)
 
 
 def check_maintenance_quiz(reply) -> tuple[bool, list[str]]:
@@ -761,7 +772,7 @@ def _pool_path(app):
 
 def load_maintenance_pool(app) -> dict:
     """Read the persisted verified queue; broken files yield an empty pool."""
-    pool: dict = {"queue": [], "results": [], "verified_at": 0.0,
+    pool: dict = {"queue": [], "results": [], "tests": {}, "verified_at": 0.0,
                   "last_probe_at": 0.0}
     path = _pool_path(app)
     if not path:
@@ -774,6 +785,8 @@ def load_maintenance_pool(app) -> dict:
         for key in ("queue", "results"):
             if isinstance(data.get(key), list):
                 pool[key] = data[key]
+        if isinstance(data.get("tests"), dict):
+            pool["tests"] = data["tests"]
         pool["verified_at"] = float(data.get("verified_at") or 0)
         pool["last_probe_at"] = float(data.get("last_probe_at") or 0)
     return pool
@@ -824,32 +837,83 @@ def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
     return [s.decode("utf-8", "replace") for s in lines[-limit:]], has_more
 
 
+# Vendor catalogs list every registered id; ids matching these fragments are
+# embedding/reward/rerank/guard/vision utilities that cannot answer the quiz.
+NON_CHAT_PATTERNS = (
+    "embed", "reward", "rerank", "clip", "riva", "guard", "content-safety",
+    "parse", "detector", "diffusion", "kosmos", "deplot", "fuyu", "neva",
+    "vila", "transcribe", "tts",
+)
+
+
+def is_chat_model(model: str) -> bool:
+    """Heuristic: False for ids that cannot serve chat completions."""
+    low = model.lower()
+    return not any(p in low for p in NON_CHAT_PATTERNS)
+
+
+def _free_mapping_values(app, channel) -> tuple[list[str], int, int]:
+    """Own mapping values that look usable, plus why the rest were hidden.
+
+    Returns (values, paid_hidden, nonchat_hidden). A catalog that contains
+    :free-suffixed ids (OpenRouter style) marks the channel as mixed: then
+    only mapping values suffixed :free are free; a catalog without any :free
+    id belongs to a wholly-free channel (NIM, doubao, ...), so every own
+    mapping counts. Ids that look like embedding/reward/vision utilities are
+    always skipped — they cannot answer the quiz — and counted as non-chat.
+    """
+    values = [str(v) for v in channel.models.values()
+              if v and v not in (AUTO_MODEL, "*")]
+    catalog = app.store.catalogs.get(channel.name) or {}
+    models = [str(m) for m in catalog.get("models") or []]
+    if any(m.endswith(":free") for m in models):
+        usable = [v for v in values if v.endswith(":free")]
+    else:
+        usable = values
+    paid_hidden = len(values) - len(usable)
+    chat = [v for v in usable if is_chat_model(v)]
+    return chat, paid_hidden, len(usable) - len(chat)
+
+
 def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
-    """Quiz candidates: verified queue members first, then free catalog ids.
+    """Quiz candidates: verified queue, then the free channels' own models
+    round-robin, then a random sample of the vendor catalogs.
 
     Only channels marked tier "free" contribute ids, so probing never burns
-    paid quota; the queue is re-verified on every probe. A catalog that mixes
-    :free-suffixed and unsuffixed ids (OpenRouter style) donates only its
-    :free subset; a catalog without any :free id belongs to a wholly-free
-    channel, so every model is a candidate. Before the first catalog fetch
-    the channel's own model mapping stands in for the catalog.
+    paid quota; the queue is re-verified on every probe. Channel mappings
+    donate round-robin — one id per channel per round — so a channel stuffed
+    with dead mappings cannot starve the others (its leftovers still fill any
+    free slots). Mappings count as free only when they carry the :free suffix
+    or the channel's catalog has no :free id at all (a wholly-free tier). A
+    catalog that mixes :free-suffix and unsuffixed ids (OpenRouter style)
+    donates only its :free subset; a catalog without any :free id belongs to
+    a wholly-free channel, so every model is a candidate. Before the first
+    catalog fetch the channel's own mapping stands in.
     """
     with app.maintenance_pool_lock:
         queue = [str(m) for m in (app.maintenance_pool.get("queue") or [])]
+    own_by_channel: list[list[str]] = []
     free: list[str] = []
     for channel in app.config.channels:
         if channel.tier != "free":
             continue
+        free_own, _paid, _nonchat = _free_mapping_values(app, channel)
+        own_by_channel.append(free_own)
         catalog = app.store.catalogs.get(channel.name) or {}
         models = [str(m) for m in catalog.get("models") or []]
-        if not models:
-            models = [str(v) for v in channel.models.values()
-                      if v and v not in (AUTO_MODEL, "*")]
         marked = [m for m in models if m.endswith(":free")]
-        free.extend(marked if marked else models)
-    rest = [m for m in dict.fromkeys(free) if m not in queue]
-    filler = sorted(random.sample(rest, min(len(rest), max(0, limit - len(queue)))))
-    return (queue + filler)[:limit]
+        pool = marked if marked else models
+        free.extend(m for m in pool if is_chat_model(m))
+    chosen = list(dict.fromkeys(queue))
+    for round_index in range(max((len(own) for own in own_by_channel),
+                                 default=0)):
+        for own in own_by_channel:
+            if round_index < len(own) and own[round_index] not in chosen:
+                chosen.append(own[round_index])
+    rest = [m for m in dict.fromkeys(free) if m not in chosen]
+    if len(chosen) < limit and rest:
+        chosen.extend(sorted(random.sample(rest, min(len(rest), limit - len(chosen)))))
+    return chosen[:limit]
 
 
 def probe_maintenance_models(app, candidates=None) -> dict:
@@ -857,7 +921,10 @@ def probe_maintenance_models(app, candidates=None) -> dict:
 
     The report records every candidate's outcome; the queue is persisted so
     restarts keep using verified models. Called on demand from the console
-    and automatically when the pool mode finds an empty queue.
+    and automatically when the pool mode finds an empty queue. Models are
+    grouped by their serving channel: groups run concurrently, but the
+    models inside one group run strictly serially because free tiers such
+    as OpenRouter answer only one concurrent request per key (else 429).
     """
     if candidates is None:
         candidates = free_model_candidates(app)
@@ -865,35 +932,128 @@ def probe_maintenance_models(app, candidates=None) -> dict:
     prompt = build_plan_models_prompt(MAINTENANCE_QUIZ_DOC)
     results: list[dict] = []
     if candidates:
+        def run_quiz(model: str, channel_name: str) -> dict:
+            row = {"model": model, "channel": channel_name}
+            try:
+                ok, parsed = check_maintenance_quiz(
+                    app._maintenance_llm_call(model, prompt))
+                row.update({"ok": ok, "hit": len(parsed),
+                            "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                            "error": "" if ok else "提取结果与标准答案不一致"})
+            except Exception as exc:
+                row.update({"ok": False, "hit": 0,
+                            "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                            "error": str(exc)[:160]})
+            return row
+
+        def run_group(models: list[str]) -> list[dict]:
+            return [run_quiz(model, channel_name) for model in models]
+
+        groups: dict[str, list[str]] = {}
+        for model in candidates:
+            channel = app._maintenance_channel_for(model)
+            channel_name = channel.name if channel is not None else ""
+            groups.setdefault(channel_name, []).append(model)
+
         with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as executor:
-            futures = {executor.submit(app._maintenance_llm_call, m, prompt): m
-                       for m in candidates}
-            for future in as_completed(futures):
-                model = futures[future]
-                try:
-                    ok, parsed = check_maintenance_quiz(future.result())
-                    results.append({
-                        "model": model, "ok": ok,
-                        "hit": len(parsed), "expected": len(MAINTENANCE_QUIZ_ANSWER),
-                        "error": "" if ok else "提取结果与标准答案不一致",
-                    })
-                except Exception as exc:
-                    results.append({
-                        "model": model, "ok": False, "hit": 0,
-                        "expected": len(MAINTENANCE_QUIZ_ANSWER),
-                        "error": str(exc)[:160],
-                    })
+            for rows in executor.map(run_group, groups.values()):
+                results.extend(rows)
     results.sort(key=lambda r: (not r["ok"], r["model"]))
     passing = [r["model"] for r in results if r["ok"]]
     with app.maintenance_pool_lock:
         app.maintenance_pool["queue"] = passing
         app.maintenance_pool["results"] = results
-        app.maintenance_pool["verified_at"] = time.time()
-        app.maintenance_pool["last_probe_at"] = time.time()
-        verified_at = app.maintenance_pool["verified_at"]
+        tests = app.maintenance_pool.setdefault("tests", {})
+        now = time.time()
+        for row in results:
+            tests[row["model"]] = {**row, "tested_at": now}
+        _trim_tests(tests)
+        app.maintenance_pool["verified_at"] = now
+        app.maintenance_pool["last_probe_at"] = now
+        verified_at = now
         save_maintenance_pool(app)
     return {"queue": list(passing), "results": results,
             "candidates": len(candidates), "verified_at": verified_at}
+
+
+def test_single_model(app, channel_name: str, model: str) -> dict:
+    """Manual quiz for one model on one named channel; a pass joins the queue.
+
+    Raises ValueError for unknown channel/model pairs so the console gets a
+    400 with a readable message; quiz failures are a normal result, not an
+    error.
+    """
+    channel = next((c for c in app.config.channels if c.name == channel_name),
+                   None)
+    if channel is None:
+        raise ValueError(f"未知渠道：{channel_name}")
+    catalog = app.store.catalogs.get(channel.name) or {}
+    offered = (set(str(v) for v in channel.models.values())
+               | set(str(m) for m in catalog.get("models") or []))
+    if model not in offered:
+        raise ValueError(f"渠道 {channel_name} 未提供模型 {model}")
+    row = {"model": model, "channel": channel.name, "tested_at": time.time()}
+    try:
+        ok, parsed = check_maintenance_quiz(app._maintenance_direct_call(
+            channel, model, build_plan_models_prompt(MAINTENANCE_QUIZ_DOC)))
+        row.update({"ok": ok, "hit": len(parsed),
+                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                    "error": "" if ok else "提取结果与标准答案不一致"})
+    except Exception as exc:
+        row.update({"ok": False, "hit": 0,
+                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                    "error": str(exc)[:160]})
+    with app.maintenance_pool_lock:
+        tests = app.maintenance_pool.setdefault("tests", {})
+        tests[model] = row
+        _trim_tests(tests)
+        queue = app.maintenance_pool.setdefault("queue", [])
+        if row["ok"] and model not in queue:
+            queue.append(model)
+            queue.sort()
+        save_maintenance_pool(app)
+    return row
+
+
+def free_models_payload(app) -> dict:
+    """Free-tier channels and every free model they could donate to the pool,
+    each with its last quiz outcome, for the console overview. Paid-looking
+    mappings on mixed catalogs stay hidden but are counted in "excluded"."""
+    snapshot = app.store.snapshot()["channels"]
+    with app.maintenance_pool_lock:
+        tests = dict(app.maintenance_pool.get("tests") or {})
+        queue = list(app.maintenance_pool.get("queue") or [])
+    channels = []
+    for channel in app.config.channels:
+        if channel.tier != "free":
+            continue
+        state = snapshot.get(channel.name) or {}
+        mapped, paid_hidden, nonchat_hidden = _free_mapping_values(app, channel)
+        catalog = app.store.catalogs.get(channel.name) or {}
+        marked = [str(m) for m in catalog.get("models") or []
+                  if str(m).endswith(":free") and is_chat_model(m)]
+        entries: list[dict] = []
+        for source, models in (("mapping", mapped), ("catalog", marked)):
+            for model in models:
+                if any(e["model"] == model for e in entries):
+                    continue
+                test = tests.get(model)
+                entries.append({
+                    "model": model, "source": source,
+                    "in_queue": model in queue,
+                    "test": dict(test) if test else None,
+                })
+        channels.append({
+            "name": channel.name,
+            "provider": channel.provider,
+            "enabled": channel.enabled,
+            "cooling": bool(state.get("cooling")),
+            "cooldown_reason": str(state.get("reason") or ""),
+            "excluded": paid_hidden,
+            "skipped": nonchat_hidden,
+            "models": entries,
+        })
+    return {"channels": channels}
 
 
 def pick_maintenance_models(app) -> tuple[list[str], str]:

@@ -1323,6 +1323,23 @@ function renderMaintenance() {
     : queueText;
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
     + ` · LLM 分析：${llm} · 由 defaults.maintenance_model 控制（留空自动探测）`;
+  // Probe detail: the status payload carries every candidate's quiz outcome
+  // (model, pass, extraction hits, error) — render it instead of only the
+  // summary toast so users can see what was tested and why it failed.
+  const probeResults = data.llm_queue_results || [];
+  if (!probeResults.length) {
+    $('maintenance-probe').innerHTML = '';
+  } else {
+    const verifiedAt = data.llm_queue_verified_at
+      ? ` · 探测于 ${new Date(data.llm_queue_verified_at * 1000).toLocaleString()}` : '';
+    $('maintenance-probe').innerHTML = '<p class="sub-note">维护模型探测明细 — 考题：从样例文档'
+      + `提取模型清单，须与标准答案完全一致，通过者进入维护队列${verifiedAt}</p>`
+      + probeResults.map((r) => maintItem(r.ok ? '通过' : '未通过', r.ok ? 'active' : 'expired',
+        `<code>${esc(r.model)}</code> · ${r.channel ? `渠道 <strong>${esc(r.channel)}</strong>` : '网关路由'}`
+        + ` · 提取命中 ${r.hit}/${r.expected}`
+        + (r.ok ? '' : ` · ${esc(r.error || '答案不符')}`))).join('');
+  }
+  renderFreeModels(data.free_models);
   const reports = data.reports || [];
   const body = $('maintenance-body');
   if (!reports.length) {
@@ -1400,6 +1417,67 @@ $('btn-test-maintenance-models').onclick = async (e) => {
     b.textContent = label;
   }
 };
+
+function freeModelStateTag(ch) {
+  if (!ch.enabled) return '<span class="tag expired">已停用</span>';
+  if (ch.cooling) {
+    return `<span class="tag expiring">冷却中${ch.cooldown_reason ? `：${esc(ch.cooldown_reason)}` : ''}</span>`;
+  }
+  return '<span class="tag active">可用</span>';
+}
+
+// Free-model overview: every tier=free channel with the models it could
+// donate to the maintenance pool, plus a per-model manual quiz button.
+function renderFreeModels(free) {
+  const box = $('maintenance-free');
+  const channels = (free && free.channels) || [];
+  if (!channels.length) {
+    box.innerHTML = '<p class="sub-note">没有 tier=free 的渠道。在「渠道」页把渠道的套餐设为免费后，'
+      + '它的模型才能进入维护模型候选。</p>';
+    return;
+  }
+  box.innerHTML = channels.map((ch) => {
+    const rows = (ch.models || []).map((m) => {
+      const tag = m.test ? (m.test.ok ? '通过' : '未通过') : '未测';
+      const cls = m.test ? (m.test.ok ? 'active' : 'expired') : 'unknown';
+      const err = m.test && !m.test.ok ? ` · ${esc(m.test.error || '答案不符')}` : '';
+      return maintItem(tag, cls,
+        `<code>${esc(m.model)}</code>${m.in_queue ? ' <span class="tag active">队列中</span>' : ''}`
+        + ` <span class="sub-note">${m.source === 'mapping' ? '渠道映射' : '目录 :free'}${err}</span>`
+        + ` <button class="btn small ghost free-test" data-channel="${esc(ch.name)}"`
+        + ` data-model="${esc(m.model)}">测试</button>`);
+    }).join('');
+    return `<div class="maint-report"><div class="maint-head"><strong>${esc(ch.name)}</strong>`
+      + `${channelTierBadge(ch.name)} ${freeModelStateTag(ch)}`
+      + `<span class="sub-note">${(ch.models || []).length} 个模型`
+      + (ch.excluded ? ` · ${ch.excluded} 个非免费映射未列出` : '')
+      + (ch.skipped ? ` · ${ch.skipped} 个非对话模型未列出` : '') + `</span></div>`
+      + (rows || '<p class="sub-note">无渠道映射，目录中也没有 :free 模型。</p>')
+      + '</div>';
+  }).join('');
+}
+
+$('btn-refresh-free-models').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+
+$('maintenance-free').addEventListener('click', async (e) => {
+  const b = e.target.closest('.free-test');
+  if (!b) return;
+  b.disabled = true;
+  b.textContent = '测试中…';
+  try {
+    const r = await api('/api/maintenance/test-model', {
+      method: 'POST',
+      body: { channel: b.dataset.channel, model: b.dataset.model },
+    });
+    toast(r.ok ? `通过：${r.model} 提取命中 ${r.hit}/${r.expected}，已进入维护队列`
+      : `未通过：${r.model} · ${r.error || '答案不符'}`, r.ok ? 'ok' : 'warn');
+    await loadMaintenance();
+  } catch (err) {
+    toast(err.message, 'bad');
+    b.disabled = false;
+    b.textContent = '测试';
+  }
+});
 
 $('btn-run-maintenance').onclick = async (e) => {
   const b = e.target;

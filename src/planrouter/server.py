@@ -892,6 +892,7 @@ class App:
             "llm_queue": list(pool.get("queue") or []),
             "llm_queue_verified_at": float(pool.get("verified_at") or 0),
             "llm_queue_results": list(pool.get("results") or []),
+            "free_models": maint.free_models_payload(self),
             "reports": list(reversed(reports)),
         }
 
@@ -930,6 +931,14 @@ class App:
             entries = list(reversed(reports[-limit:]))
         return {"logs": entries, "source": source, "has_more": has_more,
                 "limit": limit}
+
+    def test_maintenance_model(self, payload) -> dict:
+        """Manual quiz for one (channel, model) from the console overview."""
+        if not isinstance(payload, dict):
+            raise ValueError("body 必须是对象")
+        return maint.test_single_model(
+            self, str(payload.get("channel") or ""),
+            str(payload.get("model") or ""))
 
     def apply_maintenance_suggestion(self, payload) -> dict:
         """One-click apply for `add_model` suggestions: map the model verbatim."""

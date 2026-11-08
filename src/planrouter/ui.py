@@ -399,6 +399,19 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.probe_maintenance_models())
         return True
 
+    if path == "/api/maintenance/test-model" and method == "POST":
+        # Manual quiz for one (channel, model) from the free-model overview.
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            _json(h, 200, app.test_maintenance_model(incoming))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
     if path == "/api/maintenance/apply" and method == "POST":
         try:
             incoming = json.loads(raw) if raw else {}
