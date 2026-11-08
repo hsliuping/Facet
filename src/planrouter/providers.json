@@ -230,6 +230,21 @@
           "models": []
         }
       }
+    },
+    {
+      "id": "pollinations",
+      "name": "Pollinations.ai",
+      "modes": {
+        "payg": {
+          "label": "免费匿名",
+          "protocol": "openai",
+          "base_url": "https://gen.pollinations.ai/v1",
+          "docs_url": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
+          "models_url": "https://gen.pollinations.ai/v1/models",
+          "tier": "free",
+          "models": []
+        }
+      }
     }
   ]
 }

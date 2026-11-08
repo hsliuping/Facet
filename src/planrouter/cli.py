@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import subscriptions as subs
 from .core import PROTOCOLS, VERSIONED_BASE, load_config
+from .seed import print_seed_banner, write_seed
 from .server import make_server
 
 
@@ -27,8 +28,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="validate config and print routes, then exit")
     args = parser.parse_args(argv)
 
+    config_path = Path(args.config)
+    seeded = False
+    if not args.check and not config_path.exists():
+        # Zero-key first start: no config -> write a seed (anonymous
+        # Pollinations + disabled free-tier templates) and serve it.
+        write_seed(config_path)
+        seeded = True
     try:
-        config = load_config(Path(args.config))
+        config = load_config(config_path)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
@@ -135,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  model rule: exact name first, unknown names -> internal scheduling "
           f"({'on' if config.models.fallback_unknown else 'off'})", flush=True)
     print("  health: GET /health   stats: GET /stats   models: GET /v1/models", flush=True)
+    if seeded:
+        print_seed_banner(config_path)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
