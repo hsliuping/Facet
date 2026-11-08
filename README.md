@@ -329,8 +329,11 @@ never auto-filled.
 
 ## Non-goals
 
-No routing, no API keys, no telemetry, no per-request ranking service, no
-benchmark aggregation. If you need those, build them on the table.
+The table does no routing, holds no API keys, collects no telemetry, performs
+no per-request ranking, and aggregates no benchmarks — if you need those,
+build them on the table. The gateway layer does route, but only on what its
+maintenance layer observes (see [The gateway](#the-gateway)); it never
+depends on table freshness.
 
 ## Governance
 
