@@ -82,6 +82,7 @@
 | Anthropic | 按量（预充值） | 邮箱（可能验证手机） | `sk-ant-` | [5.1](#51-anthropic-直连) |
 | OpenAI | 按量（预充值） | 邮箱 | `sk-proj-` / `sk-` | [5.2](#52-openai-直连) |
 | xAI Grok | 按量 | X 账号 | `xai-` | [5.3](#53-xai-grok) |
+| Z.AI（智谱海外） | 按量 | 邮箱 | `sk-` 类 | [5.4](#54-zai智谱海外) |
 | OpenCode | 订阅（$10/月起） | 邮箱 | Console 内复制 | [6.1](#61-opencode) |
 | Command Code | 订阅（$15/月起） | 邮箱 | `cc-…` 类 | [6.2](#62-command-code) |
 
@@ -451,6 +452,19 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
    📷 **截图 5-3** ｜ 拍什么：API Keys 页（Key 打码） ｜ 存为：`xai-01-apikeys.png`
 
 **渠道参数**：协议 `openai`，端点 `https://api.x.ai/v1`。
+
+### 5.4 Z.AI（智谱海外）
+
+**官方入口**：[注册/登录](https://z.ai) ｜ [API Key 管理页](https://z.ai/manage-api-key/apikey-keys) ｜ [接口文档](https://docs.z.ai)
+
+智谱 GLM 的国际站（`api.z.ai`），账号体系与 bigmodel.cn 相互独立，Key 不通用。种子模板 `z-ai-glm` 用的是这一家。
+
+**步骤**
+
+1. 打开 [z.ai](https://z.ai) 注册登录；
+2. 进入 **API Keys**（直链：[z.ai/manage-api-key/apikey-keys](https://z.ai/manage-api-key/apikey-keys)）→ 创建并复制 API Key。
+
+**渠道参数**：协议 `openai`，端点 `https://api.z.ai/api/paas/v4`。
 
 ---
 
