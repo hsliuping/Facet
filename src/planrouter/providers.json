@@ -247,6 +247,36 @@
       }
     },
     {
+      "id": "llm7",
+      "name": "LLM7",
+      "modes": {
+        "payg": {
+          "label": "免费匿名",
+          "protocol": "openai",
+          "base_url": "https://api.llm7.io/v1",
+          "docs_url": "https://docs.llm7.io",
+          "models_url": "https://api.llm7.io/v1/models",
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "ovhcloud",
+      "name": "OVHcloud AI Endpoints",
+      "modes": {
+        "payg": {
+          "label": "免费匿名",
+          "protocol": "openai",
+          "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+          "docs_url": "https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started",
+          "models_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models",
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
       "id": "nvidia",
       "name": "NVIDIA NIM",
       "modes": {

@@ -78,7 +78,7 @@ class EndToEndTests(unittest.TestCase):
         self.config_path = Path(tmp.name)
         self.gateway = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.gateway.daemon_threads = True
-        self.gateway.app = App(load_config(self.config_path))  # type: ignore[attr-defined]
+        self.gateway.app = App(load_config(self.config_path), config_path=self.config_path)  # type: ignore[attr-defined]
         threading.Thread(target=self.gateway.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.gateway.server_address[1]}/v1/chat/completions"
 
@@ -131,6 +131,27 @@ class EndToEndTests(unittest.TestCase):
             self._post()
         self.assertEqual(ctx.exception.code, 503)
         self.assertIn("no healthy channel", ctx.exception.read().decode())
+
+    def test_disabled_route_reports_channel_status(self):
+        # Seeded templates ship disabled: the 503 must name the channel and
+        # point at the console instead of a bare "no healthy channel".
+        app = self.gateway.app  # type: ignore[attr-defined]
+        raw = json.loads(json.dumps(app.raw))
+        for ch in raw["channels"]:
+            if ch["name"] == "messages-plan":
+                ch["enabled"] = False
+        app.apply_config(raw)
+        url = self.url.replace("/v1/chat/completions", "/v1/messages")
+        req = Request(url, data=json.dumps(
+            {"model": "auto", "max_tokens": 8,
+             "messages": [{"role": "user", "content": "hi"}]}).encode(),
+            headers={"Content-Type": "application/json"})
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(req, timeout=5)
+        self.assertEqual(ctx.exception.code, 503)
+        body = json.loads(ctx.exception.read().decode())
+        self.assertIn("no enabled channel", body["error"]["message"])
+        self.assertEqual(body["error"]["channel_status"], {"messages-plan": "disabled"})
 
 
 if __name__ == "__main__":

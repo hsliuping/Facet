@@ -1227,11 +1227,33 @@ class App:
             log_base["reason"] = "exact-channels-unavailable"
         if not candidates:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            # Say *why* each route channel is out, so a fresh install (seeded
+            # templates stay disabled until keys are filled) gets an actionable
+            # hint instead of a bare "no healthy channel".
+            route = self.config.route(protocol, decision.hint)
+            status_map: dict[str, str] = {}
+            for name in (route.channels if route else []):
+                channel = self.config.channel(name)
+                if channel is None:
+                    status_map[name] = "missing"
+                elif not channel.enabled:
+                    status_map[name] = "disabled"
+                elif name in blocked:
+                    status_map[name] = "blocked"
+                else:
+                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    status_map[name] = "ok" if ok else why
+            message = "no healthy channel for this route/model"
+            if status_map and all(
+                    s in ("disabled", "missing") for s in status_map.values()):
+                message = ("no enabled channel for this route — enable a channel in "
+                           "the console or add one that speaks this protocol")
             error = {
-                "message": "no healthy channel for this route/model",
+                "message": message,
                 "route": f"{protocol}:{decision.hint}",
                 "model": model,
                 "blocked_channels": blocked,
+                "channel_status": status_map,
             }
             if catalog_skipped:
                 error["catalog_skipped"] = catalog_skipped
