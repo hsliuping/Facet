@@ -2,11 +2,15 @@
 
 [English](https://github.com/hsliuping/Facet/blob/main/README.md) | **简体中文**
 
-**Facet 回答你的应用里最常见的一个问题："这个任务该用哪个模型？"**
+**Facet 是一个自维护的 LLM 免费额度聚合网关——名字里的"事实表"是它的数据层。**
 
-它不是路由器，而是一张**模型事实表**——单个 JSON 文件，覆盖 217 个
-provider、约 2,400 个模型的能力、限制与价格——外加保持表格新鲜的同步
-工具和一个示例消费方。你的项目读表、套自己的业务规则、自己决定用谁。
+**Facet 回答两个问题："这个任务该用哪个模型？"（事实表）与"这个模型现在能免费跑吗？"（自维护网关）。**
+
+`facet serve` 启动一个本地 OpenAI 兼容网关：聚合主流厂商的免费额度，并自己保持
+渠道目录新鲜——探测、修复、报告，给你的 LLM 基础设施配一个 AI SRE。与之一同交付
+的还有名字里的**事实表**：单个 JSON 文件，覆盖 217 个 provider、约 2,400 个模型的
+能力、限制与价格（`pip install facet-models`，零依赖）。你的项目读表、套自己的
+业务规则、自己决定用谁。
 
 ```
 models.dev（主源，217 个 provider）   OpenRouter /api/v1/models（辅源）
@@ -20,11 +24,39 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
         └── examples/pick_model.py（参考消费方 / demo）
 ```
 
-## 为什么是表而不是路由器？
+## 一个包，两层
 
-- 路由器编码的是**别人的**策略；你的业务规则属于你自己。
-- 路由器是依赖，JSON 文件是数据。可以拉取、可以 vendor、也可以只抄需要的字段。
-- 事实每周变（价格、窗口、新模型），策略每天变。我们只维护每周变的部分。
+包内同时交付两层；命令只有一族。
+
+| 层 | 负责 | 落在 |
+|---|---|---|
+| **事实层**（数据） | 模型级能力、价格、`quota_tier`、别名 | `registry/model-registry.json` → 内置快照 |
+| **网关层**（运行时） | 渠道、路由、免费池、维护 L1–L4 | `src/planrouter/` |
+
+两层之间的桥：
+
+- **名字解析**——`planrouter/facts.py` 把知名名称映射到规范键；只读、纯
+  stdlib、快照缺失时退化为"不可用"。网关的**路由**依然只看维护层观测到的
+  渠道数据，绝不依赖表格的新鲜度。
+- **`quota_tier`**——人工标注（`registry/manual-overrides.json`）为新手指引
+  （`facet --free`）与将来的零密钥首启供料；维护层的探测结果只能**建议**更新
+  该文件，同步流程绝不自动填写。
+
+```
+facet "glm-5.3"            # 事实层：解析并显示一个模型
+facet --free --tools ...   # 事实层：按条件筛选
+facet serve                # 网关层：启动自维护代理
+planrouter                 # `facet serve` 的过渡别名（已弃用）
+```
+
+## 为什么事实层是一张表？
+
+- 网关的路由策略是我们自己的、可见的；你的选型规则仍然属于你自己。JSON
+  文件是数据——可以拉取、可以 vendor、也可以只抄需要的字段。
+- 事实每周变（价格、窗口、新模型），策略每天变。我们只维护每周变的部分，
+  网关自己适应每天变的部分。
+- 同一张表还驱动名字解析——`gpt-4o` 今天实际能解析到哪些免费层。`quota_tier`
+  是两层之间的连接键。
 
 ## 这张表
 
@@ -40,7 +72,7 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
 | `modalities` | `{"input": [...], "output": [...]}` | |
 | `open_weights` | 权重是否公开 | |
 | `cost` | `{"input_per_mtok", "output_per_mtok", "cache_read_per_mtok"}` | **统一 USD / 百万 token** |
-| `quota_tier` | `free_forever` / `free_daily` / `paid` | 人工标注，同步绝不猜测 |
+| `quota_tier` | `free_forever` / `free_daily` / `paid` | 人工标注，同步绝不猜测（主要免费层厂商已预置） |
 | `release_date`、`last_updated` | `YYYY-MM-DD` 或 `YYYY-MM` | 新鲜度提示 |
 | `family` | 模型家族 | |
 | `quality_hint` | 1-5 主观质量先验 | 唯一主观字段，人工维护 |

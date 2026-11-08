@@ -2,14 +2,17 @@
 
 **English** | [简体中文](https://github.com/hsliuping/Facet/blob/main/README.zh-CN.md)
 
-**Facet answers one question for your application: "for this task, which model should I use?"**
+**Facet is a self-maintaining LLM gateway over free-tier quotas — with a model facts table as its data layer.**
 
-**Facet 回答你应用里最常见的问题："这个任务该用哪个模型？"**——一张覆盖 217 个 provider、约 2,400 个模型能力/限制/价格的事实表，加一个零依赖的 pip 包（`pip install facet-models`）。
+**Facet 回答两个问题："这个任务该用哪个模型？"（事实表）与"这个模型现在能免费跑吗？"（自维护网关）。**
 
-It is not a router. It is a **facts table** — a single JSON file describing
-the capabilities, limits, and prices of ~2,400 models across 217 providers —
-plus the tools that keep the table fresh and a demo consumer. Your project
-reads the table, applies its own business rules, and picks a model.
+`facet serve` starts a local OpenAI-compatible gateway that aggregates free-tier
+quotas from major vendors and keeps its channel directory fresh on its own —
+probes, repairs, reports; an AI SRE for your LLM infrastructure. Alongside it
+ships the **facts table** it is named after: one JSON file describing the
+capabilities, limits, and prices of ~2,400 models across 217 providers
+(`pip install facet-models`, zero dependencies). Your project reads the table,
+applies its own business rules, and picks a model.
 
 ```
 models.dev (primary, 217 providers)   OpenRouter /api/v1/models (secondary)
@@ -23,13 +26,42 @@ registry/model-registry.json   ← the deliverable: one file, < 1 MB, zero deps
         └── examples/pick_model.py (reference consumer / demo)
 ```
 
-## Why a table instead of a router?
+## One wheel, two layers
 
-- Routers encode *someone else's* policy. Your business rules are yours.
-- A router is a dependency; a JSON file is data. Fetch it, vendor it, or copy
-  the fields you need.
+The package ships both layers; there is one command family.
+
+| Layer | Owns | Lives in |
+|---|---|---|
+| **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` → bundled snapshot |
+| **Gateway** (runtime) | channels, routes, the free pool, maintenance L1–L4 | `src/planrouter/` |
+
+The bridge between them:
+
+- **Name resolution** — `planrouter/facts.py` maps well-known names to
+  canonical keys, read-only, stdlib-only, and degrades to "unavailable" if
+  the snapshot is missing. The gateway's *routing* still runs purely on what
+  its maintenance layer observes; routing never depends on table freshness.
+- **`quota_tier`** — manual annotations (`registry/manual-overrides.json`)
+  seed onboarding (`facet --free`) and future zero-key start. Maintenance
+  probe results only ever *suggest* updates to this file; the sync never
+  auto-fills it.
+
+```
+facet "glm-5.3"            # facts: resolve + show one model
+facet --free --tools ...   # facts: filter the table
+facet serve                # gateway: start the self-maintaining proxy
+planrouter                 # deprecated alias of `facet serve`
+```
+
+## Why a facts table under the gateway?
+
+- The gateway's routing policy is ours and visible; your selection rules are
+  still yours. A JSON file is data — fetch it, vendor it, or copy the fields
+  you need.
 - Facts change weekly (prices, limits, new models). Policy changes daily. We
-  ship the part that changes weekly.
+  ship the part that changes weekly; the gateway adapts on its own.
+- The same table powers name resolution — what `gpt-4o` actually resolves to
+  among today's free tiers. `quota_tier` is the join key between layers.
 
 ## The table
 
@@ -46,7 +78,7 @@ first-party ones; ties prefer richer records).
 | `modalities` | `{"input": [...], "output": [...]}` | |
 | `open_weights` | weights publicly available | |
 | `cost` | `{"input_per_mtok", "output_per_mtok", "cache_read_per_mtok"}` | **USD per MTok, always** |
-| `quota_tier` | `free_forever` / `free_daily` / `paid` | manual, never auto-filled |
+| `quota_tier` | `free_forever` / `free_daily` / `paid` | manual, never auto-filled (major free-tier vendors pre-seeded) |
 | `release_date`, `last_updated` | `YYYY-MM-DD` or `YYYY-MM` | freshness hints |
 | `family` | model family | |
 | `quality_hint` | 1-5 subjective prior | the ONLY subjective field, manual |
