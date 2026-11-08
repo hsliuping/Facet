@@ -1,4 +1,5 @@
-"""CLI: ``facet "glm-5.3"`` resolves one name; ``facet --tools ...`` filters + ranks.
+"""CLI: ``facet "glm-5.3"`` resolves one name; ``facet --tools ...`` filters + ranks;
+``facet serve`` starts the self-maintaining gateway (its own argv follows).
 
 Output format matches examples/pick_model.py.
 """
@@ -35,6 +36,11 @@ def explain(rec: dict) -> str:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "serve":
+        # The gateway ships in this wheel; `facet serve` is its product form.
+        from planrouter.cli import main as serve_main
+        return serve_main(argv[1:])
     ap = argparse.ArgumentParser(
         prog="facet", description="Pick models from the Facet registry table."
     )
@@ -44,6 +50,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-input-price", type=float, default=None, help="max USD per MTok input")
     ap.add_argument("--max-output-price", type=float, default=None, help="max USD per MTok output")
     ap.add_argument("--tools", action="store_true", help="require tool calling")
+    ap.add_argument("--free", action="store_true",
+                    help="require a free quota tier (free_forever / free_daily; "
+                         "absent quota_tier counts as unknown and is excluded)")
     ap.add_argument("--reasoning", action="store_true", help="require reasoning")
     ap.add_argument("--json", action="store_true", help="require structured output")
     ap.add_argument("--image-input", action="store_true", help="require image input")
@@ -61,6 +70,7 @@ def main(argv=None) -> int:
         json_output=args.json,
         image_input=args.image_input,
         provider=args.provider,
+        free=args.free,
     )
 
     try:

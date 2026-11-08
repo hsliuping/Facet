@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "facet-models"
 dynamic = ["version"]
-description = "Thin fact client for the Facet model registry: load the table, resolve names, find candidates. Zero runtime dependencies. / Facet 模型事实表客户端：装载表、解析名称、查找候选模型，零运行时依赖。"
+description = "Self-maintaining LLM gateway over free-tier quotas, with a bundled model facts table. Zero runtime dependencies. / 自维护的免费额度聚合网关，内置模型事实表，零运行时依赖。"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Facet contributors" }]
-keywords = ["llm", "model-registry", "model-selection", "ai", "facts"]
+keywords = ["llm", "model-registry", "model-selection", "ai", "facts", "gateway", "free-tier", "router"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -29,7 +29,7 @@ Homepage = "https://github.com/hsliuping/Facet"
 
 [project.scripts]
 facet = "facet.cli:main"
-planrouter = "planrouter.cli:main"
+planrouter = "planrouter._alias:main"  # deprecated transition alias of `facet serve`
 
 [tool.setuptools]
 package-dir = { "" = "src" }
