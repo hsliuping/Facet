@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from . import subscriptions as subs
 from . import ui
 from . import maintenance as maint
+from . import freealign as freealign_mod
 from . import providers as providers_mod
 from .audit import RequestLog
 from .core import (
@@ -258,6 +259,51 @@ class MaintenanceRunner:
                 pass
 
 
+class FreeAlignRunner:
+    """Scheduled free-quota alignment for free-tier channels (freealign.py).
+
+    Vendors like Bailian expose their free-quota state only through a local
+    CLI, and the set of models carrying free quota moves over time (models
+    expire, new ones join). This sweep re-runs the vendor command and rewrites
+    the affected channels' mappings so the router never routes to a model
+    whose free quota has run out. Runs once shortly after the first
+    maintenance sweep, then every defaults.free_align_hours.
+    """
+
+    FIRST_RUN_DELAY = 150.0
+
+    def __init__(self, app: "App"):
+        self.app = app
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="planrouter-freealign")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
+
+    def _interval(self) -> float:
+        hours = self.app.config.defaults.free_align_hours
+        return max(1.0, float(hours or 24)) * 3600.0
+
+    def _loop(self) -> None:
+        if self._stop.wait(self.FIRST_RUN_DELAY):
+            return
+        try:
+            self.app.run_free_align("scheduled")
+        except Exception:  # alignment must never kill the gateway
+            pass
+        while not self._stop.wait(self._interval()):
+            try:
+                self.app.run_free_align("scheduled")
+            except Exception:
+                pass
+
+
 class App:
     def __init__(
         self,
@@ -298,7 +344,9 @@ class App:
         self.audit = RequestLog(audit_file) if audit_file else None
         self.catalog_refresher: CatalogRefresher | None = None
         self.maintenance_runner: "MaintenanceRunner | None" = None
+        self.free_align_runner: "FreeAlignRunner | None" = None
         self.maintenance_reports: list[dict] = []
+        self.free_align_reports: list[dict] = []
         self.maintenance_lock = threading.Lock()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
         self.maintenance_pool = maint.load_maintenance_pool(self)
@@ -332,10 +380,15 @@ class App:
         if self.config.defaults.maintenance_hours:
             self.maintenance_runner = MaintenanceRunner(self)
             self.maintenance_runner.start()
+        if self.config.defaults.free_align_hours:
+            self.free_align_runner = FreeAlignRunner(self)
+            self.free_align_runner.start()
 
     def stop_background(self) -> None:
         if self.maintenance_runner:
             self.maintenance_runner.stop()
+        if self.free_align_runner:
+            self.free_align_runner.stop()
         if self.catalog_refresher:
             self.catalog_refresher.stop()
         if self.notifier:
@@ -904,11 +957,58 @@ class App:
         except OSError:
             pass  # logging must never break maintenance
 
+    # ----------------------------------------------------------- free align
+    def run_free_align(self, trigger: str = "manual") -> dict:
+        """Align free-tier channel mappings with vendor free-quota tools.
+
+        Applies the sweep's patch through the normal config pipeline (after a
+        config backup); never raises — failures land in the report alerts and
+        the channels keep their current mapping until the next sweep.
+        """
+        report = freealign_mod.run_free_align(self, trigger)
+        if report["patch"]:
+            self._backup_config("freealign")
+            raw = copy.deepcopy(self.raw)
+            for channel in raw.get("channels") or []:
+                if isinstance(channel, dict) \
+                        and channel.get("name") in report["patch"]:
+                    channel["models"] = report["patch"][channel["name"]]
+            try:
+                self.apply_config(raw)
+            except (ValueError, OSError) as exc:
+                report["patch"] = {}
+                report["alerts"].append({
+                    "channel": "", "kind": "apply_failed",
+                    "message": f"自动应用免费额度对齐失败，配置已回读未提交：{exc}",
+                })
+        report["finished_at"] = time.time()
+        self._record_free_align(report)
+        return report
+
+    def _record_free_align(self, report: dict) -> None:
+        with self.maintenance_lock:
+            self.free_align_reports.append(report)
+            del self.free_align_reports[:-MaintenanceRunner.MAX_REPORTS]
+        if not self.config_path:
+            return
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                 **{k: v for k, v in report.items() if k != "patch"}}
+        try:
+            path = self.config_path.parent / "freealign.jsonl"
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # logging must never break the sweep
+
     def maintenance_payload(self) -> dict:
         with self.maintenance_lock:
             reports = [
                 {k: v for k, v in report.items() if k != "patch"}
                 for report in self.maintenance_reports
+            ]
+            free_reports = [
+                {k: v for k, v in report.items() if k != "patch"}
+                for report in self.free_align_reports
             ]
         with self.maintenance_pool_lock:
             pool = {k: (list(v) if isinstance(v, list) else v)
@@ -925,6 +1025,11 @@ class App:
             "llm_queue_results": list(pool.get("results") or []),
             "free_models": maint.free_models_payload(self),
             "reports": list(reversed(reports)),
+            "free_align": {
+                "enabled": bool(self.config.defaults.free_align_hours),
+                "hours": self.config.defaults.free_align_hours,
+                "reports": list(reversed(free_reports)),
+            },
         }
 
     def maintenance_log_payload(self, limit: int = 50) -> dict:

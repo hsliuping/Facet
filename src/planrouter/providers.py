@@ -43,6 +43,11 @@ def _read_entries(path: Path) -> list:
 # must not erase the 获取 Key / 使用文档 links shipped in the package registry.
 INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 
+# List-valued fields inherit the same way: the free-quota alignment command
+# ships with the package registry (vendor CLI knowledge), so an older overlay
+# entry written before the field existed must not erase it.
+INHERIT_LISTS = ("free_quota_cmd",)
+
 
 def _merge(builtin: list, overlay: list) -> list:
     """Overlay whole vendor entries by id, keeping builtin order first.
@@ -75,6 +80,11 @@ def _fill_links(entry: dict, base: dict) -> dict:
         for field in INHERIT_IF_EMPTY:
             if not mode.get(field):
                 mode[field] = base_mode.get(field) or ""
+        for field in INHERIT_LISTS:
+            if not mode.get(field):
+                inherited = base_mode.get(field)
+                if inherited:
+                    mode[field] = list(inherited)
     return entry
 
 
@@ -147,6 +157,14 @@ def normalize_vendor(entry) -> dict:
         if not isinstance(models_raw, list):
             raise ValueError(f"模式 {key} 的模型清单必须是字符串数组")
         models = [str(item).strip() for item in models_raw if str(item).strip()]
+        cmd_raw = mode.get("free_quota_cmd")
+        quota_cmd: list[str] = []
+        if cmd_raw:
+            if (not isinstance(cmd_raw, list)
+                    or not all(isinstance(x, str) and x.strip() for x in cmd_raw)):
+                raise ValueError(
+                    f"模式 {key} 的 free_quota_cmd 必须是非空字符串数组")
+            quota_cmd = [x.strip() for x in cmd_raw]
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -155,6 +173,7 @@ def normalize_vendor(entry) -> dict:
             "keys_url": keys_url,
             "docs_url": docs_url,
             "models_url": models_url,
+            "free_quota_cmd": quota_cmd,
             "models": models,
         }
     return {"id": vendor_id, "name": name.strip(), "modes": modes}

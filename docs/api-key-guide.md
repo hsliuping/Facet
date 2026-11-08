@@ -345,8 +345,24 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
    📷 **截图 4-6** ｜ 拍什么：百炼 API-KEY 管理页（Key 打码） ｜ 存为：`bailian-01-apikeys.png`
 
-3. 新用户多数模型有**免费额度**（百万 token 级），在模型广场看各模型标注；
+3. 新用户免费额度规则（2026-10 官方口径）：开通百炼后各模型自动发放**新人免费额度**，每个模型 100 万 token；有效期 **90 天**，从账号开通、**模型发布**或模型申请通过之日起算（以较晚者为准——新上线的模型会刷新一个 90 天窗口）。仅**华北2（北京）**地域模型有额度，且只抵扣**实时推理**（Batch 调用不算）。建议在控制台开启「**免费额度用完即停**」，额度耗尽自动停止调用、不转按量扣费；
 4. **注意**：API Key 按地域/业务空间隔离，不同空间的 Key 不可互换。
+
+**查哪些模型还有免费额度（官方 CLI）**
+
+百炼没有公开的免费额度查询 REST API；官方 CLI（npm 包 `bailian-cli`，命令 `bl`）的 `usage free` 可以查：
+
+```powershell
+npm install -g bailian-cli                  # 无 Node.js 时：irm https://bailian.aliyun.com/cli/install.ps1 | iex
+                                            # 若报 notarget（npm 发布缺陷），改用 npm install -g bailian-cli@2.8.3
+bl auth login --console                     # 拉起浏览器完成阿里云控制台授权
+bl usage free --output json --sort expires  # 全部模型剩余额度 + 到期时间（JSON）
+bl usage free --expiring 7                  # 只看 7 天内到期的额度
+```
+
+**渠道映射必须以 `usage free` 的输出为准**——不要用控制台「拉取模型」目录来填百炼的映射：目录不区分免费/计费，拉进来的可能都是按量计费模型，路由打过去就变成后付费扣费。
+
+这套对齐已经内置为 Facet 的**每日定时任务**（与目录刷新、每日自维护同一批后台任务，`defaults.free_align_hours` 控制间隔，0 关闭）：网关会自动执行 `bl usage free --output json`，只保留**type 为 Text、剩余额度 > 0、未过期**的模型作为渠道映射（恒等映射），额度耗尽/过期的自动摘掉，命令失败则保留原映射等下一轮。因此**日常无需手动管理**——你只需要在首次使用时装一次 CLI 并完成一次控制台授权（`usage free` 属于控制台类命令，**只配 API Key 不够**，必须 `--console` 浏览器授权；授权过期后重新登录一次即可，定时任务下一轮自动恢复对齐）。想立即对齐（不等定时）可在管理台手动触发；`bl usage free` 命令本身也适合人工核对额度状态。
 
 **渠道参数**：
 

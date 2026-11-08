@@ -241,6 +241,8 @@ class Defaults:
     # Model name routed through (preferably free) channels for the LLM part of
     # self-maintenance; empty disables LLM analysis, deterministic rules still run.
     maintenance_model: str = ""
+    # 0 disables the free-quota alignment sweep (freealign.py)
+    free_align_hours: int = 24
 
 
 @dataclass(frozen=True)
@@ -422,6 +424,7 @@ def parse_config(raw: dict) -> Config:
         catalog_refresh_hours=int(d.get("catalog_refresh_hours", 24)),
         maintenance_hours=int(d.get("maintenance_hours", 24)),
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
+        free_align_hours=int(d.get("free_align_hours", 24)),
     )
 
     channels: list[Channel] = []

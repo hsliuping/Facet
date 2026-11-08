@@ -147,6 +147,7 @@
           "docs_url": "https://help.aliyun.com/zh/model-studio/",
           "keys_url": "https://bailian.console.aliyun.com",
           "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
+          "free_quota_cmd": ["bl", "usage", "free", "--output", "json"],
           "tier": "paid",
           "models": []
         },

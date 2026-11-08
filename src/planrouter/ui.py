@@ -394,6 +394,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.run_maintenance("manual"))
         return True
 
+    if path == "/api/freealign/run" and method == "POST":
+        # Re-align free-tier channels with their vendor free-quota tools now.
+        _json(h, 200, app.run_free_align("manual"))
+        return True
+
     if path == "/api/maintenance/test-models" and method == "POST":
         # Quiz candidate maintenance models now and rebuild the verified queue.
         _json(h, 200, app.probe_maintenance_models())
