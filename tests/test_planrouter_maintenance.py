@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -1031,6 +1033,19 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(len(report["results"]), 4)
         self.assertEqual(report["queue"], sorted(report["queue"]))
         self.assertEqual(peak, {"a": 1, "b": 1})
+
+    def test_direct_call_surfaces_upstream_429_body(self):
+        """The report must show why, e.g. OpenRouter free-models-per-day."""
+        err = urllib.error.HTTPError(
+            "http://127.0.0.1:9201/v1/chat/completions", 429,
+            "Too Many Requests", None, io.BytesIO(
+                b'{"error":{"code":429,"metadata":{"raw":"x"},'
+                b'"message":"Rate limit exceeded: free-models-per-day"}}'))
+        with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.app._maintenance_direct_call(
+                    self.app.config.channels[0], "gpt-old", "prompt")
+        self.assertIn("free-models-per-day", str(ctx.exception))
 
     def make_channel_free(self, name: str) -> None:
         """Channel is frozen; rebuild the config with one tier="free" channel."""

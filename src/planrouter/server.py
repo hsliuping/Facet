@@ -760,6 +760,34 @@ class App:
         hits.sort(key=lambda c: c.tier != "free")
         return hits[0] if hits else None
 
+    @staticmethod
+    def _http_error_text(exc: HTTPError) -> str:
+        """Compact upstream error line: status + server message + retry hint.
+
+        str(HTTPError) alone is just "HTTP Error 429: Too Many Requests";
+        vendors such as OpenRouter say which quota fired in the JSON body
+        (e.g. free-models-per-day), and that is what a probe report needs.
+        """
+        detail = ""
+        try:
+            body = exc.read(2048).decode("utf-8", "replace")
+            try:
+                data = json.loads(body)
+                detail = str((data.get("error") or {}).get("message")
+                             or data.get("message") or "").strip()
+            except ValueError:
+                match = re.search(r'"message"\s*:\s*"([^"]+)"', body)
+                detail = (match.group(1) if match else body.strip())[:220]
+        except Exception:
+            pass
+        parts = [f"HTTP Error {exc.code}"]
+        if detail:
+            parts.append(detail[:220])
+        retry_after = (exc.headers or {}).get("Retry-After")
+        if retry_after:
+            parts.append(f"Retry-After {retry_after}")
+        return ": ".join(parts)
+
     def _maintenance_direct_call(self, channel, model: str, prompt: str) -> str:
         """One non-streaming chat turn straight against the owning channel."""
         protocol = channel.protocol
@@ -782,9 +810,12 @@ class App:
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers=headers, method="POST",
         )
-        with open_with_proxy(req, max(60, self.config.defaults.timeout),
-                             channel.proxy) as resp:
-            data = json.loads(resp.read())
+        try:
+            with open_with_proxy(req, max(60, self.config.defaults.timeout),
+                                 channel.proxy) as resp:
+                data = json.loads(resp.read())
+        except HTTPError as exc:
+            raise RuntimeError(self._http_error_text(exc)) from None
         if protocol == ANTHROPIC:
             return "".join(b.get("text") or "" for b in data.get("content") or []
                            if isinstance(b, dict))
