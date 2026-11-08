@@ -1555,6 +1555,7 @@ function openModal(title, html) {
 
 function closeModal() {
   $('modal').hidden = true;
+  closeGuideOverlay();
   if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
   modalReturnFocus = null;
 }
@@ -2122,6 +2123,7 @@ function renderGuideBody() {
 function closeGuideOverlay() {
   const wrap = $('guide-backdrop');
   if (wrap) wrap.hidden = true;
+  document.body.classList.remove('guide-open');
 }
 
 // Capture phase: with the channel editor open underneath, the page-wide
@@ -2183,6 +2185,7 @@ async function showGuideOverlay(pid) {
   }
   $('guide-toggle').textContent = '完整手册';
   wrap.hidden = false;
+  document.body.classList.add('guide-open');
   $('guide-body').innerHTML = '<p class="hint">正在加载使用手册…</p>';
   try {
     const guide = await loadGuide();

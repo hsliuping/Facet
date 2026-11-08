@@ -175,6 +175,21 @@ tr:last-child td { border-bottom: none; }
 /* Guide overlay: renders docs/api-key-guide.md sections in-console. */
 .guide-backdrop { z-index: 40; }
 .guide-modal { width: min(780px, 100%); }
+/* Side-by-side on wide screens: the guide docks to the right of the editor
+   instead of covering it, and the editor shifts left to make room; both stay
+   visible and interactive. Narrow screens keep the stacked overlay. */
+@media (min-width: 960px) {
+  body.guide-open { --guide-w: min(600px, 44vw); }
+  body.guide-open #modal { padding-right: calc(var(--guide-w) + 24px); }
+  body.guide-open .guide-backdrop {
+    background: transparent;
+    backdrop-filter: none;
+    pointer-events: none;
+    place-items: center end;
+    padding-right: 20px;
+  }
+  body.guide-open .guide-modal { pointer-events: auto; width: var(--guide-w); }
+}
 .guide-head-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .guide-body { max-height: calc(88vh - 110px); overflow: auto; padding-right: 4px; }
 .guide-body h1, .guide-body h2 { font-size: 16px; margin: 18px 0 8px; }
