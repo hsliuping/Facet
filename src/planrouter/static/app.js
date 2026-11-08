@@ -2057,6 +2057,14 @@ function renderMarkdown(text) {
         } else if (items.length && /^\s{2,}\S/.test(l)) {
           items[items.length - 1] += '<br>' + mdInline(l.trim());
           i += 1;
+        } else if (items.length && !l.trim()) {
+          // Loose list: a blank line stays inside the list when the next
+          // non-blank line is another item or an indented continuation
+          // (e.g. a screenshot line), so numbering does not restart.
+          let j = i + 1;
+          while (j < lines.length && !lines[j].trim()) j += 1;
+          if (j < lines.length && (isListItem(lines[j]) || /^\s{2,}\S/.test(lines[j]))) { i = j; continue; }
+          break;
         } else break;
       }
       const tag = ordered ? 'ol' : 'ul';
@@ -2088,23 +2096,24 @@ function renderMarkdown(text) {
 
 // <img data-src> points at the admin-gated /api/guide/img route, so a plain
 // src would 401; fetch with the admin key and swap in a blob URL instead.
+// Images hydrate in place — removing and re-appending them would yank every
+// screenshot out of its step and pile them up at the end of the guide.
 async function hydrateGuideImages() {
   const body = $('guide-body');
   for (const img of Array.from(body.querySelectorAll('img[data-src]'))) {
     const src = img.getAttribute('data-src');
     const alt = img.alt || '';
-    img.remove();
-    const note = document.createElement('em');
-    note.className = 'hint';
     try {
       if (!state.adminKey) throw new Error('no admin key');
       const res = await fetch(src, { headers: { 'X-Admin-Key': state.adminKey } });
       if (!res.ok) throw new Error(String(res.status));
       img.src = URL.createObjectURL(await res.blob());
-      body.appendChild(img);
+      img.removeAttribute('data-src');
     } catch {
+      const note = document.createElement('em');
+      note.className = 'hint';
       note.textContent = `截图待补：${alt || src}`;
-      body.appendChild(note);
+      img.replaceWith(note);
     }
   }
 }
