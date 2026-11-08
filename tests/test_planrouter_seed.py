@@ -24,7 +24,7 @@ class SeedConfigTests(unittest.TestCase):
         by_name = {c.name: c for c in config.channels}
         self.assertEqual(
             {c.name for c in config.channels},
-            {"pollinations", "groq", "google-ai-studio", "z-ai-glm",
+            {"pollinations", "nvidia-nim", "google-ai-studio", "z-ai-glm",
              "anthropic-template"},
         )
         pollinations = by_name["pollinations"]
@@ -32,7 +32,7 @@ class SeedConfigTests(unittest.TestCase):
         self.assertEqual(pollinations.tier, "free")
         self.assertEqual(pollinations.rate.rpm, 4)
         self.assertEqual(pollinations.models.get("auto"), "openai")
-        for name in ("groq", "google-ai-studio", "z-ai-glm",
+        for name in ("nvidia-nim", "google-ai-studio", "z-ai-glm",
                      "anthropic-template"):
             self.assertFalse(by_name[name].enabled, name)
         self.assertEqual(config.routes["openai:default"].channels,
