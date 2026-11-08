@@ -234,6 +234,99 @@ reports. First-party providers are built in; anything else takes
 `--max-models` (default 20) caps `--provider` scans. Found a mismatch? Open an
 issue with the report attached, or fix the row via `manual-overrides.json`.
 
+## The gateway
+
+The gateway layer (`src/planrouter/`) is the runtime half of the package:
+`facet serve` aggregates channels — upstream vendor endpoints you configure —
+routes OpenAI- and Anthropic-compatible traffic across them, and maintains
+itself daily. The console and the `/api/*` endpoints ship on the same port.
+Five things worth knowing when you run it:
+
+### Self-maintenance
+
+Runs ~2 minutes after startup, then every `defaults.maintenance_hours`
+(default 24; `0` disables). One run: refresh channel catalogs → auto-apply
+catalog-confirmed fixes (config backed up first) → refresh subscription plan
+models and the vendor registry → ask the maintenance LLM for advisory notes →
+record a report. Every finding lands in exactly one of three buckets:
+
+| Bucket | Meaning | Who acts |
+|---|---|---|
+| `applied` | catalog-confirmed (models removed upstream, `auto` repointed, plan/vendor model lists refreshed) | nobody — already applied, with a config backup |
+| `suggestions` | worth doing, not provable from the catalog alone (new upstream models, repeated quota cooldowns, advisory LLM notes — never auto-applied) | you — one click in the console's 自动运维 ("auto-ops") card |
+| `alerts` | dead keys, empty catalogs, fetch failures | you, off-band |
+
+Reports are kept in memory (the last 20) and appended to `maintenance.jsonl`
+next to `config.json`, so history survives restarts. The console's 维护日志
+("maintenance log") tab reads both; the same data is plain HTTP:
+
+```bash
+GET  /api/maintenance              # current state: enabled, hours, model pool, last run
+GET  /api/maintenance/logs/50      # run history, newest first (default 50)
+POST /api/maintenance/run          # force a run now
+POST /api/maintenance/test-models  # re-quiz the free pool, rebuild the queue
+POST /api/maintenance/apply        # adopt a suggestion ({"channel", "models"})
+```
+
+### The free pool
+
+With `defaults.maintenance_model` empty or `auto`, every maintenance LLM call
+runs on a verified queue of free models instead of a pinned id:
+
+- Only channels marked `tier: "free"` (or with the tier inferred from a linked
+  subscription) donate candidates — probing never burns paid quota.
+- A catalog that mixes `:free`-suffixed and unsuffixed ids (OpenRouter style)
+  donates only its `:free` subset; a catalog without any `:free` id belongs to
+  a wholly-free channel, so all of its models are candidates. Before the first
+  catalog fetch, the channel's own model mapping stands in.
+- Candidates are quizzed against a synthetic doc page with a known answer;
+  perfect scorers join the queue. The queue persists in
+  `maintenance_models.json` next to `config.json`, is re-verified on every
+  probe, and a model that fails real maintenance work is dropped on the spot.
+  Probes are cooldown-bounded so a fully dead free pool cannot turn
+  maintenance into a probe storm.
+
+Explicit ids in `defaults.maintenance_model` (comma/whitespace separated)
+bypass the pool and are used verbatim.
+
+### Maintenance calls go direct, not through routes
+
+A maintenance model id is an upstream id, so it is addressed the way the
+upstream would be: straight to the first enabled channel whose own mapping
+exposes it (tier-`free` channels first, config order otherwise), as one
+non-streaming turn — Anthropic channels get `x-api-key` +
+`anthropic-version: 2023-06-01`, OpenAI-compatible ones get `Bearer`, and the
+channel's `proxy` applies. Routes are never consulted; maintenance must not
+depend on route membership. Only ids no channel exposes (branded names such
+as `facet-auto`) fall back to a loopback call through the gateway itself —
+ordinary routing, normal failover.
+
+### Outbound proxy
+
+A channel may carry `proxy: "http://..."` (a plain URL or a secret
+reference). Every upstream request made on that channel's behalf — chat
+traffic and maintenance direct calls alike — goes through it; without it,
+connections are direct.
+
+### Adding a vendor
+
+Two layers, two registries:
+
+| Layer | Registry | How to extend |
+|---|---|---|
+| Gateway | builtin `src/planrouter/providers.json` + user overlay `<config dir>/providers.json` | PR a builtin entry, or drop an overlay entry locally |
+| Facts | `registry/model-registry.json` | vendors arrive via `tools/sync_models_dev.py`; manual facts (e.g. `quota_tier`) via `registry/manual-overrides.json` |
+
+A gateway vendor entry needs `id` (`[a-z0-9-]+`), `name`, and at least one
+mode — `coding`, `agent`, or `payg` — each with `label`, `protocol`
+(`openai` / `anthropic`), `base_url`, and optional `tier` (`free` / `paid`),
+`docs_url`, `models_url`, `models`. Overlay entries replace builtin entries
+whole, by id. Maintenance refreshes model lists daily: modes with `docs_url`
+are re-extracted (LLM first, deterministic list-line rules as fallback),
+`models_url` is read as a plain JSON catalog — changes persist into your
+overlay with a backup. On the facts side, tiers stay manual: `quota_tier` is
+never auto-filled.
+
 ## Non-goals
 
 No routing, no API keys, no telemetry, no per-request ranking service, no

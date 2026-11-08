@@ -213,6 +213,86 @@ API key 自备（环境变量——`OPENAI_API_KEY`、`ZHIPU_API_KEY`、`ARK_API
 （默认 20）为 `--provider` 扫描兜底。发现 mismatch？带着报告开 issue，
 或走 `manual-overrides.json` 修正对应行。
 
+## 网关层
+
+网关层（`src/planrouter/`）是包的运行时一半：`facet serve` 聚合渠道——你自己
+配置的上游厂商端点——在其间路由 OpenAI / Anthropic 兼容流量，并每天自我
+维护。控制台与 `/api/*` 与网关同端口。跑起来之前值得知道的五件事：
+
+### 自我维护
+
+启动约 2 分钟后先跑一次，之后每 `defaults.maintenance_hours`（默认 24；`0`
+关闭）跑一次。一次运行：刷新渠道目录 → 自动应用目录可确认的修复（先备份
+配置）→ 刷新订阅套餐模型与厂家注册表 → 请维护 LLM 写顾问意见 → 落一份
+报告。每条发现只落进三个桶之一：
+
+| 桶 | 含义 | 谁来处理 |
+|---|---|---|
+| `applied` | 目录可确认（上游下架模型、`auto` 重指向、套餐/厂家模型清单刷新） | 无人——已自动应用，且有配置备份 |
+| `suggestions` | 值得做但目录无法确认（上游新模型、反复配额冷却、LLM 意见——仅供参考，绝不自动应用） | 你——控制台「自动运维」卡片一键采纳 |
+| `alerts` | 密钥失效、目录为空、抓取失败 | 你，线下处理 |
+
+报告保留在内存（最近 20 份）并追加到 `config.json` 旁的
+`maintenance.jsonl`，重启不丢。控制台的「维护日志」标签页读的就是这两处；
+同样的数据也是普通 HTTP：
+
+```bash
+GET  /api/maintenance              # 当前状态：开关、周期、模型池、上次运行
+GET  /api/maintenance/logs/50      # 运行历史，最新在前（默认 50 条）
+POST /api/maintenance/run          # 立即手动跑一次
+POST /api/maintenance/test-models  # 重新测验免费池，重建队列
+POST /api/maintenance/apply        # 采纳建议（{"channel", "models"}）
+```
+
+### 免费池
+
+`defaults.maintenance_model` 留空或设为 `auto` 时，所有维护 LLM 调用都跑在
+一个「已验证免费模型队列」上，而不是钉死某个 id：
+
+- 只有标记 `tier: "free"` 的渠道（或经关联订阅推断为 free 的渠道）捐出候选
+  ——探测绝不烧付费额度。
+- 混合目录（OpenRouter 式，带 `:free` 后缀）只捐 `:free` 子集；一个目录里
+  没有任何 `:free` id，说明整个渠道都免费，全部模型都是候选。首次目录拉取
+  之前，用渠道自身的 models 映射顶替。
+- 候选要过一道测验：合成的文档页 + 已知标准答案，全对的进队列。队列持久化
+  在 `config.json` 旁的 `maintenance_models.json`，每次探测都重新复验；真
+  干活时掉链子的模型当场除名。探测有冷却兜底，全灭的免费池不会把维护变成
+  探测风暴。
+
+`defaults.maintenance_model` 写显式 id（逗号/空白分隔）则绕过免费池，原样
+使用。
+
+### 维护调用走直达，不走路由
+
+维护模型的 id 是上游 id，所以按上游的方式寻址：直接打到第一个在自己的
+models 映射里暴露它的启用渠道（tier-`free` 优先，其余按配置顺序），单轮
+非流式——Anthropic 渠道用 `x-api-key` + `anthropic-version: 2023-06-01`，
+OpenAI 兼容渠道用 `Bearer`，该渠道的 `proxy` 照常生效。路由表从不参与；
+维护不许依赖路由成员。只有没有任何渠道暴露的品牌 id（如 `facet-auto`）才
+回退为经网关自身的 loopback 调用——普通路由，正常故障转移。
+
+### 渠道出站代理
+
+渠道可带 `proxy: "http://..."`（明文 URL 或密钥引用）。该渠道名下的所有
+上游请求——转发流量与维护直达调用——都走它；不填则直连。
+
+### 新厂家接入
+
+两层，两份注册表：
+
+| 层 | 注册表 | 怎么扩展 |
+|---|---|---|
+| 网关 | 内置 `src/planrouter/providers.json` + 用户覆盖层 `<config 目录>/providers.json` | 给内置表提 PR，或本地放一条覆盖条目 |
+| 事实层 | `registry/model-registry.json` | 厂商随 `tools/sync_models_dev.py` 自动进来；人工事实（如 `quota_tier`）走 `registry/manual-overrides.json` |
+
+网关厂家条目需要 `id`（`[a-z0-9-]+`）、`name` 和至少一个模式——`coding` /
+`agent` / `payg`——每个模式带 `label`、`protocol`（`openai` / `anthropic`）、
+`base_url`，可选 `tier`（`free` / `paid`）、`docs_url`、`models_url`、
+`models`。覆盖条目按 id 整体替换内置条目。维护每天刷新模型清单：带
+`docs_url` 的模式先走 LLM 抽取（确定性清单行规则兜底），`models_url` 当
+JSON 目录读——变更带备份持久化进你的覆盖文件。事实层这边档位永远是人工：
+`quota_tier` 绝不自动填写。
+
 ## 非目标
 
 不做路由、不管 API key、不采集遥测、不做逐请求排序服务、不聚合跑分。
