@@ -1,0 +1,84 @@
+# Facet 项目进度
+
+> 维护约定：每完成一个功能 / 修复 / 发布，及时更新本文件——勾选「接下来」里
+> 对应项或移入「已完成」，并在文末「更新记录」追加一行。本文件是唯一的进度
+> 基准，功能口径以 [README.zh-CN.md](../README.zh-CN.md) 为准。
+
+**最后更新**：2026-11-08
+
+---
+
+## 已完成
+
+### 事实层（数据表）
+
+- [x] 核心交付物 `registry/model-registry.json`：217 provider / 约 2,400 模型，单文件 < 1 MB，零依赖（`bf1808b`）
+- [x] 双数据源同步：models.dev 主源 + OpenRouter 辅源（`29d629f`），模型身份跨拼写变体归一（`9d37b0f`）
+- [x] 人工事实标注 `manual-overrides.json`：`quota_tier` 永不自动填写（`3863813`）
+- [x] `verify_claims` 实测验证：对声明的能力跑真实请求（`4bcbedb`）
+- [x] `facet-models` pip 包 + PyPI 双语元数据（`4c0ba66`、`923d42c`）
+- [x] CLI：`facet "模型名"` 解析、`facet --free --tools ...` 筛选（`3d5c9c2`）
+
+### 网关层 · 路由与渠道
+
+- [x] PlanRouter 核心：多渠道故障转移（priority 越小越先）、冷却与配额抢占、审计（`b1cbef9`、`9151747`）
+- [x] OpenAI / Anthropic 双协议兼容；模型名策略（branded / auto:链 / 精确匹配 / fallback 链）
+- [x] 套餐订阅管理：月费、到期提醒 webhook、过期自动停用关联渠道
+- [x] 渠道 free/paid 档位：渠道级标签 + 按模型手动切换（`7859b8d`、`7e9a529`）
+- [x] 渠道出站代理：转发流量与维护直达调用都走 `proxy`（`0d9086a`）
+- [x] 统一 CLI：`facet serve`（`planrouter` 为过渡别名）（`3dba6b1`）
+
+### 网关层 · 自我维护
+
+- [x] 每日自我维护：刷新目录 → 自动应用可确认修复（带备份）→ 建议 / 告警分桶（`4e2aa9a`）
+- [x] 厂家注册表两层：内置 `providers.json` + 用户覆盖层；套餐模型与厂家清单每日刷新（`0a00d74`）
+- [x] 内置厂家含：百炼、混元、千帆、xAI Grok（`f5a4a5d`）、NVIDIA NIM（`7af04ed`）
+- [x] 免费池：仅免费渠道捐候选，测验通过进持久化队列，干活前复验（`9582ebc`、`9e456d4`）
+- [x] 维护调用走直达不走路由；维护日志 `maintenance.jsonl` 持久化 + 控制台查看器（`0f8a132`）
+
+### 控制台 UI
+
+- [x] 六个标签页：渠道配置 / 路由链 / 模型接入 / 套餐订阅 / 厂家 / 运行状态 / 维护日志
+- [x] 渠道、厂家改全宽列表行布局（`3a69154`）
+- [x] 渠道、厂家实时搜索过滤；顶部指标随渠道过滤联动（显示 `X / Y`）（`3a69154`）
+- [x] 冷却中渠道黄色高亮 + 「冷却中 · 剩 N 分钟」标签（`3a69154`）
+- [x] 渠道行内「测试」按钮（免开编辑器）；测试模型名随渠道保存（`test_model`）；测试通过自动解除冷却（`3a69154`）
+
+### 首启与文档
+
+- [x] 零密钥首启：无 `router.json` 时自动播种（匿名 Pollinations + NVIDIA NIM 等禁用模板）并直接启动（`bee55c8`）
+- [x] README 双语：两层定位、网关运维、免费池、非目标（`9a1d36e`、`f62139c`、`0c983d6`）
+- [x] `docs/`：竞品分析、DeepSeek superagent 对接分析（含 P0–P3 行动清单）
+- [x] 渠道密钥获取手册 `docs/api-key-guide.md`：19 家厂家 key 获取指引 + 截图位（待用户补图）
+- [x] 注册表新增 LLM7 / OVHcloud 免费匿名条目；无候选 503 改为逐渠道状态（disabled/cooling…）+ 启用指引
+
+---
+
+## 进行中
+
+| 事项 | 状态 |
+|---|---|
+| NVIDIA NIM 兜底渠道 | 已接入配置（priority 50，禁用）+ 厂家条目；等用户提供 `nvapi-` key 后启用并真实请求验证 |
+| free-tier 渠道 | OpenRouter 每日免费额度 429 冷却中，2026-11-13 重置 |
+| 观察项：控制台自动刷新偶发跳回渠道配置 tab | 等用户确认日常复现，复现则修 |
+
+## 接下来
+
+- [ ] **NVIDIA key 到位** → 启用 `nvidia-nim` 渠道 → 重启网关 → 发真实请求验证兜底链路（openai:default / cheap 链末端）
+- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；界面与手册不符处回改手册
+- [ ] **superagent 对接 P0**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 接 PlanRouter 实测——Custom model API 填网关端点；验证 Router / Worker 能否分别指定模型
+- [ ] **tab 跳回 bug**：复现即修
+- [ ] **发布节奏**：本地 main 领先 origin 19 个提交（用户暂缓 push）；攒到合适节点一起推并考虑打 tag 发版
+- [ ] **P1–P3**（superagent）：Worker 模型档位评估（facet-cheap 够不够）→ 运维走 `/api/*` + admin key 的 policy 草案 → 吸收三条设计原则到维护层
+
+---
+
+## 更新记录
+
+| 日期 | 内容 |
+|---|---|
+| 2026-11-08 | 创建 `docs/api-key-guide.md`：19 家厂家 key 获取使用手册，每步骤留截图位（`docs/images/api-key-guide/`），待用户按指引实操补图 |
+| 2026-11-08 | 注册表新增 LLM7 / OVHcloud（免费匿名档，已实测 keyless）；无候选 503 错误带逐渠道状态与启用指引，配套 e2e 测试 |
+| 2026-11-08 | 控制台 UI 四连改（列表布局、搜索过滤、冷却高亮+指标联动、行内测试+测试模型保存），`3a69154`；NVIDIA NIM 厂家条目 `7af04ed`；种子模板换 NVIDIA `fde1a52` |
+| 2026-11-08 | 零密钥首启（种子配置 + 横幅 + 测试），`bee55c8`；README 双语跟进 `0c983d6` |
+| 2026-11-07 | 建立本进度文档 |
