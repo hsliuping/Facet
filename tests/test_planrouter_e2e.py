@@ -20,10 +20,19 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
+        self.server.hits += 1
         if self.server.mode == "quota":
             data = b'{"error":{"message":"usage limit reached"}}'
             self.send_response(429)
             self.send_header("Retry-After", "7200")
+        elif self.server.mode == "notfound":
+            data = b'{"error":{"message":"model not found"}}'
+            self.send_response(404)
+        elif self.server.mode == "neterror":
+            # Drop the connection without any response bytes: the gateway
+            # sees URLError/OSError, i.e. the transient_network path.
+            self.close_connection = True
+            raise RuntimeError("simulated connection drop")
         else:
             data = json.dumps({
                 "id": "chatcmpl-test", "object": "chat.completion",
@@ -43,6 +52,7 @@ class Upstream(BaseHTTPRequestHandler):
 def start(mode: str):
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
     httpd.mode = mode  # type: ignore[attr-defined]
+    httpd.hits = 0  # type: ignore[attr-defined]
     httpd.daemon_threads = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
@@ -119,6 +129,75 @@ class EndToEndTests(unittest.TestCase):
             stats = json.loads(resp.read())["channels"]
         self.assertEqual(stats["backup-plan"]["total_tokens"], 84)
         self.assertEqual(stats["quota-plan"]["failed_requests"], 1)
+
+    def _repoint_primary(self, upstream) -> None:
+        """Point the quota-plan channel at another fake upstream, hot-reload."""
+        app = self.gateway.app  # type: ignore[attr-defined]
+        raw = json.loads(json.dumps(app.raw))
+        for ch in raw["channels"]:
+            if ch["name"] == "quota-plan":
+                ch["base_url"] = f"http://127.0.0.1:{upstream.server_address[1]}"
+        app.apply_config(raw)
+
+    def test_not_found_cools_long_without_probe(self):
+        notfound = start("notfound")
+        try:
+            self._repoint_primary(notfound)
+            with self._post() as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("X-Routed-Via"), "backup-plan/model-b")
+
+            with urlopen(f"http://127.0.0.1:{self.gateway.server_address[1]}/health",
+                         timeout=5) as resp:
+                cooling = json.loads(resp.read())["channels"]["quota-plan"]
+            self.assertTrue(cooling["cooling"])
+            self.assertAlmostEqual(cooling["cooling_seconds"], 86400, delta=5)
+            self.assertEqual(cooling["reason"], "http_404_not_found")
+
+            # cooling without half_open: the dead model is not probed again
+            with self._post() as resp:
+                self.assertEqual(resp.headers.get("X-Failover-Count"), "0")
+            self.assertEqual(notfound.hits, 1)
+        finally:
+            notfound.shutdown()
+            notfound.server_close()
+
+    def test_network_error_retried_then_failover(self):
+        neterr = start("neterror")
+        try:
+            self._repoint_primary(neterr)
+            with self._post() as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("X-Routed-Via"), "backup-plan/model-b")
+            # default network_retries=1: the same channel is hit twice
+            self.assertEqual(neterr.hits, 2)
+
+            with urlopen(f"http://127.0.0.1:{self.gateway.server_address[1]}/health",
+                         timeout=5) as resp:
+                cooling = json.loads(resp.read())["channels"]["quota-plan"]
+            self.assertTrue(cooling["cooling"])
+            self.assertEqual(cooling["reason"], "transient_network")
+        finally:
+            neterr.shutdown()
+            neterr.server_close()
+
+    def test_network_error_retry_disabled(self):
+        neterr = start("neterror")
+        try:
+            app = self.gateway.app  # type: ignore[attr-defined]
+            raw = json.loads(json.dumps(app.raw))
+            raw["defaults"] = {"network_retries": 0}
+            for ch in raw["channels"]:
+                if ch["name"] == "quota-plan":
+                    ch["base_url"] = f"http://127.0.0.1:{neterr.server_address[1]}"
+            app.apply_config(raw)
+            with self._post() as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.headers.get("X-Routed-Via"), "backup-plan/model-b")
+            self.assertEqual(neterr.hits, 1)
+        finally:
+            neterr.shutdown()
+            neterr.server_close()
 
     def test_no_healthy_channel_returns_503(self):
         # force both channels into a long cooldown through the public state API

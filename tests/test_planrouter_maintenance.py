@@ -156,6 +156,34 @@ class ParseLlmOutputTests(unittest.TestCase):
         self.assertEqual(maint.parse_llm_output(None), {"notes": [], "suggestions": []})
 
 
+class BuildPromptTests(unittest.TestCase):
+    """usage= feeds today's counters into the prompt; None keeps the old shape."""
+
+    @staticmethod
+    def prompt(usage=None) -> dict:
+        text = maint.build_prompt(
+            parse_config(maintenance_config()), {}, {},
+            {"applied": [], "suggestions": []}, usage)
+        return json.loads(text.split("数据：\n", 1)[1])
+
+    def test_usage_none_keeps_old_shape(self):
+        data = self.prompt()
+        self.assertNotIn("usage_today", data)
+        self.assertNotIn("today", data["channels"][0])
+
+    def test_usage_counters_reach_channels_and_top_level(self):
+        usage = {"a": {"requests": 10, "success": 9, "failed": 1, "tokens": 123},
+                 "b": {"requests": 4, "success": 4, "failed": 0, "tokens": 45}}
+        data = self.prompt(usage)
+        self.assertEqual(data["usage_today"], usage)
+        a = next(c for c in data["channels"] if c["name"] == "a")
+        self.assertEqual(a["today"],
+                         {"requests": 10, "success": 9, "failed": 1, "tokens": 123})
+        # a channel without usage data still renders, with zeroed counters
+        claude = next(c for c in data["channels"] if c["name"] == "claude")
+        self.assertEqual(claude["today"]["requests"], 0)
+
+
 class ApplySuggestionTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,

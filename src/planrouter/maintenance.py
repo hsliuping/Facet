@@ -175,14 +175,19 @@ def analyze(config, catalogs: dict, states: dict,
             "alerts": alerts, "patch": patch}
 
 
-def build_prompt(config, catalogs: dict, states: dict, report: dict) -> str:
-    """Compact router summary for the maintenance LLM (free-quota analysis)."""
+def build_prompt(config, catalogs: dict, states: dict, report: dict,
+                 usage: dict | None = None) -> str:
+    """Compact router summary for the maintenance LLM (free-quota analysis).
+
+    `usage` (channel name -> today's counters) is optional; None keeps the
+    prompt free of usage data.
+    """
     channels = []
     for channel in config.channels:
         catalog = catalogs.get(channel.name) or {}
         state = states.get(channel.name) or {}
         changes = catalog.get("changes") or {}
-        channels.append({
+        entry = {
             "name": channel.name,
             "protocol": channel.protocol,
             "priority": channel.priority,
@@ -195,17 +200,25 @@ def build_prompt(config, catalogs: dict, states: dict, report: dict) -> str:
             "cooldown_reason": state.get("reason") or "",
             "consecutive_errors": state.get("consecutive_errors") or 0,
             "last_error": str(state.get("last_error") or "")[:160],
-        })
+        }
+        if usage is not None:
+            day = usage.get(channel.name) or {}
+            entry["today"] = {k: day.get(k, 0)
+                              for k in ("requests", "success", "failed", "tokens")}
+        channels.append(entry)
     summary = {
         "channels": channels,
         "auto_applied": report.get("applied") or [],
         "already_suggested": report.get("suggestions") or [],
     }
+    if usage is not None:
+        summary["usage_today"] = usage
     return (
         "你是一个本地 LLM 网关的运维助手。下面是每个渠道的配置、上游模型目录变化"
         "（added=上游新上线，removed=上游已下架）与运行状态。请分析：\n"
         "1) 模型映射是否需要增删（新模型值得加映射？下架模型是否还有残留引用？）\n"
-        "2) 额度/冷却模式是否提示包月政策或限流政策变化（如新渠道反复 429）\n"
+        "2) 额度/冷却模式是否提示包月政策或限流政策变化（如新渠道反复 429）；"
+        "结合当日用量（失败占比、token 量）判断额度模式\n"
         "3) 其他值得人工注意的风险\n"
         "只输出一个 JSON 对象，不要输出其他文字，格式：\n"
         '{"notes": ["一句话结论", ...], "suggestions": '

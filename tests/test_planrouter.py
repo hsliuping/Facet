@@ -88,6 +88,71 @@ class CooldownTests(unittest.TestCase):
         _, seconds, _ = parse_cooldown(429, {"Retry-After": "999999"}, b"{}", 300, 6, now=1000)
         self.assertEqual(seconds, 6 * 3600)
 
+    def test_not_found_cooldown(self):
+        quota, seconds, reason = parse_cooldown(
+            404, {}, b'{"error":"model not found"}', 300, 168, now=1000,
+            not_found_hours=24,
+        )
+        self.assertTrue(quota)
+        self.assertEqual(seconds, 86400.0)
+        self.assertEqual(reason, "http_404_not_found")
+
+    def test_not_found_cooldown_disabled_keeps_transient(self):
+        quota, seconds, reason = parse_cooldown(
+            404, {}, b'{"error":"model not found"}', 300, 168, now=1000,
+        )
+        self.assertFalse(quota)
+        self.assertEqual(seconds, 30.0)
+        self.assertEqual(reason, "transient_http_404")
+
+    def test_daily_429_cools_until_utc_midnight(self):
+        # 2026-06-01 12:00 UTC -> 12h until the next UTC midnight.
+        now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        quota, seconds, reason = parse_cooldown(
+            429, {}, b'{"error":"free-models-per-day limit reached"}', 300, 168,
+            now=now,
+        )
+        self.assertTrue(quota)
+        self.assertAlmostEqual(seconds, 12 * 3600, delta=5)
+        self.assertEqual(reason, "daily_quota_reset")
+
+    def test_daily_429_chinese_marker(self):
+        now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        quota, _, reason = parse_cooldown(
+            429, {}, '{"error":"每日免费额度已用完"}'.encode("utf-8"), 300, 168,
+            now=now, daily_hours=6,
+        )
+        self.assertTrue(quota)
+        self.assertEqual(reason, "daily_quota_reset")
+
+    def test_daily_429_fixed_hours(self):
+        now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        quota, seconds, _ = parse_cooldown(
+            429, {}, b'{"error":"daily quota exhausted"}', 300, 168,
+            now=now, daily_hours=6,
+        )
+        self.assertTrue(quota)
+        self.assertEqual(seconds, 6 * 3600)
+
+    def test_daily_429_disabled_falls_back_to_default(self):
+        now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        quota, seconds, reason = parse_cooldown(
+            429, {}, b'{"error":"per-day limit reached"}', 300, 168,
+            now=now, daily_hours=-1,
+        )
+        self.assertTrue(quota)
+        self.assertEqual(seconds, 18000.0)
+        self.assertEqual(reason, "http_429")
+
+    def test_daily_429_retry_after_header_wins(self):
+        now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+        quota, seconds, _ = parse_cooldown(
+            429, {"Retry-After": "600"}, b'{"error":"daily quota exhausted"}', 300, 168,
+            now=now,
+        )
+        self.assertTrue(quota)
+        self.assertEqual(seconds, 600.0)
+
 
 class ConfigTests(unittest.TestCase):
     def test_load_and_env_secret(self):
@@ -100,6 +165,22 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg.route(OPENAI, "cheap").channels, ("free", "plan-b"))
         finally:
             os.environ.pop("PLANROUTER_TEST_KEY", None)
+
+    def test_new_default_fields(self):
+        data = json.loads(json.dumps(BASE))
+        cfg = load_config(write_config(data))
+        self.assertEqual(cfg.defaults.not_found_cooldown_hours, 24)
+        self.assertEqual(cfg.defaults.daily_429_cooldown_hours, 0)
+        self.assertEqual(cfg.defaults.network_retries, 1)
+        data["defaults"] = {
+            "not_found_cooldown_hours": 0,
+            "daily_429_cooldown_hours": 12,
+            "network_retries": 0,
+        }
+        cfg = load_config(write_config(data))
+        self.assertEqual(cfg.defaults.not_found_cooldown_hours, 0)
+        self.assertEqual(cfg.defaults.daily_429_cooldown_hours, 12)
+        self.assertEqual(cfg.defaults.network_retries, 0)
 
     def test_mixed_protocols_in_one_route_rejected(self):
         data = json.loads(json.dumps(BASE))

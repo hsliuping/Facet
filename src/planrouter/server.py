@@ -774,8 +774,11 @@ class App:
         maint.refresh_plan_models(self, report)
         maint.refresh_providers(self, report)
 
+        usage = None
+        if self.usage is not None:
+            usage = {c["name"]: c for c in self.usage.series(1)["channels"]}
         reply, model = self._maintenance_llm_call_any(
-            maint.build_prompt(self.config, catalogs, states, report))
+            maint.build_prompt(self.config, catalogs, states, report, usage))
         if reply is not None:
             try:
                 parsed = maint.parse_llm_output(reply)
@@ -1421,46 +1424,53 @@ class App:
         failures: list[dict] = []
         attempt = 0
         for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
-            now = time.time()
-            with self.store.lock:
-                ok, why = self.store.states[channel.name].available(now, channel.rate)
-                if not ok:
-                    failures.append({"channel": channel.name, "reason": why})
-                    continue
-                self.store.states[channel.name].note_attempt(now)
+            # Transient network errors (URLError/timeout/OSError) happen before
+            # any byte reaches the client, so the same channel is retried
+            # immediately (half_open lets the re-check pass). Any other failure
+            # moves on to the next candidate.
+            for try_no in range(self.config.defaults.network_retries + 1):
+                now = time.time()
+                with self.store.lock:
+                    ok, why = self.store.states[channel.name].available(now, channel.rate)
+                    if not ok:
+                        failures.append({"channel": channel.name, "reason": why})
+                        break
+                    self.store.states[channel.name].note_attempt(now)
 
-            handoff = sticky is not None and sticky != channel.name
-            delivery: dict = {"adapter": adapter} if adapter else {}
-            started = time.perf_counter()
-            error = self._forward(h, protocol, channel, wire, body, attempt,
-                                  handoff, audit, delivery)
-            entry = {
-                **log_base, "channel": channel.name, "wire_model": wire,
-                "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
-            }
-            if error is None:
-                if handoff:
-                    with self.store.lock:
-                        self.store.states[channel.name].handoffs += 1
-                self.log_request(**entry, status="ok", http_status=200,
-                                 tokens=delivery.get("tokens", 0))
-                self.store.bind_session(session, channel.name, time.time())
-                return
+                handoff = sticky is not None and sticky != channel.name
+                delivery: dict = {"adapter": adapter} if adapter else {}
+                started = time.perf_counter()
+                error = self._forward(h, protocol, channel, wire, body, attempt,
+                                      handoff, audit, delivery)
+                entry = {
+                    **log_base, "channel": channel.name, "wire_model": wire,
+                    "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                }
+                if error is None:
+                    if handoff:
+                        with self.store.lock:
+                            self.store.states[channel.name].handoffs += 1
+                    self.log_request(**entry, status="ok", http_status=200,
+                                     tokens=delivery.get("tokens", 0))
+                    self.store.bind_session(session, channel.name, time.time())
+                    return
 
-            reason = error[1]
-            entry["reason"] = reason
-            self.log_request(
-                **entry,
-                status="network_error" if reason.startswith("transient_") else "upstream_error",
-                http_status=error[0], cooldown_seconds=round(error[2], 1),
-            )
-            attempt += 1
-            failures.append({
-                "channel": channel.name,
-                "status": error[0],
-                "reason": reason,
-                "cooldown_seconds": round(error[2], 1),
-            })
+                reason = error[1]
+                entry["reason"] = reason
+                self.log_request(
+                    **entry,
+                    status="network_error" if reason.startswith("transient_") else "upstream_error",
+                    http_status=error[0], cooldown_seconds=round(error[2], 1),
+                )
+                attempt += 1
+                failures.append({
+                    "channel": channel.name,
+                    "status": error[0],
+                    "reason": reason,
+                    "cooldown_seconds": round(error[2], 1),
+                })
+                if reason != "transient_network":
+                    break
 
         _json(h, 503, {
             "error": {"message": "all channels failed for this request", "failures": failures},
@@ -1503,6 +1513,8 @@ class App:
             quota, seconds, reason = parse_cooldown(
                 exc.code, exc.headers, raw,
                 channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                daily_hours=self.config.defaults.daily_429_cooldown_hours,
             )
             excerpt = raw.decode("utf-8", "replace")[:300]
             with self.store.lock:

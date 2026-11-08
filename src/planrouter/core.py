@@ -74,6 +74,18 @@ QUOTA_MARKERS = (
     "余额不足", "超出",
 )
 
+# Daily-quota exhaustion phrasings in 429 bodies that carry no Retry-After or
+# *-reset header (OpenRouter "free-models-per-day", ModelScope daily caps, ...).
+DAILY_QUOTA_MARKERS = (
+    "per-day", "per day", "daily", "day limit", "requests per day",
+    "每日", "当天",
+)
+
+
+def _seconds_until_utc_midnight(now: float) -> float:
+    """Seconds until the next UTC 00:00 (when daily quotas usually reset)."""
+    return 86400.0 - (now % 86400.0)
+
 
 def resolve_secret(value: str | None) -> str | None:
     """Resolve `env:VAR` references; a missing variable resolves to None."""
@@ -138,11 +150,18 @@ def parse_cooldown(
     default_minutes: int,
     max_hours: int,
     now: float | None = None,
+    not_found_hours: int = 0,
+    daily_hours: int = 0,
 ) -> tuple[bool, float, str]:
     """Return (is_quota_exhaustion, cooldown_seconds, reason).
 
     Quota exhaustion cools a channel for hours. Transient upstream errors only
     cool it briefly and allow a half-open probe on the next request.
+
+    `not_found_hours` > 0 turns a 404 (removed model) into a long, probe-free
+    cooldown. `daily_hours` handles daily-quota 429s without a reset header:
+    0 cools until the next UTC midnight, >0 a fixed number of hours, -1
+    disables the special case. Explicit Retry-After / *-reset headers win.
     """
     now = time.time() if now is None else now
     text = body.decode("utf-8", "replace")[:4000] if isinstance(body, bytes) else str(body)[:4000]
@@ -151,6 +170,8 @@ def parse_cooldown(
 
     if status < 400:
         return False, 0.0, ""
+    if status == 404 and not_found_hours > 0:
+        return True, min(not_found_hours * 3600.0, max_hours * 3600.0), "http_404_not_found"
     quota_like = status in (429, 529) or (
         bool(marker) and status in (400, 403, 409, 422, 429, 500, 502, 503, 504, 529)
     )
@@ -171,6 +192,12 @@ def parse_cooldown(
                     resets.append(seconds)
     except AttributeError:
         pass
+
+    if status == 429 and not resets and daily_hours != -1 and any(
+            m in low for m in DAILY_QUOTA_MARKERS):
+        seconds = (daily_hours * 3600.0 if daily_hours > 0
+                   else _seconds_until_utc_midnight(now))
+        return True, min(max(seconds, 1.0), max_hours * 3600.0), "daily_quota_reset"
 
     seconds = max(resets) if resets else default_minutes * 60.0
     seconds = min(max(seconds, 1.0), max_hours * 3600.0)
@@ -243,6 +270,14 @@ class Defaults:
     maintenance_model: str = ""
     # 0 disables the free-quota alignment sweep (freealign.py)
     free_align_hours: int = 24
+    # 404 (model removed upstream) cools this many hours with no half-open
+    # probing; 0 keeps the old 30-second transient behaviour.
+    not_found_cooldown_hours: int = 24
+    # Daily-quota 429 without a reset header: 0 cools until the next UTC
+    # midnight, >0 a fixed number of hours, -1 disables the special case.
+    daily_429_cooldown_hours: int = 0
+    # Same-channel retries for transient network errors before failing over.
+    network_retries: int = 1
 
 
 @dataclass(frozen=True)
@@ -425,6 +460,9 @@ def parse_config(raw: dict) -> Config:
         maintenance_hours=int(d.get("maintenance_hours", 24)),
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
         free_align_hours=int(d.get("free_align_hours", 24)),
+        not_found_cooldown_hours=int(d.get("not_found_cooldown_hours", 24)),
+        daily_429_cooldown_hours=int(d.get("daily_429_cooldown_hours", 0)),
+        network_retries=int(d.get("network_retries", 1)),
     )
 
     channels: list[Channel] = []
