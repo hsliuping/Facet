@@ -11,6 +11,7 @@ them there.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -37,16 +38,44 @@ def _read_entries(path: Path) -> list:
     return data["providers"]
 
 
+# Curated URL fields fall back to the builtin entry when the overlay leaves
+# them empty: the daily maintenance task rewrites whole vendor entries and
+# must not erase the 获取 Key / 使用文档 links shipped in the package registry.
+INHERIT_IF_EMPTY = ("keys_url", "docs_url")
+
+
 def _merge(builtin: list, overlay: list) -> list:
-    """Overlay whole vendor entries by id, keeping builtin order first."""
-    merged: dict[str, dict] = {}
+    """Overlay whole vendor entries by id, keeping builtin order first.
+
+    Modes keep the overlay's values, but keys_url / docs_url inherit from
+    the builtin entry when the overlay leaves them empty.
+    """
+    builtin_by_id: dict[str, dict] = {}
     for entry in builtin:
         if isinstance(entry, dict) and entry.get("id"):
-            merged[str(entry["id"])] = entry
+            builtin_by_id[str(entry["id"])] = entry
+    merged: dict[str, dict] = dict(builtin_by_id)
     for entry in overlay:
         if isinstance(entry, dict) and entry.get("id"):
-            merged[str(entry["id"])] = entry
+            base = builtin_by_id.get(str(entry["id"]))
+            merged[str(entry["id"])] = _fill_links(entry, base) if base else entry
     return list(merged.values())
+
+
+def _fill_links(entry: dict, base: dict) -> dict:
+    """Copy an overlay entry, backfilling empty link fields from builtin."""
+    entry = copy.deepcopy(entry)
+    base_modes = base.get("modes") if isinstance(base, dict) else None
+    for key, mode in (entry.get("modes") or {}).items():
+        if not isinstance(mode, dict):
+            continue
+        base_mode = (base_modes or {}).get(key)
+        if not isinstance(base_mode, dict):
+            continue
+        for field in INHERIT_IF_EMPTY:
+            if not mode.get(field):
+                mode[field] = base_mode.get(field) or ""
+    return entry
 
 
 def load_providers(config_dir=None) -> list[dict]:
@@ -110,6 +139,7 @@ def normalize_vendor(entry) -> dict:
         if tier not in ("", "free", "paid"):
             raise ValueError(f"模式 {key} 的档位只能是 空、free 或 paid")
         docs_url = _optional_url(mode, "docs_url", key)
+        keys_url = _optional_url(mode, "keys_url", key)
         models_url = _optional_url(mode, "models_url", key)
         models_raw = mode.get("models")
         if models_raw is None:
@@ -122,6 +152,7 @@ def normalize_vendor(entry) -> dict:
             "protocol": protocol,
             "base_url": base_url,
             "tier": tier,
+            "keys_url": keys_url,
             "docs_url": docs_url,
             "models_url": models_url,
             "models": models,

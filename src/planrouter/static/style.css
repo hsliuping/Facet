@@ -127,6 +127,11 @@ dl dd.wrap { color: #b9cbe0; }
 code { background: rgba(91,157,255,.12); color: #9cc4ff; padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 .card-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 15px; }
 .hint { color: var(--muted); font-size: 12px; margin: 18px 0 0; }
+.provider-links { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.provider-links a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.provider-links a:hover { text-decoration: underline; }
+.provider-links span { color: var(--muted); }
+#provider-links .hint { margin: 4px 0 0; }
 
 .chain { list-style: none; margin: 0 0 14px; padding: 0; }
 .chain li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 7px; background: rgba(255,255,255,.02); }

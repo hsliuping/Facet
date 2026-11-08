@@ -1866,6 +1866,41 @@ function providerTag(c) {
   return label ? `${name} · ${label}` : name;
 }
 
+// Registry links for the channel editor: 获取 Key / 使用文档 of the selected
+// vendor+mode; when no concrete mode is picked fall back to the vendor's first
+// mode that has any link. Null when custom/unknown.
+function providerLinks(pid, modeKey) {
+  const p = (state.providers || []).find((x) => x.id === pid);
+  if (!p) return null;
+  const mode = modeKey ? p.modes?.[modeKey] : null;
+  const src = (mode && (mode.keys_url || mode.docs_url))
+    ? mode
+    : Object.values(p.modes || {}).find((m) => m.keys_url || m.docs_url);
+  if (!src) return null;
+  return { keys_url: src.keys_url || '', docs_url: src.docs_url || '' };
+}
+
+function renderProviderLinks() {
+  const box = $('provider-links');
+  if (!box) return;
+  const f = $('editor-form');
+  const pid = f?.elements.namedItem('provider')?.value || '';
+  const modeKey = f?.elements.namedItem('mode')?.value || '';
+  const links = providerLinks(pid, modeKey);
+  const parts = [];
+  if (links?.keys_url) {
+    parts.push(`<a href="${esc(links.keys_url)}" target="_blank" rel="noreferrer">注册 / 获取 Key ↗</a>`);
+  }
+  if (links?.docs_url) {
+    parts.push(`<a href="${esc(links.docs_url)}" target="_blank" rel="noreferrer">使用文档 ↗</a>`);
+  }
+  box.innerHTML = parts.length
+    ? `<label>官方入口</label><div class="provider-links">${parts.join('<span>·</span>')}</div>
+       <small class="hint">先到厂家平台拿到 API Key，再粘贴到下方密钥栏</small>`
+    : '';
+  box.hidden = !parts.length;
+}
+
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
 // the pair in the draft; switching back to 自定义 clears the pair but keeps
 // whatever base_url the user has already entered.
@@ -1915,6 +1950,7 @@ function openChannelEditor(index) {
         ${field('上游 base_url', 'base_url', c.base_url, { wide: true, placeholder: 'http://127.0.0.1:8080' })}
         ${field('上游路径（留空自动选择）', 'upstream_path', c.upstream_path || '', { wide: true, placeholder: 'base_url 已含 /v3 时留空即可；需要覆盖时填 /chat/completions' })}
         ${field('出站代理（可选）', 'proxy', c.proxy || '', { wide: true, placeholder: '留空直连；国外上游填 http://127.0.0.1:7890，支持 env:HTTP_PROXY' })}
+        <div class="field wide" id="provider-links" hidden></div>
         ${field('密钥（直接粘贴明文 API Key）', 'api_key', c.api_key || '', { wide: true, placeholder: '直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY' })}
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
@@ -1954,9 +1990,11 @@ function openChannelEditor(index) {
   fProvider.onchange = () => {
     fMode.innerHTML = providerModeOptions(fProvider.value, '');
     applyProviderPreset();
+    renderProviderLinks();
   };
-  fMode.onchange = applyProviderPreset;
+  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); };
   renderModelTierRows();
+  renderProviderLinks();
 }
 
 function saveChannelEditor() {
