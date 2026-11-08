@@ -1,3 +1,546 @@
 {
-  "_readme": "Manual additions and corrections, applied AFTER the upstream sync. Keys are '<provider>/<model_id>' exactly like the table entries. Use this file for (a) vendors the upstream sources ignore — e.g. Baidu ERNIE, InternLM, Kunlun — and (b) verified corrections to synced fields. Manual values always win over upstream data and survive weekly re-syncs. Contract: facts only, USD per MTok, absent field == unknown (omit it, never null). Example entry: 'baidu/ernie-5.0': {'provider': 'baidu', 'context_window': 128000, 'tool_call': true, 'cost': {'input_per_mtok': 0.6, 'output_per_mtok': 2.4}} — verify every value against the vendor's official docs/console before committing."
+  "_readme": "Manual annotations, applied after every upstream sync; manual value wins. Keys are <provider>/<model> exactly like the table; keys starting with _ are documentation. quota_tier values: free_forever (standing unlimited free), free_daily (free with daily/rate/credit caps), paid. MANUAL ONLY - the sync never auto-fills it; verify against the vendor docs before adding. Current seed (verified from public vendor docs, 2026-11): openrouter/*:free, groq/*, cloudflare-workers-ai/*, nvidia/*, cohere/*, chutes/*, google/gemini-* -> free_daily.",
+  "chutes/deepseek-v3.2-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/deepseek-v4-flash-0731-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/gemma-4-31b-turbo-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/glm-5.1-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/glm-5.2-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/kimi-k2.6-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/kimi-k3-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/mistral-nemo-instruct-2407-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/nemotron-3-nano-omni-30b-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/qwen3-235b-a22b-thinking-2507-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/qwen3-32b-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/qwen3.5-397b-a17b-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/qwen3.6-27b-tee": {
+    "quota_tier": "free_daily"
+  },
+  "chutes/qwen3.8-27b-tee": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/aisingapore/gemma-sea-lion-v4-27b-it": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/google/gemma-4-26b-a4b-it": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/ibm-granite/granite-4.0-h-micro": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-3.1-8b-instruct-fp8": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-3.2-11b-vision-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-3.2-1b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-3.2-3b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/meta/llama-guard-3-8b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/mistralai/mistral-small-3.1-24b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.7-code": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/openai/gpt-oss-120b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/openai/gpt-oss-20b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/qwen/qwen2.5-coder-32b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/qwen/qwen3-30b-a3b-fp8": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/qwen/qwen3.8-27b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/qwen/qwq-32b": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/zai-org/glm-4.7-flash": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/zai-org/glm-5.2": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/zai-org/glm-5.3": {
+    "quota_tier": "free_daily"
+  },
+  "cloudflare-workers-ai/@cf/zai-org/glm-5.3-flash": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/c4ai-aya-expanse-32b": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/c4ai-aya-expanse-8b": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/c4ai-aya-vision-32b": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/c4ai-aya-vision-8b": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-a-03-2025": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-a-plus-05-2026": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-a-reasoning-08-2025": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-a-translate-08-2025": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-a-vision-07-2025": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-r-08-2024": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-r-plus-08-2024": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-r7b-12-2024": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/command-r7b-arabic-02-2025": {
+    "quota_tier": "free_daily"
+  },
+  "cohere/north-mini-code-1-0": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-computer-use-preview-10-2025": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-flash": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-flash-image": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-flash-lite": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-flash-preview-tts": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-pro": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-2.5-pro-preview-tts": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3-flash-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3-pro-image": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3-pro-image-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-image": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-image-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-lite": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-lite-image": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-lite-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-live-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-flash-tts-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-pro-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.1-pro-preview-customtools": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.5-flash": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.5-flash-lite": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.5-live-translate-preview": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.6-flash": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.7-flash": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-3.8-flash": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-embedding-001": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-embedding-2": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-flash-latest": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-flash-lite-latest": {
+    "quota_tier": "free_daily"
+  },
+  "google/gemini-omni-flash-preview": {
+    "quota_tier": "free_daily"
+  },
+  "groq/allam-2-7b": {
+    "quota_tier": "free_daily"
+  },
+  "groq/compound": {
+    "quota_tier": "free_daily"
+  },
+  "groq/compound-mini": {
+    "quota_tier": "free_daily"
+  },
+  "groq/gpt-oss-safeguard-20b": {
+    "quota_tier": "free_daily"
+  },
+  "groq/llama-3.1-8b-instant": {
+    "quota_tier": "free_daily"
+  },
+  "groq/llama-prompt-guard-2-22m": {
+    "quota_tier": "free_daily"
+  },
+  "groq/llama-prompt-guard-2-86m": {
+    "quota_tier": "free_daily"
+  },
+  "groq/orpheus-arabic-saudi": {
+    "quota_tier": "free_daily"
+  },
+  "groq/orpheus-v1-english": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/active-speaker-detection": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/bevformer": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/bge-m3": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/cosmos-predict1-5b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/cosmos-reason2-8b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/cosmos-transfer1-7b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/cosmos-transfer2_5-2b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/deepseek-v4-pro-0813": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/dracarys-llama-3.1-70b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/esm2-650m": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/esmfold": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/flux.1-dev": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/flux_1-kontext-dev": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/flux_1-schnell": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/flux_2-klein-4b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gemma-2-2b-it": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gemma-3-12b-it": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gemma-3-4b-it": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gemma-3n-e2b-it": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gemma-3n-e4b-it": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gliner-pii": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/google-paligemma": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gpt-oss-120b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/gpt-oss-20b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/inkling": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/kimi-k2-instruct-0905": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/laguna-xs-2.1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-70b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-8b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-nemotron-70b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-nemotron-nano-8b-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-nemotron-nano-vl-8b-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-nemotron-safety-guard-8b-v3": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.1-nemotron-ultra-253b-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.2-11b-vision-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.2-1b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.2-3b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.2-90b-vision-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.3-nemotron-super-49b-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-3_2-nemoretriever-300m-embed-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-4-maverick-17b-128e-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-guard-4-12b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-nemotron-embed-vl-1b-v2": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/llama-nemotron-rerank-vl-1b-v2": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/magistral-small-2506": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/magpie-tts-zeroshot": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/ministral-14b-instruct-2512": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-7b-instruct-v0.3": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-large-3-675b-instruct-2512": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-medium-3-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-medium-3.5-128b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-nemotron": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mistral-small-4-119b-2603": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mixtral-8x22b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/mixtral-8x7b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/muse-glimmer-30b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3-content-safety": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3-nano-30b-a3b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3-super-120b-a12b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3-ultra-550b-a55b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-3.5-lightning-30b-a3b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-content-safety-reasoning-4b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-mini-4b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-nano-12b-v2-vl": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nemotron-voicechat": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nv-embed-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/nv-embedcode-7b-v1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/phi-4-mini-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/phi-4-multimodal-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/qwen-image": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/qwen-image-edit": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/rerank-qa-mistral-4b": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/riva-translate-4b-instruct-v1.1": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/sarvam-m": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/seed-oss-36b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/solar-10.7b-instruct": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/sparsedrive": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/streampetr": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/studiovoice": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/synthetic-video-detector": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/usdcode": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/usdvalidate": {
+    "quota_tier": "free_daily"
+  },
+  "nvidia/whisper-large-v3": {
+    "quota_tier": "free_daily"
+  },
+  "openrouter/gemma-4-26b-a4b-it:free": {
+    "quota_tier": "free_daily"
+  },
+  "openrouter/inkling:free": {
+    "quota_tier": "free_daily"
+  }
 }

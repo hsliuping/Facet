@@ -7,6 +7,10 @@ treated as unknown — free-plan mirrors don't expose real pricing).
 
 from __future__ import annotations
 
+# Standing free tiers a record may carry; anything else (absent included)
+# counts as unknown and can never satisfy the free-tier requirement.
+FREE_TIERS = ("free_forever", "free_daily")
+
 
 def check(
     rec: dict,
@@ -19,11 +23,14 @@ def check(
     json_output: bool = False,
     image_input: bool = False,
     provider: str | None = None,
+    free: bool = False,
 ) -> list[str]:
     """Return the list of failed requirements (empty = the record qualifies)."""
     failed: list[str] = []
     if min_context is not None and (rec.get("context_window") or 0) < min_context:
         failed.append(f"context>={min_context}")
+    if free and rec.get("quota_tier") not in FREE_TIERS:
+        failed.append("free-tier")
     for want, field in ((tool_call, "tool_call"), (reasoning, "reasoning"), (json_output, "structured_output")):
         if want and rec.get(field) is not True:
             failed.append(field)
@@ -66,6 +73,7 @@ def find(
     json_output: bool = False,
     image_input: bool = False,
     provider: str | None = None,
+    free: bool = False,
     limit: int | None = 10,
 ) -> list[tuple[str, dict]]:
     """Filter the table by hard requirements and rank what survives.
@@ -83,6 +91,7 @@ def find(
         json_output=json_output,
         image_input=image_input,
         provider=provider,
+        free=free,
     )
     entries = [(k, r) for k, r in table["models"].items() if not check(r, **kwargs)]
     entries = rank(entries)
