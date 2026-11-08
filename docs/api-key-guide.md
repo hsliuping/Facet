@@ -91,6 +91,8 @@
 
 ### 3.1 Pollinations（免注册、免 Key）
 
+**官方入口**：[接口文档（APIDOCS）](https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md) ｜ [模型清单](https://gen.pollinations.ai/v1/models) ｜ [注册/捐赠获取 Token](https://pollinations.ai)
+
 零密钥首启的默认渠道，**不需要任何 Key**，网关种子配置已自动建好。
 
 - 渠道参数：协议 `openai`，端点 `https://gen.pollinations.ai/v1`，密钥留空；
@@ -102,6 +104,8 @@
 ![Pollinations 渠道](images/api-key-guide/pollinations-01-channel.png)
 
 ### 3.2 NVIDIA NIM（免费层）
+
+**官方入口**：[注册/登录](https://build.nvidia.com) ｜ [API Key 页](https://build.nvidia.com/settings/api-keys) ｜ [接口文档](https://docs.api.nvidia.com/nim/)
 
 当前推荐的免费兜底：免充值、OpenAI 兼容、免费层约 40 RPM。
 
@@ -139,6 +143,8 @@
 
 ### 3.3 OpenRouter（免费池）
 
+**官方入口**：[注册/登录](https://openrouter.ai) ｜ [API Key 页](https://openrouter.ai/settings/keys) ｜ [接口文档](https://openrouter.ai/docs)
+
 聚合几百个上游，`:free` 后缀模型免费。Facet 示例配置的 `free-tier` 渠道就是它。
 
 **步骤**
@@ -169,6 +175,8 @@
 
 ### 3.4 Google AI Studio
 
+**官方入口**：[控制台（Google 账号登录）](https://aistudio.google.com) ｜ [API Key 页](https://aistudio.google.com/apikey) ｜ [接口文档](https://ai.google.dev/gemini-api/docs)
+
 Google 官方免费额度（Gemini 系列），零密钥种子模板内置了禁用占位渠道。
 
 **步骤**
@@ -198,6 +206,8 @@ Google 官方免费额度（Gemini 系列），零密钥种子模板内置了禁
 
 ### 3.5 LLM7（免注册、免 Key）
 
+**官方入口**：[接口文档](https://docs.llm7.io) ｜ [模型清单](https://api.llm7.io/v1/models) ｜ [注册/获取 Token（可选提额）](https://dash.llm7.io)
+
 无需注册即可调用的 OpenAI 兼容免费端点，模型清单以官方 `GET /v1/models` 实时返回为准。
 
 📷 **截图 3-9** ｜ 拍什么：docs.llm7.io 文档首页 ｜ 存为：`llm7-01-docs.png`
@@ -217,6 +227,8 @@ Google 官方免费额度（Gemini 系列），零密钥种子模板内置了禁
 ---
 
 ### 3.6 OVHcloud AI Endpoints（免注册、免 Key）
+
+**官方入口**：[接口文档（Getting started）](https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started) ｜ [模型目录](https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/) ｜ [OVHcloud 账号（仅 token 档需要）](https://www.ovhcloud.com)
 
 OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但完全免费、无需注册，适合兜底而非主力；模型有 3 个月宽限期后下线的机制。
 
@@ -242,6 +254,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.1 火山引擎方舟（豆包）
 
+**官方入口**：[注册/登录火山引擎](https://console.volcengine.com) ｜ [方舟 API Key 管理](https://console.volcengine.com/ark/region:cn-beijing/apiKey) ｜ [方舟接口文档](https://www.volcengine.com/docs/82379)
+
 **步骤**
 
 1. 打开 [console.volcengine.com](https://console.volcengine.com) 注册火山引擎账号并完成**实名认证**；
@@ -265,6 +279,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.2 智谱 GLM
 
+**官方入口**：[注册/登录](https://open.bigmodel.cn) ｜ [API Key 页（按量）](https://bigmodel.cn/usercenter/proj-mgmt/apikeys) ｜ [接口文档](https://docs.bigmodel.cn)
+
 **步骤**
 
 1. 打开 [bigmodel.cn](https://bigmodel.cn) 注册（手机号 + 验证码），新用户有各模型免费 token 额度；
@@ -287,6 +303,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.3 阿里云百炼
 
+**官方入口**：[注册/登录阿里云](https://www.aliyun.com) ｜ [百炼控制台（右上角 API-KEY）](https://bailian.console.aliyun.com) ｜ [接口文档](https://help.aliyun.com/zh/model-studio/)
+
 **步骤**
 
 1. 注册阿里云账号并完成**实名认证**；
@@ -306,6 +324,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.4 腾讯元宝（混元）
 
+**官方入口**：[注册/登录腾讯云](https://console.cloud.tencent.com) ｜ [混元 Key 创建页](https://console.cloud.tencent.com/hunyuan/start) ｜ [接口文档](https://cloud.tencent.com/document/product/1729)
+
 **步骤**
 
 1. 注册腾讯云账号并完成**实名认证**；
@@ -322,6 +342,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.5 百度千帆
 
+**官方入口**：[注册/登录百度智能云](https://console.bce.baidu.com) ｜ [API Key 管理](https://console.bce.baidu.com/iam/#/iam/apikey/list) ｜ [接口文档](https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html)
+
 **步骤**
 
 1. 注册百度智能云账号并完成**实名认证**；
@@ -336,6 +358,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.6 DeepSeek
 
+**官方入口**：[注册/登录开放平台](https://platform.deepseek.com) ｜ [API Key 页](https://platform.deepseek.com/apikeys) ｜ [接口文档](https://api-docs.deepseek.com)
+
 **步骤**
 
 1. 打开 [platform.deepseek.com](https://platform.deepseek.com)，手机号注册；
@@ -349,6 +373,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 4.7 Kimi（Moonshot）
 
+**官方入口**：[注册/登录开放平台](https://platform.moonshot.cn) ｜ [API Key 页](https://platform.moonshot.cn/console/api-keys) ｜ [接口文档](https://platform.moonshot.cn/docs)
+
 **步骤**
 
 1. 打开 [platform.moonshot.cn](https://platform.moonshot.cn)，手机号注册，新用户赠送体验额度；
@@ -359,6 +385,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 **渠道参数**：协议 `openai`，端点 `https://api.moonshot.cn/v1`。
 
 ### 4.8 小米 MiMo
+
+**官方入口**：[MiMo 开放平台（注册 / Key / 文档同站）](https://platform.xiaomimimo.com)
 
 **步骤**
 
@@ -385,6 +413,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 5.1 Anthropic 直连
 
+**官方入口**：[注册/登录 Console](https://console.anthropic.com) ｜ [API Key 页](https://console.anthropic.com/settings/keys) ｜ [接口文档](https://docs.anthropic.com)
+
 **步骤**
 
 1. 打开 [console.anthropic.com](https://console.anthropic.com) 注册（邮箱验证，部分情况要求手机验证）；
@@ -397,6 +427,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 ### 5.2 OpenAI 直连
 
+**官方入口**：[注册/登录 Platform](https://platform.openai.com) ｜ [API Key 页](https://platform.openai.com/api-keys) ｜ [接口文档](https://platform.openai.com/docs)
+
 **步骤**
 
 1. 打开 [platform.openai.com](https://platform.openai.com) 注册；
@@ -408,6 +440,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 **渠道参数**：协议 `openai`，端点 `https://api.openai.com/v1`。国内直连不通时配 `proxy`。
 
 ### 5.3 xAI Grok
+
+**官方入口**：[注册/登录 Console](https://console.x.ai) ｜ [接口文档](https://docs.x.ai)
 
 **步骤**
 
@@ -423,6 +457,8 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 ## 六、订阅聚合类
 
 ### 6.1 OpenCode
+
+**官方入口**：[注册/登录（含订阅与 Key）](https://opencode.ai/console) ｜ [接口文档](https://opencode.ai/docs)
 
 SST/OpenCode 的订阅推理服务（Zen），Go 套餐 $10/月。
 
@@ -442,6 +478,8 @@ SST/OpenCode 的订阅推理服务（Zen），Go 套餐 $10/月。
 | 按量（Models） | `https://opencode.ai/inference/openai/v1` |
 
 ### 6.2 Command Code
+
+**官方入口**：[注册/订阅](https://commandcode.ai) ｜ [API Key 页](https://commandcode.ai/settings/keys)
 
 编码 CLI + Provider API 聚合（Claude / GPT / Gemini / 开源模型，不加价转售）。
 
