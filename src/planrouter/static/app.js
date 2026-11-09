@@ -1496,18 +1496,27 @@ function renderMaintenance() {
   // (model, pass, extraction hits, error) — render it instead of only the
   // summary toast so users can see what was tested and why it failed.
   const probeResults = data.llm_queue_results || [];
-  if (!probeResults.length) {
-    $('maintenance-probe').innerHTML = '';
-  } else {
+  const probeHtml = [];
+  if (probeResults.length) {
     const verifiedAt = data.llm_queue_verified_at
       ? ` · 探测于 ${new Date(data.llm_queue_verified_at * 1000).toLocaleString()}` : '';
-    $('maintenance-probe').innerHTML = '<p class="sub-note">维护模型探测明细 — 考题：从样例文档'
+    probeHtml.push('<p class="sub-note">维护模型探测明细 — 考题：从样例文档'
       + `提取模型清单，须与标准答案完全一致，通过者进入维护队列${verifiedAt}</p>`
       + probeResults.map((r) => maintItem(r.ok ? '通过' : '未通过', r.ok ? 'active' : 'expired',
         `<code>${esc(r.model)}</code> · ${r.channel ? `渠道 <strong>${esc(r.channel)}</strong>` : '网关路由'}`
         + ` · 提取命中 ${r.hit}/${r.expected}`
-        + (r.ok ? '' : ` · ${esc(r.error || '答案不符')}`))).join('');
+        + (r.ok ? '' : ` · ${esc(r.error || '答案不符')}`))).join(''));
   }
+  const deadModels = data.dead_models || [];
+  if (deadModels.length) {
+    probeHtml.push(`<p class="sub-note">已验证失效的免费模型 — 路由会跳过这些映射，`
+      + `标签 ${data.dead_ttl_hours || 6} 小时后自动失效，可点「全量校验免费模型」复验</p>`
+      + deadModels.map((r) => maintItem('失效', 'expired',
+        `<code>${esc(r.model)}</code> · 渠道 <strong>${esc(r.channel)}</strong>`
+        + ` · ${esc(r.reason || '调用失败')}`
+        + (r.marked_at ? ` · 标记于 ${new Date(r.marked_at * 1000).toLocaleString()}` : ''))).join(''));
+  }
+  $('maintenance-probe').innerHTML = probeHtml.join('');
   renderFreeModels(data.free_models);
   const reports = data.reports || [];
   const body = $('maintenance-body');
@@ -1564,6 +1573,24 @@ function maintReportRows(r, withApply) {
 }
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+
+$('btn-verify-free').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '校验中…';
+  try {
+    const r = await api('/api/maintenance/verify-free', { method: 'POST' });
+    toast(`免费模型校验：检查 ${r.checked} 个，可用 ${r.alive}，失效 ${r.dead}，`
+      + `无法判定 ${r.inconclusive}`, r.dead ? 'warn' : 'ok');
+    await loadMaintenance();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
 
 $('btn-test-maintenance-models').onclick = async (e) => {
   const b = e.target;

@@ -414,6 +414,23 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.run_free_align("manual"))
         return True
 
+    if path == "/api/maintenance/verify-free" and method == "POST":
+        # Ping every free-channel mapping; unusable ids get an expiring label
+        # that routing then skips, so dead resources stop consuming quota.
+        # An optional {"channels": [...]} body limits the sweep, so the small
+        # free channels can be checked without waiting on free-tier's 426.
+        channels = None
+        if raw.strip():
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                _json(h, 400, {"error": {"message": "invalid JSON body"}})
+                return True
+            if isinstance(body, dict) and body.get("channels"):
+                channels = [str(name) for name in body["channels"]]
+        _json(h, 200, app.verify_free_models(channels))
+        return True
+
     if path == "/api/maintenance/test-models" and method == "POST":
         # Quiz candidate maintenance models now and rebuild the verified queue.
         _json(h, 200, app.probe_maintenance_models())

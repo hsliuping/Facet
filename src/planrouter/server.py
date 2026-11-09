@@ -1119,6 +1119,20 @@ class App:
         """Quiz candidate maintenance models now and rebuild the queue."""
         return maint.probe_maintenance_models(self)
 
+    def verify_free_models(self, channels=None) -> dict:
+        """Ping every free-channel mapping; dead ids get an expiring label
+        that routing then skips (see maint.dead_model_set).
+
+        channels narrows the sweep to the named free channels, so a huge
+        channel (free-tier carries 426 mappings) cannot block the small ones.
+        """
+        pairs = None
+        if channels:
+            only = set(channels)
+            pairs = [pair for pair in maint.free_mapping_pairs(self)
+                     if pair[0].name in only]
+        return maint.verify_free_models(self, pairs)
+
     def _backup_config(self, tag: str) -> None:
         if not self.config_path or not self.config_path.is_file():
             return
@@ -1210,6 +1224,9 @@ class App:
             "llm_queue": list(pool.get("queue") or []),
             "llm_queue_verified_at": float(pool.get("verified_at") or 0),
             "llm_queue_results": list(pool.get("results") or []),
+            "dead_models": maint.dead_models_payload(self),
+            "dead_ttl_hours": maint.DEAD_LABEL_TTL / 3600,
+            "free_scan_at": float(pool.get("free_scan_at") or 0),
             "free_models": maint.free_models_payload(self),
             "reports": list(reversed(reports)),
             "free_align": {
@@ -1354,6 +1371,30 @@ class App:
                                 "reason": "model_not_in_catalog"})
                 continue
             kept.append((channel, wire))
+        return kept, skipped
+
+    def _apply_dead_filter(self, candidates) -> tuple[list, list]:
+        """Skip channel mappings a verification run proved unusable.
+
+        Labels are per channel+wire and expire (maintenance.DEAD_LABEL_TTL),
+        so an upstream recovery re-admits the model without a config edit.
+        Applies to every routing mode: in internal scheduling the wire model
+        is the channel's own mapping, which is exactly what was verified.
+        When everything on the list is labelled dead the filter backs off —
+        a stale label must not turn a recoverable outage into a hard 503.
+        """
+        dead = maint.dead_model_set(self)
+        if not dead:
+            return candidates, []
+        kept, skipped = [], []
+        for channel, wire in candidates:
+            if (channel.name, wire) in dead:
+                skipped.append({"channel": channel.name, "wire_model": wire,
+                                "reason": "model_marked_dead"})
+                continue
+            kept.append((channel, wire))
+        if candidates and not kept:
+            return candidates, []
         return kept, skipped
 
     def ui_state(self) -> dict:
@@ -1696,6 +1737,8 @@ class App:
         candidates = [(channel, wire) for channel, wire in candidates
                       if channel.name not in blocked]
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        candidates, dead_skipped = self._apply_dead_filter(candidates)
+        catalog_skipped = list(catalog_skipped) + dead_skipped
         if decision.mode == "fallback":
             log_base["model_unverified"] = not self.store.catalog_knows(decision.requested)
             if log_base["model_unverified"]:

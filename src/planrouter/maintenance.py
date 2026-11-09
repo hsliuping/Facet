@@ -929,6 +929,161 @@ def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
     return chosen[:limit]
 
 
+# A verified-dead mapping is skipped by routing only for a while: free quotas
+# reset, upstreams recover from outages, and a model can come back. Expiring
+# the label keeps one bad probe from shrinking the free pool forever.
+DEAD_LABEL_TTL = 6 * 3600
+VERIFY_FREE_PROMPT = "只回复 OK 两个字母，不要输出任何其他内容。"
+_HTTP_STATUS = re.compile(r"HTTP Error (\d{3})")
+
+
+def _dead_key(channel: str, model: str) -> str:
+    return f"{channel}\u0000{model}"
+
+
+def dead_model_labels(app, now: float | None = None) -> dict[str, dict]:
+    """Current dead labels, expired ones pruned; keyed by channel+model."""
+    now = time.time() if now is None else now
+    with app.maintenance_pool_lock:
+        ledger = app.maintenance_pool.setdefault("dead_models", {})
+        expired = [key for key, entry in ledger.items()
+                   if now - float(entry.get("marked_at") or 0) > DEAD_LABEL_TTL]
+        for key in expired:
+            ledger.pop(key, None)
+        return {key: dict(entry) for key, entry in ledger.items()}
+
+
+def dead_model_set(app, now: float | None = None) -> set[tuple[str, str]]:
+    """(channel, model) pairs routing must skip; labels expire on their own."""
+    keys = dead_model_labels(app, now)
+    pairs = set()
+    for key in keys:
+        channel, _, model = key.partition("\u0000")
+        if channel and model:
+            pairs.add((channel, model))
+    return pairs
+
+
+def dead_models_payload(app) -> list[dict]:
+    """Console view: which mappings are currently labelled dead and why."""
+    labels = dead_model_labels(app)
+    rows = [dict(entry) for entry in labels.values()]
+    rows.sort(key=lambda r: (r.get("channel") or "", r.get("model") or ""))
+    return rows
+
+
+def label_dead_model(app, channel_name: str, model: str, ok: bool,
+                     error: str = "") -> None:
+    """Record one verification outcome against a channel's own mapping."""
+    if not channel_name:
+        return
+    with app.maintenance_pool_lock:
+        _label_locked(app.maintenance_pool, channel_name, model, ok, error)
+
+
+def _label_locked(pool: dict, channel_name: str, model: str, ok: bool,
+                  error: str = "") -> None:
+    """Caller already holds maintenance_pool_lock."""
+    ledger = pool.setdefault("dead_models", {})
+    key = _dead_key(channel_name, model)
+    if ok:
+        ledger.pop(key, None)
+        return
+    ledger[key] = {"channel": channel_name, "model": model,
+                   "reason": str(error or "调用失败")[:160],
+                   "marked_at": time.time()}
+
+
+def free_mapping_pairs(app) -> list[tuple[object, str]]:
+    """Every chat model an enabled tier-free channel maps.
+
+    Same free-mapping rules the queue probe uses (_free_mapping_values), but
+    covering all of them instead of the first handful — this is the "is the
+    whole free pool still usable" sweep.
+    """
+    pairs: list[tuple[object, str]] = []
+    for channel in app.config.channels:
+        if not channel.enabled or channel.tier != "free":
+            continue
+        for wire in dict.fromkeys(_free_mapping_values(app, channel)[0]):
+            pairs.append((channel, wire))
+    return pairs
+
+
+def _failure_marks_dead(text: str) -> bool:
+    """Only a definitive "this model id is gone" verdict may kill a mapping.
+
+    Auth errors, quota (402/429), 5xx and timeouts are transient for a free
+    tier — labelling them would shrink the pool on an outage, so they stay
+    inconclusive and the mapping keeps its place.
+    """
+    match = _HTTP_STATUS.search(text or "")
+    if not match:
+        return False
+    status = int(match.group(1))
+    if status == 404:
+        return True
+    return status in (400, 422) and "model" in (text or "").lower()
+
+
+def verify_free_models(app, pairs=None) -> dict:
+    """Ping every mapped model of every enabled free channel.
+
+    A one-word reply proves the mapping answers; the 11-id quiz stays
+    reserved for the maintenance queue because it costs far more per call.
+    Channels run concurrently, models inside one channel strictly serially:
+    a free key answers one request at a time (parallel calls get 429, which
+    would be misread as the pool being dead).
+    """
+    pairs = free_mapping_pairs(app) if pairs is None else pairs
+    groups: dict[str, list[tuple[object, str]]] = {}
+    for channel, wire in pairs:
+        groups.setdefault(channel.name, []).append((channel, wire))
+
+    def run_ping(channel, wire: str) -> dict:
+        row = {"channel": channel.name, "model": wire}
+        try:
+            reply = app._maintenance_direct_call(channel, wire,
+                                                 VERIFY_FREE_PROMPT)
+        except Exception as exc:  # noqa: BLE001 - upstream errors vary
+            text = str(exc)[:160]
+            row.update({"ok": False, "dead": _failure_marks_dead(text),
+                        "error": text})
+        else:
+            ok = bool(str(reply or "").strip())
+            row.update({"ok": ok, "dead": False,
+                        "error": "" if ok else "空回复（无法判定）"})
+        return row
+
+    def run_group(entry: tuple[str, list[tuple[object, str]]]) -> list[dict]:
+        _name, items = entry
+        return [run_ping(channel, wire) for channel, wire in items]
+
+    results: list[dict] = []
+    if groups:
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as executor:
+            for rows in executor.map(run_group, groups.items()):
+                results.extend(rows)
+    results.sort(key=lambda r: (not r["ok"], r["channel"], r["model"]))
+    now = time.time()
+    with app.maintenance_pool_lock:
+        for row in results:
+            if row["ok"] or row["dead"]:
+                _label_locked(app.maintenance_pool, row["channel"], row["model"],
+                              row["ok"], row["error"])
+        app.maintenance_pool["free_scan_at"] = now
+        save_maintenance_pool(app)
+    return {
+        "checked": len(results),
+        "alive": sum(1 for r in results if r["ok"]),
+        "dead": sum(1 for r in results if r["dead"]),
+        "inconclusive": sum(1 for r in results if not r["ok"] and not r["dead"]),
+        "scanned_at": now,
+        "results": results,
+        "dead_models": dead_models_payload(app),
+    }
+
+
 def probe_maintenance_models(app, candidates=None) -> dict:
     """Quiz candidate models with the synthetic doc; perfect scorers queue up.
 
@@ -985,6 +1140,11 @@ def probe_maintenance_models(app, candidates=None) -> dict:
         for row in results:
             tests[row["model"]] = {**row, "tested_at": now}
         _trim_tests(tests)
+        for row in results:
+            if row["channel"] and (row["ok"]
+                                   or _failure_marks_dead(row.get("error") or "")):
+                _label_locked(app.maintenance_pool, row["channel"], row["model"],
+                              row["ok"], row.get("error") or "")
         app.maintenance_pool["verified_at"] = now
         app.maintenance_pool["last_probe_at"] = now
         verified_at = now
@@ -1024,6 +1184,9 @@ def test_single_model(app, channel_name: str, model: str) -> dict:
         tests = app.maintenance_pool.setdefault("tests", {})
         tests[model] = row
         _trim_tests(tests)
+        if row["ok"] or _failure_marks_dead(row.get("error") or ""):
+            _label_locked(app.maintenance_pool, channel.name, model,
+                          row["ok"], row.get("error") or "")
         queue = app.maintenance_pool.setdefault("queue", [])
         if row["ok"] and model not in queue:
             queue.append(model)

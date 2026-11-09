@@ -1093,6 +1093,69 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                     self.app.config.channels[0], "gpt-old", "prompt")
         self.assertIn("free-models-per-day", str(ctx.exception))
 
+    def test_verify_free_models_labels_only_missing_model_errors(self):
+        """Dead = the upstream says the id is gone. Quota/5xx/timeouts stay
+        inconclusive: labelling them would shrink the pool on an outage."""
+        self.make_channel_free("a")
+        channel = self.app.config.channels[0]
+        channel.models.clear()
+        channel.models.update({m: m for m in
+                               ["alive", "gone", "busy", "broken"]})
+
+        def fake(ch, model, prompt):
+            if model == "alive":
+                return "OK"
+            if model == "gone":
+                raise RuntimeError("HTTP Error 404: model not found")
+            if model == "busy":
+                raise RuntimeError("HTTP Error 429: free-models-per-day")
+            raise RuntimeError("HTTP Error 500: upstream exploded")
+
+        self.app._maintenance_direct_call = fake
+        report = maint.verify_free_models(self.app)
+        self.assertEqual((report["checked"], report["alive"], report["dead"],
+                          report["inconclusive"]), (4, 1, 1, 2))
+        self.assertEqual(maint.dead_model_set(self.app), {("a", "gone")})
+
+    def test_dead_label_expires_and_a_passing_ping_clears_it(self):
+        self.make_channel_free("a")
+        channel = self.app.config.channels[0]
+        wire = [w for w in channel.models.values()
+                if w not in (maint.AUTO_MODEL, "*")][0]
+        maint.label_dead_model(self.app, "a", wire, False,
+                               "HTTP Error 404: model not found")
+        self.assertIn(("a", wire), maint.dead_model_set(self.app))
+        # A later verification that succeeds removes the label immediately.
+        self.app._maintenance_direct_call = lambda ch, model, prompt: "OK"
+        maint.verify_free_models(self.app)
+        self.assertEqual(maint.dead_model_labels(self.app), {})
+        # A label nobody rechecks disappears on its own after the TTL.
+        maint.label_dead_model(self.app, "a", wire, False,
+                               "HTTP Error 404: model not found")
+        later = time.time() + maint.DEAD_LABEL_TTL + 1
+        self.assertEqual(maint.dead_model_set(self.app, later), set())
+
+    def test_routing_skips_a_labelled_dead_mapping(self):
+        self.make_channel_free("a")
+        channel = self.app.config.channels[0]
+        maint.label_dead_model(self.app, "a", "gone-model", False,
+                               "HTTP Error 404: model not found")
+        kept, skipped = self.app._apply_dead_filter(
+            [(channel, "gone-model"), (channel, "good-model")])
+        self.assertEqual([wire for _ch, wire in kept], ["good-model"])
+        self.assertEqual(skipped, [{"channel": "a", "wire_model": "gone-model",
+                                    "reason": "model_marked_dead"}])
+
+    def test_routing_keeps_the_list_when_every_mapping_is_labelled(self):
+        """A stale label must not turn a recoverable outage into a hard 503."""
+        self.make_channel_free("a")
+        channel = self.app.config.channels[0]
+        maint.label_dead_model(self.app, "a", "gone-model", False,
+                               "HTTP Error 404: model not found")
+        kept, skipped = self.app._apply_dead_filter([(channel, "gone-model")])
+        self.assertEqual(kept, [(channel, "gone-model")])
+        self.assertEqual(skipped, [])
+
     def make_channel_free(self, name: str) -> None:
         """Channel is frozen; rebuild the config with one tier="free" channel."""
         self.app.config = dataclasses.replace(
