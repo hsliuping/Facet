@@ -31,3 +31,5 @@ router.example.json
 
 # PlanRouter container data (bind-mounted into /data)
 data/
+# Compose secrets: real gateway/admin keys (see compose.yaml)
+.env

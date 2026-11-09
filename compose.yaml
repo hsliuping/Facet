@@ -36,6 +36,16 @@ services:
       # Override via a .env file next to this compose.yaml for real use.
       ROUTER_API_KEY: "${ROUTER_API_KEY:-test-router-key}"
       ROUTER_ADMIN_KEY: "${ROUTER_ADMIN_KEY:-test-admin-key}"
+      # Seed the mock smoke-test config on first run so this compose stack (with
+      # its fake upstream) works out of the box. For real use: stop the stack,
+      # delete ./data/router.json and remove this line — the next start seeds
+      # the vendor-preset channels instead.
+      ROUTER_SEED: "example"
+      # IAM credentials for `facet-ark-quota` (Ark management plane), used by
+      # the free-align sweep of the 火山引擎免费 channel. Empty by default:
+      # without them the sweep alerts and keeps the existing mapping.
+      VOLC_ACCESSKEY: "${VOLC_ACCESSKEY:-}"
+      VOLC_SECRETKEY: "${VOLC_SECRETKEY:-}"
     volumes:
       # Bind mount: config, state, usage and the audit log are visible on the
       # host at ./data/. Edit ./data/router.json and POST /api/reload (or use

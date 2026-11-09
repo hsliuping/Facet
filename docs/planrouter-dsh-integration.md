@@ -29,10 +29,15 @@ DSH（agent 客户端）
 |---|---|---|
 | Node | DSH engines 标注 ≥24.9.0；Node 22.18.0 **实测可用**（仅警告不阻断） | v22.18.0 |
 | npm | 能访问 registry.npmjs.org（镜像未同步该包） | npm 10+ |
-| PlanRouter | 网关已启动且加载了 `listen.api_key` | http://127.0.0.1:8787 |
+| PlanRouter | 网关已启动且加载了 `listen.api_key` | http://127.0.0.1:8787（容器栈，端口发布到宿主） |
 | 环境变量 | `ROUTER_API_KEY` 已设置，DSH 与网关共用 | Windows User 级 |
 
 网关侧还有两处必须先检查的配置（详见第 6 节）：free-tier 渠道的 `auto` 映射不能是模板占位符；`defaults.max_failover` 建议至少 5。
+
+**容器化运行态适配（2026-11-09 起）**：网关已迁移至容器栈（见
+[planrouter-container-trial.md](planrouter-container-trial.md)）。DSH 跑在宿主，patch 里的
+`baseURL: http://127.0.0.1:8787/v1` 指向宿主发布端口，**无需改动**；密钥同源——DSH 读
+User 级 `ROUTER_API_KEY`，容器 `.env` 的值即从它复制，两边一致。
 
 ## 3. 安装 DSH
 
@@ -172,7 +177,11 @@ Start-Process -FilePath "dsh.cmd" -ArgumentList "--profile","planrouter-web" -Wi
 | Web UI 模型探测 | 直接列出 facet-auto / facet-cheap（依赖网关 `GET /v1/models` 返回 `{"data": [...]}` 格式，PlanRouter 已实现） |
 | Web UI 会话 | 正常走通，响应带 `X-Routed-Via` 等路由头可核对渠道 |
 
-线 A 的冷却映射与 failover 逻辑在真实 Agent 客户端下工作正常。
+线 A 的冷却映射与 failover 逻辑在真实 Agent 客户端上工作正常。
+
+**验证预期更新（同日晚，渠道处置后）**：codex-plan / glm-plan 已临时禁用，现再跑同样的
+验证，预期**首跳直达 free-tier（`X-Failover-Count: 0`）**，不再复现 502 → 401 冷却链；
+核对方法不变——审计日志现位于仓库 `data/requests.jsonl`（容器挂载），响应头 `X-Routed-Via`。
 
 ## 6. 网关侧配套清单
 
@@ -201,3 +210,23 @@ DSH 这边一份 patch 就够了，但网关侧有几处必须对齐，否则请
 ## 8. 与 super_agent 的关系
 
 见 [planrouter-superagent-integration.md](planrouter-superagent-integration.md)：DSH 是底座 runtime，super_agent 是装在它之上的仓库运维应用——部署 super_agent 的第一步就是 `npm install -g @deepseek-ai/dsh`。本文接好底座后，super_agent 的 Custom model API 配置与本文同源：模型层面同样走 `facet-auto` / `facet-cheap`，Router 用 cheap 链做分派、Worker 用 default 链干活的理想分配届时再实测（调研文档 P0 项）。
+
+---
+
+## 9. 现状速查（2026-11-09）
+
+| 项 | 状态 |
+|---|---|
+| P0 前半（DSH 底座接入） | **已完成并全链路实测**（本文档第 3–6 节） |
+| 本机就绪度 | DSH 0.2.2-rc.1 已装；`planrouter` / `planrouter-web` profile 与 patch 配置已就位；网关（容器栈）`/health` 200、6 渠道可用——随时可用 |
+| P0 后半 | super_agent 原型未部署；Router / Worker 能否分别指定模型（Router 走 `facet-cheap`、Worker 走强模型）待实测 |
+| P1–P3 | 未启动（见[调研文档行动清单](planrouter-superagent-integration.md)） |
+
+一行验证（预期见 5.3 更新注）：
+
+```bash
+dsh --profile planrouter "只输出 PLANROUTER_OK 五个字母，不要做任何别的事"
+```
+
+输出 `PLANROUTER_OK` 即通。通了你就可以把 DSH 当日常工具指向网关开始试用——这正是
+「正式试用 → 打 tag 发版」的试用负载之一（见 [PROGRESS.md](PROGRESS.md)）。
