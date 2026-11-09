@@ -959,7 +959,11 @@ def probe_maintenance_models(app, candidates=None) -> dict:
                             "error": str(exc)[:160]})
             return row
 
-        def run_group(models: list[str]) -> list[dict]:
+        def run_group(entry: tuple[str, list[str]]) -> list[dict]:
+            # The channel name must travel with the group: reading the loop
+            # variable here would label every group with the last candidate's
+            # channel, because the pool runs after the grouping loop ends.
+            channel_name, models = entry
             return [run_quiz(model, channel_name) for model in models]
 
         groups: dict[str, list[str]] = {}
@@ -969,7 +973,7 @@ def probe_maintenance_models(app, candidates=None) -> dict:
             groups.setdefault(channel_name, []).append(model)
 
         with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as executor:
-            for rows in executor.map(run_group, groups.values()):
+            for rows in executor.map(run_group, groups.items()):
                 results.extend(rows)
     results.sort(key=lambda r: (not r["ok"], r["model"]))
     passing = [r["model"] for r in results if r["ok"]]

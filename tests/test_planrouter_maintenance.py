@@ -1062,6 +1062,24 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(report["queue"], sorted(report["queue"]))
         self.assertEqual(peak, {"a": 1, "b": 1})
 
+    def test_probe_labels_each_row_with_its_own_channel(self):
+        """Rows carry the model's owning channel, not the last candidate's.
+
+        Groups run concurrently after the grouping loop, so a shared loop
+        variable would stamp every row with the final group's name.
+        """
+        self.make_channel_free("a")
+        self.make_channel_free("b")
+        self.app.config.channels[0].models.clear()
+        self.app.config.channels[0].models.update({"m1": "a-model"})
+        self.app.config.channels[1].models.clear()
+        self.app.config.channels[1].models.update({"m1": "b-model"})
+        self.app._maintenance_llm_call = lambda model, prompt: self.quiz_reply()
+        report = maint.probe_maintenance_models(
+            self.app, candidates=["a-model", "b-model"])
+        by_model = {row["model"]: row["channel"] for row in report["results"]}
+        self.assertEqual(by_model, {"a-model": "a", "b-model": "b"})
+
     def test_direct_call_surfaces_upstream_429_body(self):
         """The report must show why, e.g. OpenRouter free-models-per-day."""
         err = urllib.error.HTTPError(
