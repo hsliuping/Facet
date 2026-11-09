@@ -2198,9 +2198,11 @@ function renderModelTierRows() {
     names.push(k);
   });
   if (!names.length) {
+    refreshTestModelList(names);
     box.innerHTML = '<small class="hint">模型映射中还没有可标注的模型。</small>';
     return;
   }
+  refreshTestModelList(names);
   box.innerHTML = names.map((m) => {
     const cur = prev[m] ?? saved[m] ?? '';
     return `<div class="tier-row"><code>${esc(m)}</code>
@@ -2210,6 +2212,14 @@ function renderModelTierRows() {
         <option value="paid" ${cur === 'paid' ? 'selected' : ''}>收费</option>
       </select></div>`;
   }).join('');
+}
+
+// Test-model input doubles as a dropdown: options mirror the mapping
+// textarea's exposed names; free typing is still allowed.
+function refreshTestModelList(names) {
+  const dl = $('editor-test-model-list');
+  if (!dl) return;
+  dl.innerHTML = names.map((m) => `<option value="${esc(m)}"></option>`).join('');
 }
 
 function providerOptions(selected) {
@@ -2664,13 +2674,14 @@ function openChannelEditor(index) {
         </div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
-          <small class="hint">按密钥请求上游 /models；火山引擎（按量付费）配置 IAM AK/SK 后改为从方舟管理面拉取有免费额度的模型清单</small>
+          <small class="hint">按密钥请求上游 /models；火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名写入映射</small>
         </div>
         <div id="catalog-list" class="channel-picker" hidden></div>
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
       </div>
       <div class="test-row">
-        <input id="editor-test-model" placeholder="测试模型（留空自动选择，随渠道保存）" value="${esc(c.test_model || '')}">
+        <input id="editor-test-model" list="editor-test-model-list" placeholder="测试模型（可下拉选映射中的模型或手动填写，留空自动选择）" value="${esc(c.test_model || '')}">
+        <datalist id="editor-test-model-list"></datalist>
         <button type="button" class="btn ghost" id="editor-test">测试连接</button>
       </div>
       <div id="test-result" class="test-result" hidden></div>
