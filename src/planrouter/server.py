@@ -1215,7 +1215,12 @@ class App:
             now = time.time()
             snap = self.store.snapshot(now)["channels"]
             blocked = self.blocked_channels()
-            available = [n for n, s in snap.items() if not s["cooling"] and n not in blocked]
+            # Disabled channels cannot serve requests, so they must not
+            # count as available; the per-channel detail below still
+            # reports their (stale) stats for diagnostics.
+            enabled = {c.name for c in self.config.channels if c.enabled}
+            available = [n for n, s in snap.items()
+                         if not s["cooling"] and n not in blocked and n in enabled]
             _json(h, 200 if available else 503, {
                 "status": "ok" if available else "all_channels_cooling",
                 "available": available,

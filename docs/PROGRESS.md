@@ -31,6 +31,8 @@
 - [x] free-tier 渠道模型映射按每日排程对齐（`ac1a63c`）
 - [x] NVIDIA NIM 渠道启用并真实请求验证：`nvapi-` key 到位，auto 链兜底实测 3/3 成功（约 1.8 万 tokens）
 - [x] 网关加固（线 A）：冷却、重试与维护上下文（`3406336`）——已由 DSH 真实流量验证故障转移链（502 / 401 冷却后自动落到健康渠道）
+- [x] 死渠道诊断与处置：codex-plan / claude-plan 根因是本地桥（8080/8081）未运行且口令未设（密钥手册 6.3 本就要求「先跑桥再启用」）、glm-plan 根因是 `GLM_PLAN_KEY` 未设置（网关发出请求无 Authorization → 401），三渠道临时禁用；魔搭免费 key 与模型映射确认有效（纯上游间歇不稳：120s 挂起 / 400 / 空流），保留启用并加渠道级 `timeout: 30` 封顶挂起成本；重启后实测 auto 链首跳直达 free-tier（`X-Failover-Count: 0`），魔搭非流式 3.4s / 流式 2.6s 均 200
+- [x] 修复 `/health`：available 列表此前只滤冷却与订阅过期、不滤 disabled，禁用渠道被误报为可用；现按 `channel.enabled` 过滤（per-channel 明细仍保留诊断状态），e2e 新增用例：禁用渠道不出现在 available、路由零跳直达健康渠道
 
 ### 网关层 · 自我维护
 
@@ -65,12 +67,12 @@
 | 事项 | 状态 |
 |---|---|
 | free-tier 渠道 | 已恢复主力服务（46/55 成功、约 24 万 tokens）；免费额度耗尽时按上游重置头自动冷却 |
-| 死渠道处置 | codex-plan（本地桥 8081 未启动）、glm-plan（401：上游称未收到 Authorization）、魔搭免费（连接中止）持续失败，拖累 auto 链首跳；短期禁用省跳数 vs 修根因，待定方向 |
+| 桥接渠道恢复 | codex-plan / claude-plan / glm-plan 已临时禁用（本地桥未运行 / GLM key 未设）；跑起 8080/8081 桥或提供智谱 key（User 级 `GLM_PLAN_KEY`）后把渠道改回 enabled 即恢复 |
 | 观察项：控制台自动刷新偶发跳回渠道配置 tab | 等用户确认日常复现，复现则修 |
 
 ## 接下来
 
-- [ ] **死渠道处置**：启动 codex-plan 本地桥（8081）/ 排查 glm-plan 鉴权头丢失（401）/ 魔搭免费连接中止；决策前可在控制台临时禁用，省掉 auto 链每请求 1–2 跳白撞
+- [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册
 - [ ] **superagent 对接 P0 后半**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 底座已接通并实测（样例见 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)）；剩验证 super_agent 原型 Router / Worker 能否分别指定模型
 - [ ] **tab 跳回 bug**：复现即修
@@ -101,6 +103,8 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-09 | 修复 `/health`：available 列表补 disabled 过滤（此前禁用渠道被误报为可用），per-channel 明细保留诊断信息；e2e 新增 `test_disabled_channel_hidden_from_health`（禁用渠道不进 available + 路由零跳断言），全量测试套件通过，线上网关重启实测：available 仅剩 6 个真实可用渠道 |
+| 2026-11-09 | 死渠道诊断与处置：glm-plan 401 根因是 `GLM_PLAN_KEY` 未设置（网关请求不带 Authorization）；codex/claude 桥未运行；魔搭免费 key/映射有效但上游间歇不稳（120s 挂起、400、空流），加渠道级 `timeout: 30`；前三者临时禁用 + 网关重启，实测 facet-auto 首跳 free-tier（failover 0）、魔搭非流式/流式均 200（3.4s / 2.6s） |
 | 2026-11-09 | 免费池与维护迭代：免费模型总览与串行探测（`aacbf5b`）、维护刷新 429 错误体透出（`09072ad`）、free-tier 映射按日对齐（`ac1a63c`）、魔搭 ModelScope 厂家注册（`948c306`）；NVIDIA NIM 渠道启用并实测；**线 A** 网关加固（`3406336`）；**线 B** DSH 接入全链路验证（headless e2e + Web UI，改动在仓库外），新增实操文档 `planrouter-dsh-integration.md`；渠道健康现状刷新：free-tier 恢复主力，codex-plan / glm-plan / 魔搭免费待处置 |
 | 2026-11-08 | 渠道厂家强制（`cd527d1`，注册表扩至 20 家）；手册新增 Z.AI 小节（`c3f174d`）；「使用文档」页内浮窗（本地手册渲染 + 列表编号/截图水合渲染修复，含 NVIDIA 截图 4 张）；记录轻量团队版产品方向（见「产品方向 · 后续发展」） |
 | 2026-11-08 | 创建 `docs/api-key-guide.md`：19 家厂家 key 获取使用手册，每步骤留截图位（`docs/images/api-key-guide/`），待用户按指引实操补图 |

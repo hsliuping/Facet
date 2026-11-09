@@ -211,6 +211,29 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 503)
         self.assertIn("no healthy channel", ctx.exception.read().decode())
 
+    def test_disabled_channel_hidden_from_health(self):
+        # /health's headline list must only name channels that can serve;
+        # a disabled one is neither cooling nor blocked, so it would show
+        # up without the explicit enabled filter.
+        app = self.gateway.app  # type: ignore[attr-defined]
+        raw = json.loads(json.dumps(app.raw))
+        for ch in raw["channels"]:
+            if ch["name"] == "quota-plan":
+                ch["enabled"] = False
+        app.apply_config(raw)
+
+        with urlopen(f"http://127.0.0.1:{self.gateway.server_address[1]}/health", timeout=5) as resp:
+            health = json.loads(resp.read())
+        self.assertNotIn("quota-plan", health["available"])
+        self.assertIn("backup-plan", health["available"])
+        self.assertEqual(health["status"], "ok")
+
+        # routing skips the disabled channel entirely: no wasted failover hop
+        with self._post() as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("X-Failover-Count"), "0")
+            self.assertEqual(resp.headers.get("X-Routed-Via"), "backup-plan/model-b")
+
     def test_disabled_route_reports_channel_status(self):
         # Seeded templates ship disabled: the 503 must name the channel and
         # point at the console instead of a bare "no healthy channel".
