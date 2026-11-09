@@ -4,7 +4,7 @@
 > 对应项或移入「已完成」，并在文末「更新记录」追加一行。本文件是唯一的进度
 > 基准，功能口径以 [README.zh-CN.md](../README.zh-CN.md) 为准。
 
-**最后更新**：2026-11-08
+**最后更新**：2026-11-09
 
 ---
 
@@ -28,14 +28,18 @@
 - [x] 渠道出站代理：转发流量与维护直达调用都走 `proxy`（`0d9086a`）
 - [x] 统一 CLI：`facet serve`（`planrouter` 为过渡别名）（`3dba6b1`）
 - [x] 渠道厂家强制：渠道必须挂厂家（「没有厂家就没有渠道」）；内置注册表扩至 20 家（openrouter / google / zai），种子渠道与编辑器全量对齐，旧控制台标签页保存不再抹掉 provider/mode（`cd527d1`）
+- [x] free-tier 渠道模型映射按每日排程对齐（`ac1a63c`）
+- [x] NVIDIA NIM 渠道启用并真实请求验证：`nvapi-` key 到位，auto 链兜底实测 3/3 成功（约 1.8 万 tokens）
+- [x] 网关加固（线 A）：冷却、重试与维护上下文（`3406336`）——已由 DSH 真实流量验证故障转移链（502 / 401 冷却后自动落到健康渠道）
 
 ### 网关层 · 自我维护
 
 - [x] 每日自我维护：刷新目录 → 自动应用可确认修复（带备份）→ 建议 / 告警分桶（`4e2aa9a`）
 - [x] 厂家注册表两层：内置 `providers.json` + 用户覆盖层；套餐模型与厂家清单每日刷新（`0a00d74`）
-- [x] 内置厂家含：百炼、混元、千帆、xAI Grok（`f5a4a5d`）、NVIDIA NIM（`7af04ed`）
+- [x] 内置厂家含：百炼、混元、千帆、xAI Grok（`f5a4a5d`）、NVIDIA NIM（`7af04ed`）、魔搭 ModelScope API-Inference 免费档（`948c306`）
 - [x] 免费池：仅免费渠道捐候选，测验通过进持久化队列，干活前复验（`9582ebc`、`9e456d4`）
 - [x] 维护调用走直达不走路由；维护日志 `maintenance.jsonl` 持久化 + 控制台查看器（`0f8a132`）
+- [x] 免费模型总览、测验过滤与串行探测（`aacbf5b`）；维护刷新调用透出上游 429 错误体（`09072ad`）
 
 ### 控制台 UI
 
@@ -50,7 +54,7 @@
 
 - [x] 零密钥首启：无 `router.json` 时自动播种（匿名 Pollinations + NVIDIA NIM 等禁用模板）并直接启动（`bee55c8`）
 - [x] README 双语：两层定位、网关运维、免费池、非目标（`9a1d36e`、`f62139c`、`0c983d6`）
-- [x] `docs/`：竞品分析、DeepSeek superagent 对接分析（含 P0–P3 行动清单）
+- [x] `docs/`：竞品分析、DeepSeek superagent 对接分析（含 P0–P3 行动清单）、DSH 接入实操样例 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)（provider patch 配置、profile 搭建、启动验证、踩坑清单，均来自实测）
 - [x] 渠道密钥获取手册 `docs/api-key-guide.md`：20 家厂家 key 获取指引 + 截图位（NVIDIA 已补 4 张，其余待补）
 - [x] 注册表新增 LLM7 / OVHcloud 免费匿名条目；无候选 503 改为逐渠道状态（disabled/cooling…）+ 启用指引
 
@@ -60,17 +64,17 @@
 
 | 事项 | 状态 |
 |---|---|
-| NVIDIA NIM 兜底渠道 | 已接入配置（priority 50，禁用）+ 厂家条目；等用户提供 `nvapi-` key 后启用并真实请求验证 |
-| free-tier 渠道 | OpenRouter 每日免费额度 429 冷却中，2026-11-13 重置 |
+| free-tier 渠道 | 已恢复主力服务（46/55 成功、约 24 万 tokens）；免费额度耗尽时按上游重置头自动冷却 |
+| 死渠道处置 | codex-plan（本地桥 8081 未启动）、glm-plan（401：上游称未收到 Authorization）、魔搭免费（连接中止）持续失败，拖累 auto 链首跳；短期禁用省跳数 vs 修根因，待定方向 |
 | 观察项：控制台自动刷新偶发跳回渠道配置 tab | 等用户确认日常复现，复现则修 |
 
 ## 接下来
 
-- [ ] **NVIDIA key 到位** → 启用 `nvidia-nim` 渠道 → 重启网关 → 发真实请求验证兜底链路（openai:default / cheap 链末端）
+- [ ] **死渠道处置**：启动 codex-plan 本地桥（8081）/ 排查 glm-plan 鉴权头丢失（401）/ 魔搭免费连接中止；决策前可在控制台临时禁用，省掉 auto 链每请求 1–2 跳白撞
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册
-- [ ] **superagent 对接 P0**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 接 PlanRouter 实测——Custom model API 填网关端点；验证 Router / Worker 能否分别指定模型
+- [ ] **superagent 对接 P0 后半**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 底座已接通并实测（样例见 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)）；剩验证 super_agent 原型 Router / Worker 能否分别指定模型
 - [ ] **tab 跳回 bug**：复现即修
-- [ ] **发布节奏**：本地 main 领先 origin 19 个提交（用户暂缓 push）；攒到合适节点一起推并考虑打 tag 发版
+- [ ] **发布节奏**：本地 main 领先 origin 35 个提交（用户暂缓 push）；攒到合适节点一起推并考虑打 tag 发版
 - [ ] **P1–P3**（superagent）：Worker 模型档位评估（facet-cheap 够不够）→ 运维走 `/api/*` + admin key 的 policy 草案 → 吸收三条设计原则到维护层
 
 ---
@@ -97,6 +101,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-09 | 免费池与维护迭代：免费模型总览与串行探测（`aacbf5b`）、维护刷新 429 错误体透出（`09072ad`）、free-tier 映射按日对齐（`ac1a63c`）、魔搭 ModelScope 厂家注册（`948c306`）；NVIDIA NIM 渠道启用并实测；**线 A** 网关加固（`3406336`）；**线 B** DSH 接入全链路验证（headless e2e + Web UI，改动在仓库外），新增实操文档 `planrouter-dsh-integration.md`；渠道健康现状刷新：free-tier 恢复主力，codex-plan / glm-plan / 魔搭免费待处置 |
 | 2026-11-08 | 渠道厂家强制（`cd527d1`，注册表扩至 20 家）；手册新增 Z.AI 小节（`c3f174d`）；「使用文档」页内浮窗（本地手册渲染 + 列表编号/截图水合渲染修复，含 NVIDIA 截图 4 张）；记录轻量团队版产品方向（见「产品方向 · 后续发展」） |
 | 2026-11-08 | 创建 `docs/api-key-guide.md`：19 家厂家 key 获取使用手册，每步骤留截图位（`docs/images/api-key-guide/`），待用户按指引实操补图 |
 | 2026-11-08 | 注册表新增 LLM7 / OVHcloud（免费匿名档，已实测 keyless）；无候选 503 错误带逐渠道状态与启用指引，配套 e2e 测试 |
