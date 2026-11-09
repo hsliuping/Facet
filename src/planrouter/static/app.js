@@ -341,8 +341,8 @@ function channelCard(c, i) {
   const ptag = providerTag(c);
   return `<article class="card row-card${cooling ? ' cooling' : ''}">
     <div class="row-head">
+      <h3 class="ch-name ${c.enabled === false ? 'off' : esc(c.tier === 'free' ? 'free' : c.tier === 'paid' ? 'paid' : '')}">${esc(c.name)}</h3>
       <span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span>
-      <h3>${esc(c.name)}</h3>
       ${channelTierBadge(c.name, c.tier)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
       ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>` : ''}

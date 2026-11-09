@@ -135,6 +135,10 @@ body {
 .list .card:hover { transform: none; }
 .row-card .row-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
 .row-card .row-head h3 { margin: 0; font-size: 14.5px; word-break: break-all; }
+.row-card .row-head h3.ch-name { font-weight: 700; }
+.row-card .row-head h3.ch-name.free { color: var(--ok); }
+.row-card .row-head h3.ch-name.paid { color: var(--accent); }
+.row-card .row-head h3.ch-name.off { color: var(--muted); }
 .row-card .row-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .list dl { display: flex; flex-wrap: wrap; }
 .list dl > div { display: inline-flex; align-items: baseline; gap: 6px; border-bottom: none; padding: 2px 18px 2px 0; }
