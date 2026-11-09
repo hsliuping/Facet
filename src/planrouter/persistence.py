@@ -31,8 +31,12 @@ def capture(store, now: float | None = None) -> dict:
     rr_cursor = {
         key: int(offset) for key, offset in getattr(store, "rr_cursor", {}).items()
     }
+    scores = {
+        key: [float(value[0]), float(value[1])]
+        for key, value in getattr(store, "scores", {}).items()
+    }
     return {"saved_at": now, "channels": channels, "catalogs": catalogs,
-            "rr_cursor": rr_cursor}
+            "rr_cursor": rr_cursor, "scores": scores}
 
 
 def restore(store, data: dict, now: float | None = None) -> int:
@@ -79,6 +83,22 @@ def restore(store, data: dict, now: float | None = None) -> int:
             if isinstance(key, str) and isinstance(offset, int):
                 restored_cursor[key] = offset
         store.rr_cursor = restored_cursor
+    if hasattr(store, "scores"):
+        # Drop scores of channels that no longer exist (deleted or renamed).
+        restored_scores = {}
+        for key, raw in (data.get("scores") or {}).items():
+            if not isinstance(key, str) or key.split("|", 1)[0] not in store.states:
+                continue
+            if isinstance(raw, list) and len(raw) == 2:
+                try:
+                    restored_scores[key] = [float(raw[0]), float(raw[1])]
+                except (TypeError, ValueError):
+                    continue
+            elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                # Legacy snapshot kept a bare running total with no timestamp:
+                # treat it as just-recorded so upgrading never wipes history.
+                restored_scores[key] = [float(raw), float(now)]
+        store.scores = restored_scores
     return restored
 
 
@@ -137,4 +157,5 @@ class StatePersistence:
     def _fingerprint(snapshot: dict) -> dict:
         return {"channels": snapshot.get("channels", {}),
                 "catalogs": snapshot.get("catalogs", {}),
-                "rr_cursor": snapshot.get("rr_cursor", {})}
+                "rr_cursor": snapshot.get("rr_cursor", {}),
+                "scores": snapshot.get("scores", {})}

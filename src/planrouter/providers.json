@@ -20,6 +20,7 @@
           "base_url": "https://ark.cn-beijing.volces.com/api/v3",
           "docs_url": "https://www.volcengine.com/docs/82379",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
+          "free_quota_cmd": ["facet-ark-quota", "--output", "json"],
           "tier": "paid",
           "models": []
         }

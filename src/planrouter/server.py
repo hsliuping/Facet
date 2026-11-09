@@ -162,10 +162,11 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
                 channel.pop("api_key", None)
         # Vendor bookkeeping is newer than some open console tabs: a stale
         # editor omits provider/mode entirely and would otherwise erase them
-        # one channel per save. Absent keys inherit; explicit values win.
+        # one channel per save. Absent or empty values inherit; explicit
+        # values win — a bound vendor is replaced, never silently cleared.
         prev = previous.get(channel.get("name"), {})
         for field in ("provider", "mode"):
-            if field not in channel and prev.get(field):
+            if not channel.get(field) and prev.get(field):
                 channel[field] = prev[field]
     listen = merged.setdefault("listen", {})
     for field in ("api_key", "admin_key"):
@@ -575,6 +576,7 @@ class App:
     def apply_config(self, raw: dict, persist: bool = True) -> Config:
         merged = merge_secrets(raw, self.raw)
         config = parse_config(merged)  # validate before touching the file
+        self._check_vendor_binding(config)
         if persist and self.config_path:
             tmp = self.config_path.with_name(self.config_path.name + ".tmp")
             tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -582,6 +584,47 @@ class App:
         self.raw = merged
         self._swap(config)
         return config
+
+    def _check_vendor_binding(self, config: Config) -> None:
+        """Every channel must be bound to a real vendor entry.
+
+        Creation is strongly bound: a channel that was not in the previous
+        config needs a complete provider+mode pair, and any pair must exist
+        in the vendor registry (builtin + overlay). Channels that predate
+        vendor bookkeeping stay tolerated until they are edited. Enforcement
+        is file-deployment-only: without a config file (library/test embeds)
+        there is no on-disk previous state to anchor the legacy rule on.
+        """
+        if not self.config_path:
+            return
+        legacy = {
+            c.get("name") for c in (self.raw.get("channels") or [])
+            if isinstance(c, dict)
+        }
+        registry = {p.get("id"): p for p in self.providers
+                    if isinstance(p, dict) and p.get("id")}
+        for channel in config.channels:
+            provider, mode = channel.provider, channel.mode
+            if not provider and not mode:
+                if channel.name in legacy:
+                    continue  # predates vendor bookkeeping; tolerated
+                raise ValueError(
+                    f"渠道 {channel.name} 必须选择厂家："
+                    "请填写 provider 与 mode 后再创建")
+            if not provider or not mode:
+                raise ValueError(
+                    f"渠道 {channel.name} 的厂家信息不完整："
+                    "provider 与 mode 必须同时提供")
+            vendor = registry.get(provider)
+            if vendor is None:
+                raise ValueError(
+                    f"渠道 {channel.name} 的厂家 {provider} 不存在，"
+                    "可在管理页「厂家」查看可用厂家或添加自定义厂家")
+            if mode not in (vendor.get("modes") or {}):
+                available = "/".join(sorted(vendor.get("modes") or {}))
+                raise ValueError(
+                    f"渠道 {channel.name} 的厂家 {provider} 不支持模式 {mode}"
+                    f"（可用：{available}）")
 
     def reload_from_disk(self) -> Config:
         raw = self._read_raw()
@@ -600,6 +643,10 @@ class App:
             new.sessions = old.sessions
             new.catalogs = old.catalogs
             new.rr_cursor = old.rr_cursor
+            # Keep stability scores for channels that still exist; scores of
+            # deleted/renamed channels are dropped.
+            new.scores = {key: list(value) for key, value in old.scores.items()
+                          if key.split("|", 1)[0] in new.states}
             self.config = config
             self.store = new
 
@@ -615,6 +662,11 @@ class App:
             state.last_error = ""
             state.quota = {}
             return True
+
+    def reset_scores(self, channel: str | None = None,
+                     wire: str | None = None) -> int:
+        """Clear stability scores (all / one channel / one channel×wire)."""
+        return self.store.reset_scores(channel, wire)
 
     def test_channels(self, channels, model: str | None = None) -> dict:
         """Probe console drafts without touching cooldown, usage or audit state.
@@ -1035,8 +1087,9 @@ class App:
             },
         }
 
-    def maintenance_log_payload(self, limit: int = 50) -> dict:
-        """History of maintenance runs, newest first, from maintenance.jsonl.
+    def _jsonl_history_payload(self, filename: str, memory_reports: list,
+                               limit: int = 50) -> dict:
+        """Newest-first run history from a JSONL log (maintenance / free-align).
 
         Reads the file tail so a long history cannot grow the response; falls
         back to the in-memory reports when no log file exists (e.g. tests).
@@ -1047,7 +1100,7 @@ class App:
             limit = 50
         entries: list[dict] = []
         source = "memory"
-        path = (self.config_path.parent / "maintenance.jsonl"
+        path = (self.config_path.parent / filename
                 if self.config_path else None)
         if path is not None and path.is_file():
             source = "file"
@@ -1064,12 +1117,56 @@ class App:
             with self.maintenance_lock:
                 reports = [
                     {k: v for k, v in report.items() if k != "patch"}
-                    for report in self.maintenance_reports
+                    for report in memory_reports
                 ]
             has_more = len(reports) > limit
             entries = list(reversed(reports[-limit:]))
         return {"logs": entries, "source": source, "has_more": has_more,
                 "limit": limit}
+
+    def maintenance_log_payload(self, limit: int = 50) -> dict:
+        """History of maintenance runs, newest first, from maintenance.jsonl."""
+        return self._jsonl_history_payload(
+            "maintenance.jsonl", self.maintenance_reports, limit)
+
+    def free_align_log_payload(self, limit: int = 50) -> dict:
+        """History of free-quota alignment runs, from freealign.jsonl."""
+        return self._jsonl_history_payload(
+            "freealign.jsonl", self.free_align_reports, limit)
+
+    def backup_list_payload(self) -> dict:
+        """Read-only list of config backups (router.json.<tag>.bak), newest first.
+
+        Backups are written by _backup_config before maintenance/free-align
+        rewrite the config. Restoring stays a manual file operation on purpose.
+        """
+        backups: list[dict] = []
+        if self.config_path and self.config_path.parent.is_dir():
+            prefix = self.config_path.name + "."
+            try:
+                candidates = list(self.config_path.parent.iterdir())
+            except OSError:
+                candidates = []
+            for path in candidates:
+                name = path.name
+                if (not name.startswith(prefix) or not name.endswith(".bak")
+                        or len(name) <= len(prefix) + len(".bak")):
+                    continue
+                try:
+                    if not path.is_file():
+                        continue
+                    stat = path.stat()
+                except OSError:
+                    continue
+                backups.append({
+                    "file": name,
+                    "tag": name[len(prefix):-len(".bak")],
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                })
+        backups.sort(key=lambda b: b["mtime"], reverse=True)
+        return {"backups": backups,
+                "config": self.config_path.name if self.config_path else None}
 
     def test_maintenance_model(self, payload) -> dict:
         """Manual quiz for one (channel, model) from the console overview."""
@@ -1144,6 +1241,7 @@ class App:
                 "blocked_reason": blocked.get(channel.name, ""),
                 "tier": channel_tier(channel, self.subscriptions),
                 "tiers": dict(channel.tiers),
+                "scores": self.store.scores_for(channel.name),
                 "catalog": {
                     "fetched_at": catalog["fetched_at"],
                     "count": catalog["count"],
@@ -1154,6 +1252,7 @@ class App:
         return {
             "channels": channels,
             "routes": {key: list(route.channels) for key, route in self.config.routes.items()},
+            "model_states": self.model_states(),
             "sticky_sessions": snap["sticky_sessions"],
             "listen": {"host": self.config.listen.host, "port": self.config.listen.port},
             "config_path": str(self.config_path) if self.config_path else None,
@@ -1168,6 +1267,94 @@ class App:
                 "last": self._maintenance_summary(),
             },
         }
+
+    def model_states(self) -> list[dict]:
+        """Aggregate per-model availability across channels (runtime-only).
+
+        free_ok      — some enabled channel maps this model at tier "free"
+        exhausted    — a tier-free channel's upstream still advertises the
+                       model but no enabled free mapping remains (freealign
+                       pruned it, or it never carried free quota)
+        paid_only    — only paid-tier mappings on enabled channels
+        available    — enabled channels provide it but no tier annotation
+                       (neither free nor paid, e.g. no linked subscription)
+        no_channel   — nothing enabled provides it (disabled-only or unknown)
+
+        Tiers come from per-model overrides > channel.tier > linked
+        subscriptions — nothing is hardcoded. Cooldown is a channel-health
+        signal (shown per channel) and deliberately not part of the status.
+        """
+        now = time.time()
+        subscriptions = self.subscriptions
+        by_model: dict[str, list] = {}
+        for channel in self.config.channels:
+            for model in explicit_models(channel):
+                by_model.setdefault(model, []).append(channel)
+        # What tier-free upstreams still advertise in their catalogs.
+        free_upstream: dict[str, list[str]] = {}
+        for channel in self.config.channels:
+            if channel_tier(channel, subscriptions) != "free":
+                continue
+            for model in (self.store.catalogs.get(channel.name) or {}).get("models") or []:
+                free_upstream.setdefault(str(model), []).append(channel.name)
+        labels = {"free_ok": "免费可用", "free_exhausted": "免费已耗尽",
+                  "paid_only": "仅付费", "available": "可用（档位未知）",
+                  "no_channel": "无渠道"}
+        rank = {"free_ok": 0, "free_exhausted": 1, "paid_only": 2,
+                "available": 3, "no_channel": 4}
+        rows = []
+        for model in sorted(set(by_model) | set(free_upstream)):
+            free_ok = paid_ok = plain_ok = False
+            entries = []
+            for channel in by_model.get(model, []):
+                tier = model_tier(channel, subscriptions, model)
+                if channel.enabled and tier == "free":
+                    free_ok = True
+                elif channel.enabled and tier == "paid":
+                    paid_ok = True
+                elif channel.enabled and not tier:
+                    plain_ok = True
+                state = self.store.states.get(channel.name)
+                wire = channel.models.get(model) or model
+                entries.append({
+                    "name": channel.name,
+                    "tier": tier or "",
+                    "enabled": channel.enabled,
+                    "cooling": bool(state and state.cooldown_until > now),
+                    "score": int(round(self.store.score(channel.name, wire))),
+                })
+            if free_ok:
+                status = "free_ok"
+            elif model in free_upstream:
+                status = "free_exhausted"
+            elif paid_ok:
+                status = "paid_only"
+            elif plain_ok:
+                status = "available"
+            else:
+                status = "no_channel"
+            # Exhausted models have no mapping left; still show which free
+            # upstreams advertise them.
+            seen = {entry["name"] for entry in entries}
+            for name in free_upstream.get(model, []):
+                if name in seen:
+                    continue
+                channel = self.config.channel(name)
+                if channel is None:
+                    continue
+                state = self.store.states.get(name)
+                entries.append({
+                    "name": name,
+                    "tier": "free",
+                    "enabled": channel.enabled,
+                    "cooling": bool(state and state.cooldown_until > now),
+                    "score": int(round(self.store.score(
+                        name, channel.models.get(AUTO_MODEL) or model))),
+                })
+            rows.append({"model": model, "status": status,
+                         "label": labels[status], "channels": entries})
+        rows.sort(key=lambda row: (rank[row["status"]], row["model"]))
+        return rows
 
     def _maintenance_summary(self) -> dict | None:
         if not self.maintenance_reports:
@@ -1529,6 +1716,10 @@ class App:
                     seconds, reason, now, half_open=not quota,
                 )
             self.record_usage(channel.name, False)
+            # Quota exhaustion is the plan running out, not instability:
+            # it cools the channel but never touches the stability score.
+            if not quota:
+                self.store.record_score(channel.name, wire, -5)
             return (exc.code, reason, seconds)
         except (URLError, TimeoutError, OSError) as exc:
             with self.store.lock:
@@ -1536,6 +1727,7 @@ class App:
                 state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_network", now, half_open=True)
             self.record_usage(channel.name, False)
+            self.store.record_score(channel.name, wire, -5)
             return (502, "transient_network", 30.0)
         except Exception as exc:  # keep the gateway alive on unexpected upstream shapes
             with self.store.lock:
@@ -1543,6 +1735,7 @@ class App:
                 state.last_error = repr(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False)
+            self.store.record_score(channel.name, wire, -5)
             return (502, "transient_internal", 30.0)
         else:
             # Headers may already be on the wire here: never fail over again.
@@ -1553,6 +1746,7 @@ class App:
             except (BrokenPipeError, ConnectionResetError):
                 with self.store.lock:
                     self.store.states[channel.name].mark_success(0, time.time())
+                self.store.record_score(channel.name, wire, 1)
                 return None
             except Exception as exc:
                 with self.store.lock:
@@ -1604,6 +1798,7 @@ class App:
                     h.wfile.flush()
             with self.store.lock:
                 self.store.states[channel.name].mark_success(stream_tokens, time.time())
+            self.store.record_score(channel.name, wire, 1)
             self.record_usage(channel.name, True, stream_tokens)
             self.apply_quota(channel.name, resp.headers)
             if delivery is not None:
@@ -1616,6 +1811,7 @@ class App:
             delivery["tokens"] = tokens
         with self.store.lock:
             self.store.states[channel.name].mark_success(tokens, time.time())
+        self.store.record_score(channel.name, wire, 1)
         self.record_usage(channel.name, True, tokens)
         self.apply_quota(channel.name, resp.headers)
         if adapter is not None:

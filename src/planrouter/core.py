@@ -27,6 +27,13 @@ ANTHROPIC = "anthropic"
 PROTOCOLS = (OPENAI, ANTHROPIC)
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
+# Route channel-list macro: "$free" expands (at load time) to every enabled
+# tier="free" channel speaking the route's protocol, in (priority, name)
+# order. Channels already listed explicitly keep their position and are not
+# duplicated. New free channels therefore join routes that carry the macro
+# without any further configuration; paid channels are always hand-placed.
+FREE_CHANNEL_MACRO = "$free"
+
 # Providers such as Volcengine Ark expose https://host/api/v3 (or
 # /api/coding/v3) as the OpenAI-compatible base. Appending the usual
 # /v1/chat/completions would produce /v3/v1/chat/completions and a 404.
@@ -278,6 +285,10 @@ class Defaults:
     daily_429_cooldown_hours: int = 0
     # Same-channel retries for transient network errors before failing over.
     network_retries: int = 1
+    # Stability-score half-life in hours: a (channel, model) score decays
+    # toward 0 with exponential half-life so old failures (and old successes)
+    # fade. 0 disables decay and keeps a pure running total.
+    score_halflife_hours: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -463,6 +474,7 @@ def parse_config(raw: dict) -> Config:
         not_found_cooldown_hours=int(d.get("not_found_cooldown_hours", 24)),
         daily_429_cooldown_hours=int(d.get("daily_429_cooldown_hours", 0)),
         network_retries=int(d.get("network_retries", 1)),
+        score_halflife_hours=float(d.get("score_halflife_hours", 12.0)),
     )
 
     channels: list[Channel] = []
@@ -546,6 +558,26 @@ def parse_config(raw: dict) -> Config:
             raise ValueError(f"route {name}: protocol must be one of {PROTOCOLS}")
         if not names:
             raise ValueError(f"route {name}: channels list is empty")
+        # "$free" is resolved against the already-sorted channel table, so
+        # the expansion order doubles as the attempt order inside the macro.
+        # A channel listed explicitly keeps its exact position, wherever it
+        # sits; the macro only fills in free channels that were NOT listed.
+        named = {n for n in names if n != FREE_CHANNEL_MACRO}
+        expanded: list[str] = []
+        for channel_name in names:
+            if channel_name == FREE_CHANNEL_MACRO:
+                for channel in channels:
+                    if (channel.protocol == protocol and channel.tier == "free"
+                            and channel.enabled and channel.name not in named):
+                        expanded.append(channel.name)
+            else:
+                expanded.append(channel_name)
+        # Defensive dedup: an explicit name repeated by hand stays unique.
+        names = tuple(dict.fromkeys(expanded))
+        if not expanded:
+            raise ValueError(
+                f"route {name}: '{FREE_CHANNEL_MACRO}' matched no enabled "
+                f"free-tier channel speaking {protocol}")
         for channel_name in names:
             channel = next((c for c in channels if c.name == channel_name), None)
             if channel is None:
@@ -678,6 +710,72 @@ class StateStore:
         self.catalogs: dict[str, dict] = {}
         # f"{protocol}:{route}" -> next round-robin offset for new sessions
         self.rr_cursor: dict[str, int] = {}
+        # Per-(channel, wire-model) stability score: +1 per served request,
+        # -5 per non-quota failure; quota exhaustion only cools, never scores.
+        # Keyed "channel|wire_model"; each value is [score, last_ts] with
+        # exponential decay applied lazily on read/write. Missing keys = 0.0.
+        self.scores: dict[str, list[float, float]] = {}
+
+    def _halflife_seconds(self) -> float:
+        return self.config.defaults.score_halflife_hours * 3600.0
+
+    def _decayed(self, key: str, now: float) -> float:
+        """Current decayed score for a key, without mutating storage.
+
+        Pure read: the timestamp stays put so repeated reads at the same
+        moment are idempotent. Writing decays up front and refreshes the
+        timestamp instead.
+        """
+        entry = self.scores.get(key)
+        if entry is None:
+            return 0.0
+        value, last_ts = entry
+        half = self._halflife_seconds()
+        if half <= 0.0 or now <= last_ts:
+            return float(value)
+        return float(value) * (0.5 ** ((now - last_ts) / half))
+
+    def score(self, channel: str, wire_model: str,
+              now: float | None = None) -> float:
+        now = time.time() if now is None else now
+        with self.lock:
+            return self._decayed(f"{channel}|{wire_model}", now)
+
+    def record_score(self, channel: str, wire_model: str, delta: int,
+                     now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        key = f"{channel}|{wire_model}"
+        with self.lock:
+            value = self._decayed(key, now) + delta
+            if abs(value) < 1e-9:
+                self.scores.pop(key, None)
+            else:
+                self.scores[key] = [value, now]
+
+    def scores_for(self, channel: str, now: float | None = None) -> dict[str, int]:
+        """One channel's decayed score map keyed by wire model (for the console)."""
+        now = time.time() if now is None else now
+        prefix = f"{channel}|"
+        with self.lock:
+            return {k[len(prefix):]: int(round(self._decayed(k, now)))
+                    for k in self.scores if k.startswith(prefix)}
+
+    def reset_scores(self, channel: str | None = None,
+                     wire_model: str | None = None) -> int:
+        """Clear all scores, one channel's, or one (channel, wire) pair."""
+        with self.lock:
+            if channel is None:
+                removed = len(self.scores)
+                self.scores.clear()
+                return removed
+            prefix = f"{channel}|"
+            if wire_model is None:
+                keys = [k for k in self.scores if k.startswith(prefix)]
+                for k in keys:
+                    del self.scores[k]
+                return len(keys)
+            key = f"{channel}|{wire_model}"
+            return 1 if self.scores.pop(key, None) is not None else 0
 
     def record_catalog(self, name: str, models, endpoint: str,
                        now: float | None = None) -> dict:
@@ -820,9 +918,22 @@ class StateStore:
                 wire = dispatch_wire_model(channel, decision.requested)
                 if wire:
                     scheduled.append((channel, wire))
+            # Stability reordering: within each group, higher score first;
+            # equal scores keep the chain order. The sticky session channel
+            # (position 0, if any) stays pinned to the front.
             if decision.mode == "exact":
-                return (exact or scheduled), route
-            return scheduled, route
+                return self._by_score(exact or scheduled, sticky), route
+            return self._by_score(scheduled, sticky), route
+
+    def _by_score(self, pairs: list[tuple[Channel, str]],
+                  sticky: str | None) -> list[tuple[Channel, str]]:
+        """Stable sort by descending score, keeping a sticky channel first."""
+        if len(pairs) < 2:
+            return pairs
+        head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
+        tail = pairs[head:]
+        tail.sort(key=lambda pair: -self.score(pair[0].name, pair[1]))
+        return pairs[:head] + tail
 
     def snapshot(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now
