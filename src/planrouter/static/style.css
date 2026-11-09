@@ -88,6 +88,7 @@ body {
 .pagehead-right { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 
 .btn {
+  display: inline-block; text-decoration: none;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
   padding: 8px 14px; border-radius: 9px; cursor: pointer; font-size: 13px;
   transition: transform .15s, border-color .15s, background .15s;

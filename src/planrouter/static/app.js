@@ -597,16 +597,18 @@ function switchPage(name) {
 // maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
 // the trend chart, free-quota alignment and backup counts. No backend logic.
 async function loadDashboard() {
-  const [snap, usage, maint, backups] = await Promise.all([
+  const [snap, usage, maint, backups, dsh] = await Promise.all([
     api('/api/state'),
     api('/api/usage/7').catch(() => null),
     api('/api/maintenance').catch(() => null),
     api('/api/backups').catch(() => null),
+    api('/api/integrations/dsh').catch(() => null),
   ]);
   state.snapshot = snap;
   if (usage) state.dashUsage = usage;
   if (maint) state.maintenance = maint;
   if (backups) state.backups = backups;
+  if (dsh) state.dshInfo = dsh;
   renderDashboard();
 }
 
@@ -688,6 +690,33 @@ function renderDashboard() {
   rows.push(dashRow('配置备份', `${(state.backups?.backups || []).length} 份`));
   $('dash-selfcare').innerHTML = rows.join('');
 
+  // DSH 验证：外部客户端是否装在这台宿主机、profile 指向哪、界面能否打开。
+  const dsh = state.dshInfo;
+  const dshRows = [];
+  if (!dsh) {
+    dshRows.push(dashRow('客户端', '无法读取 DSH 状态'));
+  } else {
+    dshRows.push(dashRow('客户端', dsh.installed
+      ? `已安装${dsh.version ? ' · v' + esc(dsh.version) : ''}`
+      : '<span class="days-left expired">未安装</span>'));
+    dshRows.push(dashRow('profile', `${esc(dsh.profile || '')}`
+      + (dsh.profile_exists ? '' : ' <span class="days-left expired">缺失</span>')));
+    dshRows.push(dashRow('指向网关', dsh.base_url ? esc(dsh.base_url) : '未配置'));
+    dshRows.push(dashRow('运行状态', dsh.running
+      ? `运行中 · pid ${dsh.pid}`
+      : '未运行'));
+    if (dsh.url) {
+      dshRows.push(dashRow('界面地址',
+        `<a href="${esc(dsh.url)}" target="_blank" rel="noopener">打开</a>`));
+    }
+    if (dsh.note) dshRows.push(dashRow('提示', esc(dsh.note)));
+  }
+  $('dash-dsh').innerHTML = dshRows.join('');
+  // The "打开 DSH 界面" control is a real anchor: when the CLI already reports
+  // a tokenised URL, a plain click opens the tab (no popup, no await in the
+  // way). Without one the click handler starts DSH first.
+  $('btn-dsh-open').href = (dsh && dsh.running && dsh.url) ? dsh.url : '#';
+
   // 近 7 天用量趋势：与用量报表页同一套 bars/sparkline。
   const usage = state.dashUsage;
   const el = $('dash-trend');
@@ -704,6 +733,70 @@ function renderDashboard() {
 }
 
 $('btn-refresh-dashboard').onclick = () => loadDashboard().catch((e) => toast(e.message, 'bad'));
+
+// DSH is a separate Node client: start its web profile, then hand the tokenised
+// URL to the browser. "启动" keeps the tab closed; "打开界面" opens it.
+async function startDshRequest() {
+  const result = await api('/api/integrations/dsh/web', { method: 'POST', body: {} });
+  state.dshInfo = result;
+  renderDashboard();
+  return result;
+}
+
+async function startDshOnly() {
+  const btn = $('btn-dsh-start');
+  btn.disabled = true;
+  try {
+    const result = await startDshRequest();
+    if (result.url) toast('DSH 已启动，点「打开 DSH 界面」进入', 'ok');
+    else toast('DSH 已启动，但还没有拿到访问地址，请刷新后再试', 'warn');
+  } catch (e) {
+    toast(e.message, 'bad');
+    loadDashboard().catch(() => {});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Cold start: DSH was not running, so there is no URL to link to yet. Claim a
+// tab while the click still counts as a user gesture — window.open() issued
+// after `await` loses the gesture and the browser leaves it blank — then point
+// it at the tokenised URL once the CLI reports one.
+async function openDshFirstRun() {
+  const open = $('btn-dsh-open');
+  let win = null;
+  try { win = window.open('', '_blank'); } catch (e) { win = null; }
+  if (win) {
+    try {
+      win.document.write('<p style="font:14px/1.7 system-ui,sans-serif;padding:24px;color:#444">正在启动 DeepSeek Harness，完成后自动进入界面…</p>');
+    } catch (e) { /* about:blank not writable yet: keep it blank */ }
+  }
+  try {
+    const result = await startDshRequest();
+    if (!result.url) {
+      if (win) win.close();
+      toast('DSH 启动后仍未返回访问地址，请刷新后重试', 'warn');
+    } else if (win) {
+      win.location.replace(result.url);
+    } else {
+      toast('已启动，请再点一次「打开 DSH 界面」', 'ok');
+    }
+  } catch (e) {
+    if (win) win.close();
+    toast(e.message, 'bad');
+    loadDashboard().catch(() => {});
+  }
+}
+
+$('btn-dsh-start').onclick = startDshOnly;
+// Already running: the anchor's href carries the tokenised URL, so the click
+// itself opens the tab (a real gesture, the same as pasting the URL). Only a
+// cold start needs the popup dance above.
+$('btn-dsh-open').onclick = (ev) => {
+  if (state.dshInfo && state.dshInfo.running && state.dshInfo.url) return;
+  ev.preventDefault();
+  openDshFirstRun();
+};
 
 function renderSubscriptions() {
   if (!state.subs) return;

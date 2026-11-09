@@ -8,6 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import facts as facts_mod
 from . import providers as providers_mod
+from . import dsh as dsh_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -429,6 +430,50 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             if isinstance(body, dict) and body.get("channels"):
                 channels = [str(name) for name in body["channels"]]
         _json(h, 200, app.verify_free_models(channels))
+        return True
+
+    if path == "/api/integrations/dsh" and method == "GET":
+        # The DSH entry needs its state on the dashboard: whether the client
+        # shares this host, where its profile points, and if we already have
+        # a live tokenised URL for it.
+        _json(h, 200, app.dsh_status())
+        return True
+
+    if path == "/api/integrations/dsh/web" and method == "POST":
+        # Spawn the planrouter-web profile and return the URL it prints at
+        # startup. The browser tab is opened by the console, not by dsh, so
+        # the URL belongs to the operator's machine even when the gateway is
+        # reached remotely.
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        port = incoming.get("port")
+        if port is not None:
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                _json(h, 400, {"error": {"message": "port must be a number"}})
+                return True
+            if not 1 <= port <= 65535:
+                _json(h, 400, {"error": {"message": "port out of range"}})
+                return True
+        try:
+            result = app.start_dsh_web(port)
+        except dsh_mod.DshError as exc:
+            _json(h, 503, {"ok": False, "error": str(exc)})
+            return True
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        _json(h, 200 if result.get("ok") else 503,
+              result if result.get("ok")
+              else {"ok": False, "log": result.get("log", []),
+                    "error": {"message": result.get("error") or "dsh 启动失败"}})
         return True
 
     if path == "/api/maintenance/test-models" and method == "POST":

@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from . import subscriptions as subs
 from . import ui
 from . import maintenance as maint
+from . import dsh as dsh_mod
 from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import ark_quota
@@ -1132,6 +1133,19 @@ class App:
             pairs = [pair for pair in maint.free_mapping_pairs(self)
                      if pair[0].name in only]
         return maint.verify_free_models(self, pairs)
+
+    def dsh_status(self) -> dict:
+        """Report whether the DeepSeek Harness client shares this host."""
+        return dsh_mod.status()
+
+    def start_dsh_web(self, port=None) -> dict:
+        """Spawn DSH's planrouter-web profile and return its tokenised URL.
+
+        The gateway key is handed over as ROUTER_API_KEY, which the profile's
+        patch layer reads, so the spawned client can authenticate without the
+        operator copying a secret into its config.
+        """
+        return dsh_mod.start_web(api_key=self.config.listen.api_key, port=port)
 
     def _backup_config(self, tag: str) -> None:
         if not self.config_path or not self.config_path.is_file():
