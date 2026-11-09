@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planrouter.core import StateStore, load_config, parse_config
 from planrouter.persistence import StatePersistence, capture, restore
-from planrouter.server import App, channel_tier, model_tier
+from planrouter.server import App, channel_tier, model_tier, normalize_kimi_temperature
 
 
 def config_dict() -> dict:
@@ -204,6 +204,35 @@ class TierTests(unittest.TestCase):
         self.assertEqual(model_tier(by_name["a"], subs, "other"), "free")
         self.assertEqual(model_tier(by_name["b"], subs, "model-b"), "free")
         self.assertEqual(model_tier(by_name["b"], subs, "other"), "paid")
+
+
+class KimiTemperatureTests(unittest.TestCase):
+    """Kimi models (Moonshot / Ark-hosted) only accept temperature=1: the
+    gateway must force it on every outgoing payload, whatever the caller sent."""
+
+    def test_kimi_temperature_forced_to_one(self):
+        payload = {"model": "kimi-k3-1-pro-261024", "temperature": 0,
+                   "max_tokens": 6000, "messages": []}
+        normalize_kimi_temperature(payload)
+        self.assertEqual(payload["temperature"], 1)
+
+    def test_kimi_temperature_injected_when_absent(self):
+        payload = {"model": "kimi-k2-0905-preview", "messages": []}
+        normalize_kimi_temperature(payload)
+        self.assertEqual(payload["temperature"], 1)
+
+    def test_kimi_prefix_not_required(self):
+        payload = {"model": "moonshotai/kimi-k2", "temperature": 0.7}
+        normalize_kimi_temperature(payload)
+        self.assertEqual(payload["temperature"], 1)
+
+    def test_other_models_untouched(self):
+        payload = {"model": "deepseek-v3.2", "temperature": 0, "messages": []}
+        normalize_kimi_temperature(payload)
+        self.assertEqual(payload["temperature"], 0)
+        payload = {"model": "claude-sonnet-4-5", "messages": []}
+        normalize_kimi_temperature(payload)
+        self.assertNotIn("temperature", payload)
 
 
 class ProviderModeTests(unittest.TestCase):

@@ -124,6 +124,15 @@ def _estimate_tokens(body: dict) -> int:
     return max(1, (len(text) - non_ascii) // 4 + non_ascii + len(parts) * 2)
 
 
+def normalize_kimi_temperature(payload: dict) -> dict:
+    """Moonshot Kimi models (e.g. Ark-hosted kimi-k3) only accept
+    temperature=1; any other value makes the upstream reject the call with
+    HTTP 400. Enforce the vendor rule in every outgoing chat payload."""
+    if "kimi" in str(payload.get("model") or "").lower():
+        payload["temperature"] = 1
+    return payload
+
+
 def channel_tier(channel, subscriptions: list[dict]) -> str:
     """Explicit channel.tier wins; otherwise infer from linked subscriptions."""
     if channel.tier:
@@ -1027,6 +1036,7 @@ class App:
         else:
             payload = {"model": model, "max_tokens": 6000, "temperature": 0,
                        "messages": [{"role": "user", "content": prompt}]}
+        normalize_kimi_temperature(payload)
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
             if protocol == ANTHROPIC:
@@ -1800,6 +1810,7 @@ class App:
             delivery = {}
         payload = dict(body)
         payload["model"] = wire
+        normalize_kimi_temperature(payload)
         stream = bool(payload.get("stream"))
         if (stream and protocol == OPENAI and self.config.defaults.track_stream_usage
                 and "stream_options" not in payload):
