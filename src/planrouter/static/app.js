@@ -24,7 +24,7 @@ function storeKey(kind, value, remember) {
 const state = {
   config: null,
   snapshot: null,
-  tab: 'channels',
+  tab: 'dashboard',
   channelFilter: '',
   vendorFilter: '',
   key: readStoredKey('gateway'),
@@ -42,6 +42,9 @@ const state = {
   report: null,
   maintenance: null,
   maintlog: null,
+  freealignLogs: null,
+  backups: null,
+  dashUsage: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -225,6 +228,8 @@ async function loadState() {
   renderSummary();
   renderStatus();
   renderChannels();
+  renderExactModels();
+  renderScores();
   const badge = $('conn-badge');
   badge.textContent = '已连接';
   badge.className = 'badge ok';
@@ -307,6 +312,17 @@ function catalogSummary(name) {
   return `${cat.count} 个模型 · 检查于 ${when}${diff}`;
 }
 
+// Per-(channel, model) stability score: served +1, non-quota failure -5.
+// Quota exhaustion only cools and never scores, so this badge is stability.
+function scoreBadge(score, channel, wire) {
+  if (!score) return '';
+  const cls = score > 0 ? 'score-pos' : 'score-neg';
+  const reset = (channel && wire)
+    ? `<button class="score-x" type="button" data-score-channel="${esc(channel)}" data-score-wire="${esc(wire)}" title="重置该渠道×模型的稳定性分" aria-label="重置分数">×</button>`
+    : '';
+  return `<span class="tag ${cls}" title="稳定性分：成功 +1，失败 -5">${score > 0 ? '+' : ''}${score}${reset}</span>`;
+}
+
 function channelCard(c, i) {
   const entries = Object.entries(c.models || {});
   // Runtime status (cooling/blocked) lives in the state snapshot, not the config.
@@ -314,7 +330,7 @@ function channelCard(c, i) {
   const cooling = !!(st && st.cooling);
   const bit = ([k, v]) => {
     const badge = tierBadge(tierFor(c.name, c.tier, k));
-    return `${esc(k)} → ${esc(v)}${badge ? ' ' + badge : ''}`;
+    return `${esc(k)} → ${esc(v)}${badge}${scoreBadge(st?.scores?.[v], c.name, v)}`;
   };
   // Long mappings (aggregators can hold hundreds of models) collapse to the
   // first few plus an expander so the row cannot stretch the page.
@@ -529,21 +545,39 @@ function renderBanner() {
     <span class="banner-items">${items}</span>
     <button class="btn small" id="banner-view">查看订阅</button>
   </div>`;
-  $('banner-view').onclick = () => switchTab('subscriptions');
+  $('banner-view').onclick = () => switchPage('subscriptions');
 }
 
-function switchTab(name) {
+// One sidebar entry per page; the menu and every panel share this key space.
+const PAGE_TITLES = {
+  dashboard: '仪表板',
+  channels: '渠道配置', routes: '路由链', models: '模型接入',
+  subscriptions: '套餐订阅', vendors: '厂家管理',
+  status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
+};
+
+function switchPage(name) {
   state.tab = name;
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
+  document.querySelectorAll('.menu-item').forEach((t) =>
+    t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach((p) =>
+    p.classList.toggle('active', p.id === 'panel-' + name));
+  $('page-title').textContent = PAGE_TITLES[name] || name;
+  // Each page loads its own data on entry, so opening the console stays cheap.
+  if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
   if (name === 'models') renderModels();
-  if (name === 'status') {
-    loadState().catch(() => {});
-    loadUsage().catch((e) => toast(e.message, 'bad'));
-    loadRequests().catch(() => {});
-    loadMaintenance().catch(() => {});
+  if (name === 'status') loadState().catch(() => {});
+  if (name === 'maintenance') {
+    loadMaintenance().catch((e) => toast(e.message, 'bad'));
+    loadMaintLogs().catch(() => {});
+    loadFreeAlignLogs().catch(() => {});
+    loadBackups().catch(() => {});
   }
-  if (name === 'maintlog') loadMaintLogs().catch((e) => toast(e.message, 'bad'));
+  if (name === 'usage') {
+    loadUsage().catch((e) => toast(e.message, 'bad'));
+    loadReport($('report-month').value).catch(() => {});
+  }
+  if (name === 'requests') loadRequests().catch(() => {});
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -553,6 +587,119 @@ function switchTab(name) {
     loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
   }
 }
+
+// Dashboard: the landing page. Pure frontend aggregation over existing
+// endpoints — /api/state carries channels, the subscription summary and the
+// maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
+// the trend chart, free-quota alignment and backup counts. No backend logic.
+async function loadDashboard() {
+  const [snap, usage, maint, backups] = await Promise.all([
+    api('/api/state'),
+    api('/api/usage/7').catch(() => null),
+    api('/api/maintenance').catch(() => null),
+    api('/api/backups').catch(() => null),
+  ]);
+  state.snapshot = snap;
+  if (usage) state.dashUsage = usage;
+  if (maint) state.maintenance = maint;
+  if (backups) state.backups = backups;
+  renderDashboard();
+}
+
+function dashRow(label, html) {
+  return `<div class="dash-kv-row"><span class="k">${label}</span><span class="v">${html}</span></div>`;
+}
+
+function renderDashboard() {
+  const s = state.snapshot;
+  if (!s) return;
+  const channels = s.channels || [];
+  const cooling = channels.filter((c) => c.cooling).length;
+  const blocked = channels.filter((c) => c.blocked).length;
+  const ok = channels.length - cooling - blocked;
+  const requests = channels.reduce((n, c) => n + c.total_requests, 0);
+  const tokens = channels.reduce((n, c) => n + c.total_tokens, 0);
+  const handoffs = channels.reduce((n, c) => n + c.handoffs, 0);
+  let unstable = 0;
+  channels.forEach((c) => Object.values(c.scores || {}).forEach((v) => { if (v < 0) unstable += 1; }));
+  const subs = s.subscriptions || {};
+  const counts = subs.counts || {};
+  const cost = Object.entries(subs.monthly_cost || {})
+    .map(([code, amount]) => `${amount} ${code}`).join(' / ') || '—';
+  const quotaAlerts = (subs.quota_alerts || []).length;
+
+  const kpis = [
+    ['可用渠道', channels.length ? `${ok} / ${channels.length}` : '0', ok ? 'ok' : ''],
+    ['冷却中', cooling, cooling ? 'warn' : ''],
+    ['累计请求', requests.toLocaleString(), ''],
+    ['累计 Tokens', tokens.toLocaleString(), ''],
+    ['月度成本', cost, ''],
+    ['即将到期', counts.expiring ?? 0, counts.expiring ? 'warn' : ''],
+  ];
+  $('dash-summary').innerHTML = kpis.map(([label, value, cls]) =>
+    `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div></div>`).join('');
+
+  // 运行健康（稳定）：failover 面板。
+  $('dash-health').innerHTML = [
+    dashRow('渠道状态', `${ok} 可用 · ${cooling} 冷却 · ${blocked} 停用`),
+    dashRow('累计交接', `${handoffs} 次`),
+    dashRow('不稳定模型', unstable
+      ? `<span class="days-left expired">${unstable} 个（负分）</span>` : '0 个'),
+  ].join('');
+
+  // 订阅与成本（省钱）：资源面板。
+  const upcoming = (subs.upcoming || []).slice(0, 3);
+  $('dash-subs').innerHTML = [
+    dashRow('订阅状态',
+      `${counts.active ?? 0} 生效 · ${counts.expiring ?? 0} 即将到期 · ${counts.expired ?? 0} 已过期`),
+    dashRow('月度等效成本', esc(cost)),
+    dashRow('低额度告警', quotaAlerts
+      ? `<span class="days-left expired">${quotaAlerts} 条</span>` : '0 条'),
+  ].join('')
+    + (upcoming.length ? upcoming.map((r) => dashRow(
+        `${esc(r.vendor)}${r.account ? ' / ' + esc(r.account) : ''}`,
+        `${esc(r.plan)} · 剩 ${r.days_left} 天`)).join('') : '');
+
+  // 自维护（省心）：自主面板。
+  const maint = s.maintenance || {};
+  const last = maint.last;
+  const rows = [
+    dashRow('维护调度', maint.hours ? `每 ${maint.hours} 小时` : '未启用'),
+    dashRow('上次维护', last
+      ? `${new Date(last.finished_at * 1000).toLocaleString()} · ${esc(MAINT_TRIGGER[last.trigger] || last.trigger || '')}`
+      : '还没有运行记录'),
+  ];
+  if (last) {
+    rows.push(dashRow('维护结果',
+      `应用 ${last.applied} · 待采纳 ${last.suggestions} · 告警 ${last.alerts}`
+      + (last.llm_error ? ' · <span class="days-left expired">LLM 分析失败</span>' : '')));
+  }
+  const align = state.maintenance?.free_align;
+  const alignLast = (align?.reports || [])[0];
+  const alignAt = alignLast ? (alignLast.ts || alignLast.finished_at) : null;
+  rows.push(dashRow('免费额度对齐',
+    (align && align.enabled ? `每 ${align.hours} 小时` : '未启用')
+    + (alignAt && alignLast.finished_at ? ` · 上次 ${new Date(alignAt * 1000).toLocaleString()}`
+        : alignAt ? ` · 上次 ${esc(alignAt)}` : '')));
+  rows.push(dashRow('配置备份', `${(state.backups?.backups || []).length} 份`));
+  $('dash-selfcare').innerHTML = rows.join('');
+
+  // 近 7 天用量趋势：与用量报表页同一套 bars/sparkline。
+  const usage = state.dashUsage;
+  const el = $('dash-trend');
+  if (!usage || !usage.days || !usage.days.length) {
+    el.innerHTML = '<div class="chart-empty">暂无用量数据，产生请求后会自动按天累计。</div>';
+    return;
+  }
+  const req = usage.days.map((d) => d.requests);
+  const tok = usage.days.map((d) => d.tokens);
+  el.innerHTML = `<div class="chart-grid">
+    <div class="chart-block"><h4>每日请求数（合计 ${req.reduce((a, b) => a + b, 0)}）</h4>${bars(req, '#5b9dff')}</div>
+    <div class="chart-block"><h4>每日 Tokens（合计 ${tok.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${sparkline(tok, '#8a6cff')}</div>
+  </div>`;
+}
+
+$('btn-refresh-dashboard').onclick = () => loadDashboard().catch((e) => toast(e.message, 'bad'));
 
 function renderSubscriptions() {
   if (!state.subs) return;
@@ -1211,10 +1358,20 @@ function renderBrandList() {
     </div>`).join('') : '<div class="chart-empty">还没有自有模型名</div>';
 }
 
+const STATUS_CLASS = { free_ok: 'free', free_exhausted: 'warn', paid_only: 'paid', available: 'mixed', no_channel: 'off' };
+
 function renderExactModels() {
-  const rows = (state.config.channels || []).filter((c) => c.enabled !== false).flatMap((c) =>
-    Object.keys(c.models || {}).filter((k) => k !== 'auto' && k !== '*')
-      .map((k) => `<div class="model-row"><code>${esc(k)}</code><span class="sub-note">${esc(c.name)} → ${esc(c.models[k])}</span></div>`));
+  const filter = state.modelStatusFilter || 'all';
+  const rows = (state.snapshot?.model_states || [])
+    .filter((row) => filter === 'all' || row.status === filter)
+    .map((row) => {
+      const tag = `<span class="tag ${STATUS_CLASS[row.status] || ''}">${esc(row.label)}</span>`;
+      const detail = row.channels.map((ch) => {
+        const flag = ch.enabled === false ? '（已停用）' : (ch.cooling ? '（冷却中）' : '');
+        return `${esc(ch.name)}${flag}${scoreBadge(ch.score)}`;
+      }).join('、');
+      return `<div class="model-row"><code>${esc(row.model)}</code>${tag}<span class="sub-note">${detail || '无可用渠道'}</span></div>`;
+    });
   $('exact-models').innerHTML = rows.length
     ? rows.join('') : '<div class="chart-empty">还没有显式模型映射，任意名字都会内部调度</div>';
 }
@@ -1248,6 +1405,14 @@ function syncModelPolicy() {
 }
 
 $('set-branded').addEventListener('input', syncModelPolicy);
+$('model-status-filter').addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-status]');
+  if (!button) return;
+  state.modelStatusFilter = button.dataset.status;
+  $('model-status-filter').querySelectorAll('button')
+    .forEach((b) => b.classList.toggle('active', b === button));
+  renderExactModels();
+});
 $('set-fallback-route').addEventListener('input', syncModelPolicy);
 $('set-fallback').addEventListener('change', syncModelPolicy);
 $('brand-list').addEventListener('click', (e) => {
@@ -1514,6 +1679,126 @@ $('maintenance-body').addEventListener('click', async (e) => {
   }
 });
 
+// ------------------------------------------------------------ self-maintenance
+// The 自维护 page surfaces the automation the backend already runs: scores,
+// free-quota alignment history and config backups, all previously headless.
+
+// Channel x wire stability score table, straight from the state snapshot.
+// scoreBadge() embeds a per-row × reset; delegation lives in bindEvents.
+function renderScores() {
+  const el = $('score-body');
+  if (!el) return;
+  const rows = [];
+  (state.snapshot?.channels || []).forEach((c) => {
+    Object.entries(c.scores || {}).forEach(([wire, score]) => {
+      rows.push(`<div class="model-row">
+        <code>${esc(c.name)}</code>
+        <code>${esc(wire)}</code>
+        ${scoreBadge(score, c.name, wire)}
+        <span class="sub-note">${score > 0 ? '稳定' : '不稳定'} · 参与路由排序</span>
+      </div>`);
+    });
+  });
+  el.innerHTML = rows.length ? rows.join('')
+    : '<div class="chart-empty">还没有稳定性评分记录。服务成功 +1、非额度类失败 −5，产生请求后按渠道×模型自动累计并按半衰期衰减。</div>';
+}
+
+$('btn-reset-all-scores').onclick = async () => {
+  if (!(await askConfirm('重置全部评分',
+    '确认清空所有渠道×模型的稳定性评分？分数会随后续请求重新积累。'))) return;
+  try {
+    const r = await api('/api/score/reset', { method: 'POST', body: {} });
+    toast(`已重置 ${r.removed} 条评分`);
+    await loadState();
+  } catch (err) { toast(err.message, 'bad'); }
+};
+
+async function loadFreeAlignLogs() {
+  state.freealignLogs = await api('/api/freealign/logs');
+  renderFreeAlignLogs();
+}
+
+function renderFreeAlignLogs() {
+  const data = state.freealignLogs;
+  if (!data) return;
+  const align = state.maintenance?.free_align;
+  $('freealign-note').textContent =
+    `调度：${align && align.enabled ? `每 ${align.hours} 小时` : '未启用（defaults.free_align_hours 为 0）'}`
+    + ` · 历史来源：${data.source === 'file' ? 'freealign.jsonl' : '本次进程内存'}`
+    + (data.has_more ? ' · 更早记录未加载' : '');
+  const logs = data.logs || [];
+  const box = $('freealign-body');
+  if (!logs.length) {
+    box.innerHTML = '<p class="sub-note">还没有对齐记录。点「立即对齐免费额度」手动触发一次，'
+      + '或等定时任务运行后这里会留档每一次结果。</p>';
+    return;
+  }
+  box.innerHTML = logs.map((r) => {
+    const when = r.ts || (r.finished_at
+      ? new Date(r.finished_at * 1000).toLocaleString() : '');
+    const aligned = (r.aligned || []).map((a) =>
+      `<strong>${esc(a.channel)}</strong>：${(a.models || []).length} 个免费模型${a.changed ? '（映射已更新）' : '（无变化）'}`);
+    const head = `<div class="maint-report"><div class="maint-head"><strong>${esc(when)}</strong>`
+      + `<span class="sub-note">${esc(MAINT_TRIGGER[r.trigger] || r.trigger || '')}</span></div>`;
+    const rows = [];
+    if (aligned.length) {
+      rows.push(maintItem('对齐', 'active', aligned.join('；')));
+    } else {
+      rows.push(maintItem('对齐', 'unknown', '本次没有带免费额度工具的免费渠道'));
+    }
+    (r.alerts || []).forEach((a) => {
+      rows.push(maintItem('注意', 'expired',
+        `${a.channel ? `<strong>${esc(a.channel)}</strong> ` : ''}${esc(a.message)}`));
+    });
+    return head + rows.join('') + '</div>';
+  }).join('');
+}
+
+$('btn-run-freealign').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '对齐中…';
+  try {
+    const r = await api('/api/freealign/run', { method: 'POST' });
+    const changed = Object.keys(r.patch || {}).length;
+    toast(changed
+      ? `免费额度对齐完成：${changed} 个渠道映射已更新（原配置已备份）`
+      : '免费额度对齐完成：没有需要更新的映射');
+    await loadMaintenance();
+    await loadFreeAlignLogs();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
+
+$('btn-refresh-freealign').onclick = () => Promise.all([loadMaintenance(), loadFreeAlignLogs()])
+  .catch((e) => toast(e.message, 'bad'));
+
+async function loadBackups() {
+  state.backups = await api('/api/backups');
+  renderBackups();
+}
+
+const BACKUP_TAGS = { maintenance: '自动运维', freealign: '免费额度对齐' };
+
+function renderBackups() {
+  const data = state.backups;
+  if (!data) return;
+  const box = $('backup-body');
+  const backups = data.backups || [];
+  box.innerHTML = backups.length ? backups.map((b) => `
+    <div class="model-row">
+      <code>${esc(b.file)}</code>
+      <span class="tag unknown">${esc(BACKUP_TAGS[b.tag] || b.tag)}</span>
+      <span class="sub-note">${new Date(b.mtime * 1000).toLocaleString()} · ${(b.size / 1024).toFixed(1)} KB</span>
+    </div>`).join('')
+    : '<p class="sub-note">还没有备份文件。自动运维或免费额度对齐改写配置前会自动生成。</p>';
+}
+
 async function loadMaintLogs() {
   state.maintlog = await api('/api/maintenance/logs');
   renderMaintLogs();
@@ -1553,7 +1838,6 @@ function renderMaintLogs() {
 
 $('btn-refresh-maintlog').onclick = () =>
   loadMaintLogs().catch((e) => toast(e.message, 'bad'));
-$('btn-view-maintlog').onclick = () => switchTab('maintlog');
 
 $('btn-admin-key').onclick = async () => {
   const answer = await askText({
@@ -1617,6 +1901,7 @@ function renderAll() {
   renderModels();
   renderRequests();
   renderReport();
+  renderScores();
 }
 
 let modalReturnFocus = null;
@@ -2492,8 +2777,8 @@ async function saveConfig() {
 }
 
 function bindEvents() {
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.onclick = () => switchTab(tab.dataset.tab);
+  document.querySelectorAll('.menu-item').forEach((item) => {
+    item.onclick = () => switchPage(item.dataset.tab);
   });
 
   $('btn-save').onclick = saveConfig;
@@ -2557,6 +2842,15 @@ function bindEvents() {
   });
 
   $('channel-list').addEventListener('click', async (e) => {
+    const resetBtn = e.target.closest('[data-score-channel]');
+    if (resetBtn) {
+      await api('/api/score/reset', {
+        method: 'POST',
+        body: { channel: resetBtn.dataset.scoreChannel, wire: resetBtn.dataset.scoreWire },
+      });
+      await loadState();
+      return;
+    }
     const b = e.target.closest('button[data-action]');
     if (!b) return;
     const i = Number(b.dataset.index);
@@ -2635,6 +2929,23 @@ function bindEvents() {
     const b = e.target.closest('button[data-action="reset"]');
     if (b) resetCooldown(b.dataset.name);
   });
+
+  // Stability-score resets on the 自维护 page share the badge contract with
+  // the channel list (data-score-channel/-wire).
+  $('score-body').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-score-channel]');
+    if (!b) return;
+    try {
+      await api('/api/score/reset', {
+        method: 'POST',
+        body: { channel: b.dataset.scoreChannel, wire: b.dataset.scoreWire },
+      });
+      await loadState();
+      toast('已重置该评分');
+    } catch (err) { toast(err.message, 'bad'); }
+  });
+
+  $('btn-refresh-usage').onclick = () => loadUsage().catch((e) => toast(e.message, 'bad'));
 
   document.querySelectorAll('.range-switch .btn').forEach((button) => {
     button.onclick = () => loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
@@ -2725,16 +3036,17 @@ async function boot() {
     await loadMaintenance().catch(() => {});
     $('report-month').value = todayISO().slice(0, 7);
     await loadReport();
+    await loadDashboard();
   } catch (err) {
     toast(err.message, 'bad');
     $('conn-badge').textContent = '连接失败';
     $('conn-badge').className = 'badge bad';
   }
   setInterval(() => {
-    if (state.tab === 'status') {
-      loadState().catch(() => {});
-      loadRequests().catch(() => {});
-    }
+    // Live pages poll on their own cadence; other pages stay static.
+    if (state.tab === 'dashboard') loadDashboard().catch(() => {});
+    if (state.tab === 'status') loadState().catch(() => {});
+    if (state.tab === 'requests') loadRequests().catch(() => {});
   }, 5000);
 }
 

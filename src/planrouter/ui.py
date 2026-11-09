@@ -384,7 +384,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             or path.startswith("/api/maintenance/logs/")) and method == "GET":
         parts = path.split("/")
         try:
-            limit = int(parts[3]) if len(parts) > 3 and parts[3] else 50
+            limit = int(parts[4]) if len(parts) > 4 and parts[4] else 50
         except ValueError:
             limit = 50
         _json(h, 200, app.maintenance_log_payload(limit))
@@ -392,6 +392,20 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
 
     if path == "/api/maintenance/run" and method == "POST":
         _json(h, 200, app.run_maintenance("manual"))
+        return True
+
+    if (path == "/api/freealign/logs"
+            or path.startswith("/api/freealign/logs/")) and method == "GET":
+        parts = path.split("/")
+        try:
+            limit = int(parts[4]) if len(parts) > 4 and parts[4] else 50
+        except ValueError:
+            limit = 50
+        _json(h, 200, app.free_align_log_payload(limit))
+        return True
+
+    if path == "/api/backups" and method == "GET":
+        _json(h, 200, app.backup_list_payload())
         return True
 
     if path == "/api/freealign/run" and method == "POST":
@@ -441,6 +455,27 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             return True
         ok = app.reset_channel(name)
         _json(h, 200 if ok else 404, {"ok": ok, "channel": name})
+        return True
+
+    if path == "/api/score/reset" and method == "POST":
+        incoming = {}
+        if raw:
+            try:
+                incoming = json.loads(raw)
+            except ValueError:
+                incoming = {}
+        if not isinstance(incoming, dict):
+            incoming = {}
+        channel = incoming.get("channel")
+        wire = incoming.get("wire")
+        if channel is not None and (not isinstance(channel, str) or not channel):
+            _json(h, 400, {"error": {"message": "invalid channel"}})
+            return True
+        if wire is not None and (not isinstance(wire, str) or not wire):
+            _json(h, 400, {"error": {"message": "invalid wire"}})
+            return True
+        removed = app.reset_scores(channel, wire)
+        _json(h, 200, {"ok": True, "removed": removed})
         return True
 
     _json(h, 404, {"error": {"message": "not found", "path": path}})

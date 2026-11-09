@@ -56,6 +56,9 @@ class ConsoleTests(unittest.TestCase):
             self.httpd.server_close()
         self.path.unlink(missing_ok=True)
         Path(str(self.path) + ".tmp").unlink(missing_ok=True)
+        (self.path.parent / "freealign.jsonl").unlink(missing_ok=True)
+        for bak in self.path.parent.glob(self.path.name + ".*.bak"):
+            bak.unlink(missing_ok=True)
 
     def start(self, config: dict | None = None) -> str:
         raw = config if config is not None else base_config()
@@ -122,6 +125,10 @@ class ConsoleTests(unittest.TestCase):
         config["channels"].append({
             "name": "plan-c", "protocol": "openai", "base_url": "http://127.0.0.1:9004",
             "api_key": "env:PLAN_C_KEY", "models": {"auto": "model-c"}, "priority": 30,
+            # New channels must carry a vendor binding (see
+            # test_planrouter_vendor_binding.py); pollinations/payg is a
+            # builtin registry entry.
+            "provider": "pollinations", "mode": "payg",
         })
         config["routes"][0]["channels"].append("plan-c")
         status, _, body = self.call(base, "POST", "/api/config", config, key="")
@@ -185,6 +192,42 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(status, 404)
         status, _, _ = self.call(base, "GET", "/api/guide/img/images/api-key-guide/missing.png")
         self.assertEqual(status, 404)
+
+    def test_freealign_logs_reads_jsonl_history(self):
+        base = self.start()
+        # Written by _record_free_align: the patch itself never hits the disk.
+        entry = {"ts": "2026-11-09T10:00:00", "trigger": "scheduled",
+                 "aligned": [{"channel": "plan-a", "models": ["m1"], "changed": True}],
+                 "alerts": []}
+        (self.path.parent / "freealign.jsonl").write_text(
+            json.dumps(entry) + "\n", encoding="utf-8")
+        status, _, body = self.call(base, "GET", "/api/freealign/logs")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["source"], "file")
+        self.assertEqual(payload["logs"][0]["trigger"], "scheduled")
+        self.assertNotIn("patch", payload["logs"][0])
+
+    def test_backups_lists_bak_files_newest_first(self):
+        base = self.start()
+        old = self.path.with_name(self.path.name + ".maintenance.bak")
+        new = self.path.with_name(self.path.name + ".freealign.bak")
+        old.write_text("{}", encoding="utf-8")
+        time.sleep(0.02)
+        new.write_text("{}", encoding="utf-8")
+        status, _, body = self.call(base, "GET", "/api/backups")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual([b["tag"] for b in payload["backups"]], ["freealign", "maintenance"])
+        self.assertTrue(all(b["size"] >= 0 and b["mtime"] > 0 for b in payload["backups"]))
+        # The live config itself is never listed as a backup.
+        self.assertEqual(payload["config"], self.path.name)
+
+    def test_maintenance_logs_limit_is_parsed(self):
+        base = self.start()
+        status, _, body = self.call(base, "GET", "/api/maintenance/logs/100")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["limit"], 100)
 
 
 if __name__ == "__main__":
