@@ -803,15 +803,23 @@ class App:
         quota list from the management plane is filtered here against the
         data-plane /models list (fetched with the channel's own ark-... key)
         to resolve each free family into its callable name. No IAM
-        credentials -> fall back to the upstream /models fetch; a failed
-        signed query is reported instead of silently switching sources.
+        credentials -> refuse the pull instead of falling back to the
+        data-plane /models list: the free channel's mapping is defined by
+        its free quota, and a 53-model paid-catalog dump would mislead.
+        A failed signed query is reported instead of silently switching
+        sources.
         """
         name = channel.get("name")
         creds = self._ark_credentials(channel)
         ak = creds.get(ark_quota.AK_ENV, "")
         sk = creds.get(ark_quota.SK_ENV, "")
         if not ak or not sk:
-            return probe_models(channel)
+            return {"ok": False, "name": name,
+                    "error": "未配置 IAM AK/SK，无法拉取免费额度模型清单",
+                    "hint": ("在渠道编辑器填写并保存 IAM Access Key / Secret Key"
+                             "（或设置环境变量 VOLC_ACCESSKEY / VOLC_SECRETKEY）"
+                             "后重试；免费渠道的映射以免费额度为准，"
+                             "数据面全量清单不用于映射")}
         try:
             rows = ark_quota.rows_from_items(ark_quota.list_items(ak, sk))
         except Exception as exc:

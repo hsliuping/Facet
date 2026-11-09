@@ -283,16 +283,20 @@ class CatalogAppTests(unittest.TestCase):
         self.assertEqual(view["endpoint"], "registry:volcengine/coding")
         self.assertEqual(self.upstream.seen, [])
 
-    def test_probe_channel_models_payg_mode_still_uses_upstream(self):
+    def test_probe_channel_models_payg_without_credentials_refuses(self):
         self.app.providers = [{
             "id": "volcengine", "name": "火山引擎方舟",
             "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
         }]
-        result = self.app.probe_channel_models(
-            {"name": "plan-a", "provider": "volcengine", "mode": "payg"})
-        self.assertTrue(result["ok"])
-        self.assertNotIn("source", result)
-        self.assertEqual(result["models"], ["model-a", "model-b"])
+        with mock.patch("planrouter.server.probe_models") as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
+                allow_ark_quota=True)
+        # No AK/SK -> the pull is refused, never falls back to the
+        # data-plane paid catalog dump.
+        self.assertFalse(result["ok"])
+        self.assertIn("未配置 IAM AK/SK", result["error"])
+        pm.assert_not_called()
 
     def test_probe_channel_models_ark_quota_management_plane(self):
         import dataclasses
@@ -390,7 +394,7 @@ class CatalogAppTests(unittest.TestCase):
         self.assertIn("401", result["error"])
         self.assertIn("IAM", result["hint"])
 
-    def test_probe_channel_models_ark_quota_without_credentials_falls_back(self):
+    def test_probe_channel_models_ark_quota_without_credentials_refuses(self):
         import os
         self.app.providers = [{
             "id": "volcengine", "name": "火山引擎方舟",
@@ -404,10 +408,10 @@ class CatalogAppTests(unittest.TestCase):
             result = self.app.probe_channel_models(
                 {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
                 allow_ark_quota=True)
-        self.assertTrue(result["ok"])
-        self.assertNotIn("source", result)
-        self.assertEqual(result["models"], ["model-a", "model-b"])
-        self.assertEqual(len(self.upstream.seen), 1)
+        # Refuse instead of falling back to the data-plane paid dump.
+        self.assertFalse(result["ok"])
+        self.assertIn("未配置 IAM AK/SK", result["error"])
+        self.assertEqual(self.upstream.seen, [])
 
     def test_background_catalog_sweep_keeps_data_plane(self):
         import dataclasses
