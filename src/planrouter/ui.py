@@ -417,8 +417,8 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
     if path == "/api/maintenance/verify-free" and method == "POST":
         # Ping every free-channel mapping; unusable ids get an expiring label
         # that routing then skips, so dead resources stop consuming quota.
-        # An optional {"channels": [...]} body limits the sweep, so the small
-        # free channels can be checked without waiting on free-tier's 426.
+        # An optional {"channels": [...]} body limits the sweep to those free
+        # channels instead of the whole free pool.
         channels = None
         if raw.strip():
             try:

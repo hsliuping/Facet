@@ -1123,8 +1123,8 @@ class App:
         """Ping every free-channel mapping; dead ids get an expiring label
         that routing then skips (see maint.dead_model_set).
 
-        channels narrows the sweep to the named free channels, so a huge
-        channel (free-tier carries 426 mappings) cannot block the small ones.
+        channels narrows the sweep to the named free channels, so checking
+        one tier does not wait on every other tier's mappings.
         """
         pairs = None
         if channels:
