@@ -254,26 +254,46 @@ def preserve_manual(models_out: dict, existing: Path) -> None:
 def apply_overrides(models_out: dict, overrides: dict) -> int:
     """Apply manual additions/corrections from manual-overrides.json.
 
-    Keys are '<provider>/<model_id>' just like the table. A key missing from
-    the table adds a fully manual entry (vendors upstream sources ignore,
-    e.g. Baidu ERNIE); a key already present is patched field-by-field and
-    the manual value wins — it represents a verified correction. Keys
-    starting with '_' (documentation) are skipped. Returns entries touched.
+    Keys are '<provider>/<model_id>' just like the table. A key already
+    present is patched field-by-field and the manual value wins — it
+    represents a verified correction; provider itself is identity and can
+    only be re-set to a non-null value, never removed. A key missing from
+    the table carrying real facts is a manual addition (vendors upstream
+    sources ignore, e.g. Baidu ERNIE) with provider inferred from the key
+    prefix. A missing key carrying only manual annotations (quota_tier/
+    quality_hint) is a dangling annotation — the model has left every
+    upstream source — so it is skipped (not emitted); it stays in the
+    overrides file and re-applies automatically if the model returns.
+    Keys starting with '_' (documentation) are skipped. Returns entries
+    touched.
     """
     applied = 0
+    dangling = 0
     for key, patch in overrides.items():
         if key.startswith("_") or not isinstance(patch, dict):
             continue
         if key not in models_out:
-            models_out[key] = prune(patch)
+            real = {f: v for f, v in patch.items()
+                    if f not in MANUAL_FIELDS and v is not None}
+            if not real:
+                dangling += 1
+                continue
+            entry = prune(patch)
+            entry["provider"] = key.split("/", 1)[0]
+            models_out[key] = entry
         else:
             rec = models_out[key]
             for f, v in patch.items():
+                if f == "provider" and v is None:
+                    continue
                 if v is None:
                     rec.pop(f, None)
                 else:
                     rec[f] = v
         applied += 1
+    if dangling:
+        print(f"skipped {dangling} dangling override annotation(s): "
+              "model no longer present in any upstream source")
     return applied
 
 

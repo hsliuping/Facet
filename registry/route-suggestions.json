@@ -1,0 +1,155 @@
+{
+  "generated_at": "2026-11-09T10:36:57Z",
+  "generator": "weekly_maintenance@0.1.0",
+  "policy": {
+    "free_first": true,
+    "agent_min_context": 131072,
+    "note": "report-only; adopting a chain into router.json is a manual edit"
+  },
+  "suggestions": {
+    "openai": {
+      "facet-auto": {
+        "current": [
+          "codex-plan",
+          "glm-plan",
+          "free-tier",
+          "魔搭免费",
+          "百炼免费",
+          "nvidia-nim",
+          "$free",
+          "deepseek"
+        ],
+        "suggested": [
+          "free-tier",
+          "nvidia-nim",
+          "魔搭免费",
+          "百炼免费",
+          "deepseek"
+        ],
+        "evidence": {
+          "free-tier": {
+            "tier": "free",
+            "wire": "nvidia/nemotron-3.5-lightning:free",
+            "model": "aihubmix/nemotron-3.5-lightning-free",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 0.0
+          },
+          "nvidia-nim": {
+            "tier": "free",
+            "wire": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 0.0
+          },
+          "魔搭免费": {
+            "tier": "free",
+            "wire": "Qwen/Qwen3.5-122B-A10B",
+            "model": "alibaba/qwen3.5-122b-a10b",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 3.2
+          },
+          "百炼免费": {
+            "tier": "free",
+            "wire": "qwen3.8-2.4t-a95b",
+            "model": "aihubmix/qwen3.8-2.4t-a95b",
+            "context_window": 262000,
+            "tool_call": true,
+            "output_per_mtok": 6.0
+          },
+          "deepseek": {
+            "tier": "paid",
+            "wire": "deepseek-flash",
+            "model": "deepseek/deepseek-flash",
+            "context_window": 1048576,
+            "tool_call": true,
+            "output_per_mtok": 0.6
+          }
+        }
+      },
+      "facet-cheap": {
+        "current": [
+          "free-tier",
+          "魔搭免费",
+          "百炼免费",
+          "$free",
+          "glm-plan",
+          "nvidia-nim",
+          "deepseek"
+        ],
+        "suggested": [
+          "free-tier",
+          "nvidia-nim",
+          "魔搭免费",
+          "百炼免费",
+          "deepseek"
+        ],
+        "evidence": {
+          "free-tier": {
+            "tier": "free",
+            "wire": "nvidia/nemotron-3.5-lightning:free",
+            "model": "aihubmix/nemotron-3.5-lightning-free",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 0.0
+          },
+          "nvidia-nim": {
+            "tier": "free",
+            "wire": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 0.0
+          },
+          "魔搭免费": {
+            "tier": "free",
+            "wire": "Qwen/Qwen3.5-122B-A10B",
+            "model": "alibaba/qwen3.5-122b-a10b",
+            "context_window": 262144,
+            "tool_call": true,
+            "output_per_mtok": 3.2
+          },
+          "百炼免费": {
+            "tier": "free",
+            "wire": "qwen3.8-2.4t-a95b",
+            "model": "aihubmix/qwen3.8-2.4t-a95b",
+            "context_window": 262000,
+            "tool_call": true,
+            "output_per_mtok": 6.0
+          },
+          "deepseek": {
+            "tier": "paid",
+            "wire": "deepseek-flash",
+            "model": "deepseek/deepseek-flash",
+            "context_window": 1048576,
+            "tool_call": true,
+            "output_per_mtok": 0.6
+          }
+        }
+      }
+    },
+    "anthropic": {
+      "facet-auto": {
+        "current": [
+          "claude-plan"
+        ],
+        "suggested": [],
+        "evidence": {}
+      },
+      "facet-cheap": {
+        "current": null,
+        "suggested": [],
+        "evidence": {}
+      }
+    }
+  },
+  "skipped": {
+    "unresolved_flagship": [
+      "火山引擎免费"
+    ],
+    "no_tool_call": [],
+    "small_context": []
+  }
+}

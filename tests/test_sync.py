@@ -254,6 +254,29 @@ class OverrideTests(unittest.TestCase):
         self.assertNotIn("family", rec)
         self.assertEqual(rec["provider"], "openai")
 
+    def test_dangling_annotation_skipped_not_emitted(self):
+        # upstream dropped the model; a quota_tier-only override must not
+        # become a provider-less zombie entry (2026-11-09 regression)
+        models = {"openai/gpt-x": {"provider": "openai", "tool_call": True}}
+        n = sync.apply_overrides(models, {"chutes/gone-model": {"quota_tier": "free_daily"}})
+        self.assertEqual(n, 0)
+        self.assertNotIn("chutes/gone-model", models)
+
+    def test_manual_addition_infers_provider_from_key(self):
+        models = {}
+        sync.apply_overrides(models, {"baidu/ernie-5.0": {"context_window": 128000}})
+        self.assertEqual(models["baidu/ernie-5.0"]["provider"], "baidu")
+
+    def test_provider_never_removed_by_null_patch(self):
+        models = {"openai/gpt-x": {"provider": "openai", "context_window": 100}}
+        sync.apply_overrides(models, {"openai/gpt-x": {
+            "provider": None,           # identity: null must not delete it
+            "context_window": 400000,
+        }})
+        rec = models["openai/gpt-x"]
+        self.assertEqual(rec["provider"], "openai")
+        self.assertEqual(rec["context_window"], 400000)
+
 
 if __name__ == "__main__":
     unittest.main()
