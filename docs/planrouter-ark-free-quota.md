@@ -24,10 +24,18 @@ PlanRouter 的 free-align sweep 需要知道「哪些模型还有免费额度」
 
   ```json
   [
-    {"model": "kimi-k3-1-pro-261024", "type": "Text",
+    {"model": "kimi-k3-1-pro", "type": "Text",
      "remaining": 3800000, "expires": "2026-12-09"}
   ]
   ```
+
+  注意：管理面回报的是**模型族名**（`FoundationModelName`，如
+  `kimi-k3-1-pro`），不是聊天调用需要的版本名（`kimi-k3-1-pro-261024`）。
+  族名不带版本日期后缀，直接拿去调 `/chat/completions` 会 404；因此
+  CLI 和 sweep 拿到族名后还会用渠道自己的 `ark-` Key 读数据面
+  `/models`，按「族名 → 版本名」归并（`resolve_callable_names`）再写入
+  映射——doubao 系两处同名直接用，第三方模型（kimi/deepseek/glm/qwen）
+  取带纯数字版本后缀的最新名。
 
 - **行映射规则**（`rows_from_items`）：只保留 `State == "Available"` 的
   模型；`remaining` 取「初始免费额度剩余（Total−Consumed）」与
@@ -37,8 +45,9 @@ PlanRouter 的 free-align sweep 需要知道「哪些模型还有免费额度」
   报「今天 + 30 天」。真正的门闩是 `remaining > 0`，每次 sweep 刷新。
 - **注册表**：`providers.json`（内置与 overlay 均已写入）给 volcengine
   的 `payg` 模式挂了
-  `"free_quota_cmd": ["facet-ark-quota", "--output", "json"]`；overlay
-  缺该字段时会从内置注册表继承（`INHERIT_LISTS`）。
+  `"free_quota_cmd": ["facet-ark-quota", "--output", "json"]` 和
+  `"credential_envs"`（AK/SK 声明，控制台渠道编辑弹窗据此渲染凭据输入
+  框）；overlay 缺这些字段时会从内置注册表继承（`INHERIT_LISTS`）。
 - **sweep 联动**：只有 `tier == "free"` 且关联到带 `free_quota_cmd`
   模式的渠道会被对齐（如运行时渠道「火山引擎免费」，provider=volcengine,
   mode=payg）。调度周期 `defaults.free_align_hours`（默认 24h），
@@ -66,11 +75,18 @@ route。付费渠道始终手工摆位（决定成本优先级）。
 1. **申请 IAM 凭据**：火山引擎控制台 → 访问控制（IAM）→ API 访问密钥，
    为子用户签发 Access Key（建议新建只授权方舟管理面只读的子账号，
    不要复用主账号 AK）。`ark-` 开头的数据面 API Key **无效**。
-2. **提供环境变量** `VOLC_ACCESSKEY` / `VOLC_SECRETKEY`：
-   - 本地直接运行：export 两个变量后手动执行 CLI 验证；
-   - Docker Compose：在 `compose.yaml` 旁的 `.env` 里写
-     `VOLC_ACCESSKEY=...`、`VOLC_SECRETKEY=...`，router 服务已透传。
-     缺省为空——sweep 会告警「免费额度命令执行失败」并保留原映射。
+2. **配置凭据（推荐走控制台界面）**：管理面 → 渠道列表 → 编辑
+   「火山引擎免费」渠道，厂家选 volcengine 后弹窗底部会出现
+   「IAM Access Key（AK）/ IAM Secret Key（SK）」输入框，填入后保存即可
+   ——值写入 `router.json` 顶层 `credentials.volcengine`，回显 `***`，
+   sweep 执行 `facet-ark-quota` 时自动注入子进程环境（界面配置的值优先
+   于进程环境变量）。无头部署等场景也可走环境变量兜底：
+   `VOLC_ACCESSKEY` / `VOLC_SECRETKEY`（本地 export 后手动执行 CLI 验证；
+   Docker Compose 在 `compose.yaml` 旁的 `.env` 里写，router 服务已透传）。
+   两者都没配时 sweep 会告警「免费额度命令执行失败」并保留原映射。
+   配好凭据后，渠道编辑器里点「从上游拉取模型清单」也会直接从管理面
+   （ListModelActivations）拉取**有免费额度的模型**清单——编辑器里刚输入
+   尚未保存的 AK/SK 会立即生效；未配凭据时仍走数据面 `/models` 全量清单。
 3. **验证 CLI**：
 
    ```bash
@@ -92,8 +108,10 @@ route。付费渠道始终手工摆位（决定成本优先级）。
   耗尽后该模型在下次 sweep 时自动移出映射，由路由降级到付费渠道。
 - **不要手写映射**：渠道模型映射以 sweep 结果为准；手工加进去的模型若
   无免费额度，调用会直接按量计费。
-- **AK/SK 安全**：凭据只进环境变量，不落仓库；`.env` 不入库（保持
-  `.gitignore` 现状）；IAM 子账号权限最小化。
+- **AK/SK 安全**：界面配置的凭据保存在 `router.json`（与渠道 API Key
+  同级保护：接口回显 `***`、不落日志），`router.json` 不入库；环境变量
+  兜底同样只进环境、`.env` 不入库（保持 `.gitignore` 现状）；IAM 子账号
+  权限最小化。
 
 ## 测试
 

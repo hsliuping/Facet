@@ -54,8 +54,14 @@ body {
 
 .menu { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
 .menu-group {
-  color: var(--muted); font-size: 11px; letter-spacing: 1.2px;
-  padding: 14px 10px 5px; user-select: none;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--accent); font-size: 11px; font-weight: 600;
+  letter-spacing: 1.8px;
+  padding: 14px 10px 6px; user-select: none;
+}
+.menu-group::after {
+  content: ""; flex: 1; height: 1px;
+  background: var(--border); opacity: .8;
 }
 .menu-item {
   display: block; width: 100%; text-align: left; background: none;

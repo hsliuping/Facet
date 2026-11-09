@@ -1,5 +1,5 @@
 {
-  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 或 models_url 后写入，手工勿改。models_url 需要密钥的（如百炼 /api/v1/models），会自动借用同厂家已配置渠道的 API Key。keys_url / docs_url 是厂家「获取 Key / 使用文档」入口，展示在控制台渠道编辑弹窗里。",
+  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 或 models_url 后写入，手工勿改。models_url 需要密钥的（如百炼 /api/v1/models），会自动借用同厂家已配置渠道的 API Key。keys_url / docs_url 是厂家「获取 Key / 使用文档」入口，展示在控制台渠道编辑弹窗里。credential_envs 声明该模式免费额度命令所需的管理面凭据（如火山引擎 IAM AK/SK），控制台渠道编辑弹窗按此渲染输入框，值存 router.json 顶层 credentials 段。",
   "providers": [
     {
       "id": "volcengine",
@@ -21,6 +21,10 @@
           "docs_url": "https://www.volcengine.com/docs/82379",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
           "free_quota_cmd": ["facet-ark-quota", "--output", "json"],
+          "credential_envs": [
+            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
+            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+          ],
           "tier": "paid",
           "models": []
         }

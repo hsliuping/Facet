@@ -21,11 +21,12 @@ from . import ui
 from . import maintenance as maint
 from . import freealign as freealign_mod
 from . import providers as providers_mod
+from . import ark_quota
 from .audit import RequestLog
 from .core import (
     ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
     open_with_proxy, parse_cooldown, parse_config, resolve_model,
-    upstream_path_for,
+    resolve_secret, upstream_path_for,
 )
 from .notifier import ReminderService
 from .persistence import StatePersistence
@@ -176,6 +177,29 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
                 listen[field] = key
             else:
                 listen.pop(field, None)
+    # Vendor management credentials follow the same rules: the editor round-
+    # trips masked values as "***", so empty/masked entries inherit the
+    # stored value and an entirely absent section (a console tab opened
+    # before the field existed) inherits the whole stored section.
+    if "credentials" not in merged and old_raw.get("credentials"):
+        merged["credentials"] = copy.deepcopy(old_raw["credentials"])
+    creds = merged.get("credentials")
+    old_creds = old_raw.get("credentials")
+    if isinstance(creds, dict):
+        for vendor_id, vendor_map in creds.items():
+            if not isinstance(vendor_map, dict):
+                continue
+            old_map = old_creds.get(vendor_id) if isinstance(old_creds, dict) else None
+            for env_name, value in list(vendor_map.items()):
+                if value in (None, "", "***"):
+                    inherited = (old_map or {}).get(env_name)
+                    if inherited:
+                        vendor_map[env_name] = inherited
+                    else:
+                        vendor_map.pop(env_name, None)
+        for vendor_id in [k for k, v in creds.items()
+                          if isinstance(v, dict) and not v]:
+            creds.pop(vendor_id)
     return merged
 
 
@@ -565,6 +589,14 @@ class App:
         for field in ("api_key", "admin_key"):
             if listen.get(field) and not str(listen[field]).startswith("env:"):
                 listen[field] = "***"
+        creds = visible.get("credentials")
+        if isinstance(creds, dict):
+            for vendor_map in creds.values():
+                if not isinstance(vendor_map, dict):
+                    continue
+                for env_name, value in vendor_map.items():
+                    if value and not str(value).startswith("env:"):
+                        vendor_map[env_name] = "***"
         policy = self.config.models
         visible["models"] = {
             "branded": dict(policy.branded),
@@ -738,12 +770,91 @@ class App:
             return None
         return f"registry:{pid}/{mode_key}", models
 
-    def probe_channel_models(self, channel) -> dict:
+    def _ark_credentials(self, channel: dict) -> dict[str, str]:
+        """IAM AK/SK for the volcengine management plane.
+
+        Precedence mirrors the free-align injection: unsaved editor draft
+        (plain value or env:VAR) beats configured credentials (already
+        resolved), which beat the process environment.
+        """
+        saved = (getattr(self.config, "credentials", None) or {}).get(
+            "volcengine") or {}
+        draft = (channel.get("credentials") or {}).get("volcengine") or {}
+        out: dict[str, str] = {}
+        for key in (ark_quota.AK_ENV, ark_quota.SK_ENV):
+            value = str(draft.get(key) or "").strip()
+            if value and value != "***":
+                value = resolve_secret(value) or ""
+            else:
+                value = str(saved.get(key) or "").strip()
+            if not value:
+                value = os.environ.get(key, "").strip()
+            if value:
+                out[key] = value
+        return out
+
+    def _probe_ark_quota(self, channel: dict) -> dict:
+        """Catalog pull for a volcengine payg channel, combining both planes.
+
+        The collaborative-reward free quota is only visible through the
+        IAM-signed ListModelActivations action, and it reports family names
+        (``kimi-k3-1-pro``), not the versioned id a chat call needs (the
+        data-plane /models route lists ``kimi-k3-1-pro-261024``). So the
+        quota list from the management plane is filtered here against the
+        data-plane /models list (fetched with the channel's own ark-... key)
+        to resolve each free family into its callable name. No IAM
+        credentials -> fall back to the upstream /models fetch; a failed
+        signed query is reported instead of silently switching sources.
+        """
+        name = channel.get("name")
+        creds = self._ark_credentials(channel)
+        ak = creds.get(ark_quota.AK_ENV, "")
+        sk = creds.get(ark_quota.SK_ENV, "")
+        if not ak or not sk:
+            return probe_models(channel)
+        try:
+            rows = ark_quota.rows_from_items(ark_quota.list_items(ak, sk))
+        except Exception as exc:
+            return {"ok": False, "name": name,
+                    "error": f"方舟管理面查询失败：{exc}",
+                    "hint": "检查 IAM AK/SK（访问控制 IAM → API 访问密钥）；"
+                            "ark- 开头的数据面 Key 无法查询免费额度"}
+        families: list[str] = []
+        for row in rows:
+            m = str(row.get("model") or "").strip()
+            if m and m not in families:
+                families.append(m)
+        dp = probe_models(channel)
+        if not dp.get("ok"):
+            return {"ok": False, "name": name,
+                    "error": f"数据面 /models 查询失败：{dp.get('error')}",
+                    "hint": "已拿到免费额度清单，但无法解析可调用名；"
+                            "检查渠道 api_key 与 base_url"}
+        models = ark_quota.resolve_callable_names(
+            families, dp.get("models") or [])
+        result = {"ok": True, "name": name, "source": "ark-quota",
+                  "endpoint": (f"management:{ark_quota.ACTION}"
+                               f" + data:{dp.get('endpoint') or 'models'}"),
+                  "models": models, "count": len(models)}
+        if not families:
+            result["hint"] = ("该账号当前没有剩余免费额度"
+                              "（协作奖励资源包未发放或已用尽）")
+        elif not models:
+            result["hint"] = ("管理面有免费额度，但 /models 里找不到对应可调用名；"
+                              "确认渠道 api_key 与 IAM 属同一账号")
+        return result
+
+    def probe_channel_models(self, channel, allow_ark_quota: bool = False) -> dict:
         """Fetch one channel's upstream model list for the console.
 
         `channel` may be a full draft (unsaved form) or a bare name. Secrets
         marked *** are merged from the saved config; a successful fetch for a
         saved channel name is recorded in the channel's catalog.
+
+        allow_ark_quota=True (console-initiated pulls) lets volcengine payg
+        channels take their catalog from the IAM-signed management plane when
+        credentials are available; the background catalog sweep keeps using
+        the data-plane route.
         """
         if not isinstance(channel, dict):
             raise ValueError("channel 必须是对象")
@@ -766,6 +877,9 @@ class App:
             endpoint, models = plan
             result = {"ok": True, "name": name, "source": "registry",
                       "endpoint": endpoint, "models": models, "count": len(models)}
+        elif allow_ark_quota and str(merged.get("provider") or "") == "volcengine" \
+                and str(merged.get("mode") or "") == "payg":
+            result = self._probe_ark_quota(merged)
         else:
             result = probe_models(merged)
         if result.get("ok") and isinstance(name, str) and self.config.channel(name):

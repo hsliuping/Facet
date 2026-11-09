@@ -333,6 +333,12 @@ class Config:
     channels: tuple[Channel, ...]
     routes: dict[str, Route]
     models: ModelPolicy = field(default_factory=ModelPolicy)
+    # Vendor management credentials for free-quota CLI tools, keyed by
+    # provider id then env-var name, resolved from plaintext or `env:VAR`
+    # at parse time (missing variables are dropped). The raw section stays
+    # in App.raw for the editor; these resolved values are injected into
+    # the vendor command's subprocess environment.
+    credentials: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def channel(self, name: str) -> Channel | None:
         return next((c for c in self.channels if c.name == name), None)
@@ -477,6 +483,26 @@ def parse_config(raw: dict) -> Config:
         score_halflife_hours=float(d.get("score_halflife_hours", 12.0)),
     )
 
+    # Vendor management credentials: {provider: {ENV_NAME: value}}. Values
+    # may be plaintext or `env:VAR` references (resolved here so free-quota
+    # commands receive the actual secret); malformed entries are dropped,
+    # never fatal — a broken credentials section must not brick the config.
+    credentials: dict[str, dict[str, str]] = {}
+    creds_raw = raw.get("credentials")
+    if isinstance(creds_raw, dict):
+        for vendor_id, entries in creds_raw.items():
+            if not isinstance(entries, dict):
+                continue
+            resolved: dict[str, str] = {}
+            for env_name, value in entries.items():
+                if not isinstance(value, str):
+                    continue
+                secret = resolve_secret(value.strip())
+                if secret:
+                    resolved[str(env_name)] = secret
+            if resolved:
+                credentials[str(vendor_id)] = resolved
+
     channels: list[Channel] = []
     seen: set[str] = set()
     for item in raw.get("channels") or []:
@@ -604,7 +630,7 @@ def parse_config(raw: dict) -> Config:
             )
     return Config(
         listen=listen, defaults=defaults, channels=tuple(channels),
-        routes=routes, models=model_policy,
+        routes=routes, models=model_policy, credentials=credentials,
     )
 
 

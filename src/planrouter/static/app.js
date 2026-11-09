@@ -1937,6 +1937,16 @@ function draftChannelFromEditor() {
   const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
   const rate = {};
   ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => { if (val(k)) rate[k] = Number(val(k)); });
+  // Typed vendor-management credentials (IAM AK/SK) travel with the draft so
+  // a catalog pull uses them immediately, before the channel is saved.
+  const provider = val('provider');
+  const creds = {};
+  if (provider) {
+    f.querySelectorAll('#vendor-credentials [data-cred-env]').forEach((inp) => {
+      const v = inp.value.trim();
+      if (v) creds[inp.dataset.credEnv] = v;
+    });
+  }
   return {
     name: val('name'), protocol: val('protocol'), base_url: val('base_url'),
     api_key: val('api_key') || '***',
@@ -1944,8 +1954,9 @@ function draftChannelFromEditor() {
     cooldown_minutes: Number(val('cooldown_minutes') || 300),
     rate, models: parseModels(val('models')),
     enabled: f.elements.namedItem('enabled').checked,
-    provider: val('provider'),
+    provider,
     mode: val('mode'),
+    ...(Object.keys(creds).length ? { credentials: { [provider]: creds } } : {}),
     ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
     ...(val('proxy') ? { proxy: val('proxy') } : {}),
   };
@@ -2057,7 +2068,9 @@ async function fetchChannelModels() {
       throw new Error((result.error || '拉取失败') + (result.hint ? ' — ' + result.hint : ''));
     }
     renderCatalogList(result.models || []);
-    toast(`拉取成功：${result.count} 个模型${result.source === 'registry' ? '（厂家套餐清单）' : ''}`);
+    const where = result.source === 'registry' ? '（厂家套餐清单）'
+      : result.source === 'ark-quota' ? '（协作奖励免费额度清单）' : '';
+    toast(`拉取成功：${result.count} 个模型${where}`);
   } catch (err) {
     list.hidden = false;
     list.innerHTML = `<div class="hint">${esc(err.message)}</div>`;
@@ -2264,6 +2277,34 @@ function renderProviderLinks() {
   box.innerHTML = parts.join(' ');
   const btn = box.querySelector('[data-guide]');
   if (btn) btn.onclick = () => showGuideOverlay(btn.dataset.guide);
+}
+
+// Vendor management credentials (registry `credential_envs`, e.g. Volcengine
+// IAM AK/SK for the free-quota CLI). Values live in config.credentials
+// [provider][ENV]; the editor round-trips masked plaintext as "***", so an
+// empty input keeps the stored value instead of clearing it.
+function renderVendorCredentials() {
+  const box = $('vendor-credentials');
+  if (!box) return;
+  const f = $('editor-form');
+  const pid = f?.elements.namedItem('provider')?.value || '';
+  const modeKey = f?.elements.namedItem('mode')?.value || '';
+  const envs = registryMode(pid, modeKey)?.credential_envs || [];
+  if (!envs.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  const saved = (state.config.credentials || {})[pid] || {};
+  box.hidden = false;
+  box.innerHTML = envs.map((e) => {
+    const cur = saved[e.env] || '';
+    const shown = cur === '***' ? '' : cur;
+    const ph = cur === '***' ? '已配置，留空保持不变' : (cur ? `当前引用 ${cur}` : '未配置');
+    return `<label>${esc(e.label || e.env)}（${esc(e.env)}）</label>
+      <input data-cred-env="${esc(e.env)}" type="text" value="${esc(shown)}" placeholder="${esc(ph)}">`;
+  }).join('')
+    + '<small class="hint">厂家管理面凭据，仅用于免费额度查询命令（火山引擎填 IAM AK/SK，不是 ark- 开头的数据面 Key）；提交后回显为 ***，留空保持已配值。</small>';
 }
 
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
@@ -2609,6 +2650,7 @@ function openChannelEditor(index) {
           </div>
           <input id="f-api_key" name="api_key" type="text" value="${esc(c.api_key || '')}" placeholder="直接粘贴 API Key；需要引用环境变量时才写 env:ARK_API_KEY">
         </div>
+        <div class="field wide" id="vendor-credentials" hidden></div>
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
         ${field('RPM', 'rpm', rate.rpm ?? '', { type: 'number' })}
@@ -2622,7 +2664,7 @@ function openChannelEditor(index) {
         </div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
-          <small class="hint">按密钥请求上游 /models；勾选要暴露的模型后写入模型映射</small>
+          <small class="hint">按密钥请求上游 /models；火山引擎（按量付费）配置 IAM AK/SK 后改为从方舟管理面拉取有免费额度的模型清单</small>
         </div>
         <div id="catalog-list" class="channel-picker" hidden></div>
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
@@ -2648,10 +2690,12 @@ function openChannelEditor(index) {
     fMode.innerHTML = providerModeOptions(fProvider.value, '');
     applyProviderPreset();
     renderProviderLinks();
+    renderVendorCredentials();
   };
-  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); };
+  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); };
   renderModelTierRows();
   renderProviderLinks();
+  renderVendorCredentials();
 }
 
 function saveChannelEditor() {
@@ -2673,6 +2717,21 @@ function saveChannelEditor() {
     });
     const provider = val('provider');
     if (!provider) throw new Error('必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
+    // Vendor management credentials for the edited channel's provider:
+    // typed values are written into config.credentials[provider][ENV];
+    // empty inputs keep whatever is stored (masked "***" or env: reference).
+    const credInputs = f.querySelectorAll('[data-cred-env]');
+    if (credInputs.length) {
+      const allCreds = { ...(state.config.credentials || {}) };
+      const vendorCreds = { ...(allCreds[provider] || {}) };
+      credInputs.forEach((inp) => {
+        const v = inp.value.trim();
+        if (v) vendorCreds[inp.dataset.credEnv] = v;
+      });
+      if (Object.keys(vendorCreds).length) allCreds[provider] = vendorCreds;
+      else delete allCreds[provider];
+      state.config.credentials = allCreds;
+    }
     const channel = {
       name,
       protocol: val('protocol'),

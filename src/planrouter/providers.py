@@ -44,9 +44,10 @@ def _read_entries(path: Path) -> list:
 INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 
 # List-valued fields inherit the same way: the free-quota alignment command
-# ships with the package registry (vendor CLI knowledge), so an older overlay
-# entry written before the field existed must not erase it.
-INHERIT_LISTS = ("free_quota_cmd",)
+# and the credential-env declarations ship with the package registry (vendor
+# CLI knowledge), so an older overlay entry written before the field existed
+# must not erase it.
+INHERIT_LISTS = ("free_quota_cmd", "credential_envs")
 
 
 def _merge(builtin: list, overlay: list) -> list:
@@ -84,7 +85,7 @@ def _fill_links(entry: dict, base: dict) -> dict:
             if not mode.get(field):
                 inherited = base_mode.get(field)
                 if inherited:
-                    mode[field] = list(inherited)
+                    mode[field] = copy.deepcopy(inherited)
     return entry
 
 
@@ -165,6 +166,20 @@ def normalize_vendor(entry) -> dict:
                 raise ValueError(
                     f"模式 {key} 的 free_quota_cmd 必须是非空字符串数组")
             quota_cmd = [x.strip() for x in cmd_raw]
+        envs_raw = mode.get("credential_envs")
+        credential_envs: list[dict] = []
+        if envs_raw:
+            if not isinstance(envs_raw, list):
+                raise ValueError(f"模式 {key} 的 credential_envs 必须是对象数组")
+            for item in envs_raw:
+                if not isinstance(item, dict) or not str(item.get("env") or "").strip():
+                    raise ValueError(
+                        f"模式 {key} 的 credential_envs 条目必须包含 env 字段")
+                env_name = str(item["env"]).strip()
+                credential_envs.append({
+                    "env": env_name,
+                    "label": str(item.get("label") or "").strip() or env_name,
+                })
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -174,6 +189,7 @@ def normalize_vendor(entry) -> dict:
             "docs_url": docs_url,
             "models_url": models_url,
             "free_quota_cmd": quota_cmd,
+            "credential_envs": credential_envs,
             "models": models,
         }
     return {"id": vendor_id, "name": name.strip(), "modes": modes}

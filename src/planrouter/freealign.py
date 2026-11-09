@@ -14,11 +14,14 @@ land in the report alerts so the next sweep can retry.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import date
 
+from .ark_quota import resolve_callable_names
 from .core import AUTO_MODEL
+from .probe import probe_models
 
 # `bl usage free` shells out to the vendor CLI and may do network I/O.
 CMD_TIMEOUT = 120.0
@@ -85,12 +88,19 @@ def free_models_from_rows(rows, today: str | None = None) -> list[str]:
     return out
 
 
-def run_vendor_cmd(cmd: list[str], timeout: float = CMD_TIMEOUT) -> str:
-    """Run a vendor quota CLI and return its stdout; raises RuntimeError."""
+def run_vendor_cmd(cmd: list[str], timeout: float = CMD_TIMEOUT,
+                   extra_env: dict[str, str] | None = None) -> str:
+    """Run a vendor quota CLI and return its stdout; raises RuntimeError.
+
+    `extra_env` values (management credentials configured through the
+    editor) override the inherited environment for this child only; an
+    empty map keeps the plain inherit-parent behavior.
+    """
+    env = {**os.environ, **extra_env} if extra_env else None
     try:
         proc = subprocess.run(
             _resolve_cmd(cmd), capture_output=True, timeout=timeout,
-            encoding="utf-8", errors="replace")
+            encoding="utf-8", errors="replace", env=env)
     except FileNotFoundError as exc:
         raise RuntimeError(f"命令不存在（{exc.filename}），请先安装厂家 CLI") from None
     except subprocess.TimeoutExpired:
@@ -122,14 +132,44 @@ def _mode_for(app, channel) -> list[str] | None:
     return None
 
 
+def _creds_for(app, channel) -> dict[str, str]:
+    """Resolved management credentials for the channel's provider."""
+    creds = getattr(app.config, "credentials", None) or {}
+    return dict(creds.get(str(getattr(channel, "provider", "") or "")) or {})
+
+
+def _resolve_volcengine_callables(channel, families: list[str]) -> list[str]:
+    """Map ark free-quota family names to data-plane callable ids.
+
+    ``facet-ark-quota`` reports the management-plane family name (e.g.
+    ``kimi-k3-1-pro``); the chat call needs the versioned id the data-plane
+    ``/models`` route lists (``kimi-k3-1-pro-261024``). The channel's own
+    ark-... key reads that route, so this runs only when such families exist.
+    """
+    raw = {
+        "name": channel.name,
+        "protocol": channel.protocol,
+        "base_url": channel.base_url,
+        "api_key": channel.api_key,
+        "models": dict(channel.models) or {"auto": "*"},
+        "upstream_path": channel.upstream_path,
+        "proxy": getattr(channel, "proxy", ""),
+    }
+    dp = probe_models(raw)
+    if not dp.get("ok"):
+        raise RuntimeError(
+            f"数据面 /models 解析失败：{dp.get('error') or '未知错误'}")
+    return resolve_callable_names(families, dp.get("models") or [])
+
+
 def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
     """One sweep over free-tier channels linked to a free_quota_cmd mode.
 
-    The same vendor command is executed once per distinct command line even
-    when several channels share it. Returns a report whose ``patch``
-    (channel -> new models mapping) the caller applies through the normal
-    config pipeline. Never raises; failures become alerts and the channel
-    keeps its current mapping until the next sweep.
+    The same vendor command is executed once per distinct (command line,
+    credentials) pair even when several channels share it. Returns a report
+    whose ``patch`` (channel -> new models mapping) the caller applies
+    through the normal config pipeline. Never raises; failures become
+    alerts and the channel keeps its current mapping until the next sweep.
     """
     report: dict = {"trigger": trigger, "aligned": [], "alerts": [], "patch": {}}
     runner = _run_cmd or run_vendor_cmd
@@ -140,10 +180,11 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
         cmd = _mode_for(app, channel)
         if not cmd:
             continue
-        key = tuple(cmd)
+        creds = _creds_for(app, channel)
+        key = (tuple(cmd), tuple(sorted(creds.items())))
         if key not in results:
             try:
-                rows = parse_free_quota_output(runner(list(cmd)))
+                rows = parse_free_quota_output(runner(list(cmd), extra_env=creds))
                 results[key] = free_models_from_rows(rows)
             except Exception as exc:
                 results[key] = None
@@ -152,7 +193,18 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
                     "message": f"免费额度命令执行失败（{str(exc)[:160]}），保留原映射",
                 })
                 continue
-        models = results[key] or []
+        families = results[key] or []
+        if getattr(channel, "provider", "") == "volcengine" and families:
+            try:
+                models = _resolve_volcengine_callables(channel, families)
+            except Exception as exc:
+                report["alerts"].append({
+                    "channel": channel.name, "kind": "free_quota_cmd",
+                    "message": f"免费额度版本名解析失败（{str(exc)[:160]}），保留原映射",
+                })
+                continue
+        else:
+            models = families
         mapping = align_mapping(channel, models)
         changed = mapping != dict(channel.models)
         report["aligned"].append({

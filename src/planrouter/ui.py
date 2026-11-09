@@ -360,7 +360,8 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": "body must be an object"}})
             return True
         try:
-            result = app.probe_channel_models(incoming.get("channel"))
+            result = app.probe_channel_models(incoming.get("channel"),
+                                              allow_ark_quota=True)
         except ValueError as exc:
             _json(h, 400, {"error": {"message": str(exc)}})
             return True

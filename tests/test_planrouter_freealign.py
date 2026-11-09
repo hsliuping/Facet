@@ -100,9 +100,41 @@ def registry_fixture() -> list[dict]:
 
 
 def fake_runner(text: str):
-    def run(cmd, timeout=120):
+    def run(cmd, timeout=120, extra_env=None):
         return text
     return run
+
+
+def volc_config() -> dict:
+    return {
+        "listen": {"host": "127.0.0.1", "port": 0},
+        "channels": [
+            {"name": "火山免费", "protocol": "openai",
+             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+             "api_key": "ark-test", "priority": 100, "rate": {},
+             "models": {"auto": "", "old-doubao": "old-doubao"},
+             "tier": "free", "tiers": {}, "provider": "volcengine",
+             "mode": "payg"},
+            {"name": "claude-x", "protocol": "anthropic",
+             "base_url": "https://api.anthropic.com", "api_key": "sk-x",
+             "models": {"claude-sonnet-x": "claude-sonnet-x"}, "priority": 90},
+        ],
+        "routes": [
+            {"name": "default", "protocol": "openai", "channels": ["火山免费"]},
+            {"name": "default", "protocol": "anthropic", "channels": ["claude-x"]},
+        ],
+    }
+
+
+def volc_registry() -> list[dict]:
+    return [{
+        "id": "volcengine", "name": "火山引擎方舟",
+        "modes": {"payg": {
+            "label": "按量付费", "protocol": "openai",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "tier": "paid", "models": [], "free_quota_cmd": ["facet-ark-quota"],
+        }},
+    }]
 
 
 class ParseTests(unittest.TestCase):
@@ -140,6 +172,13 @@ class RunVendorCmdTests(unittest.TestCase):
     def test_success_returns_stdout(self):
         out = freealign.run_vendor_cmd(
             [sys.executable, "-c", "print('hello')"], timeout=30)
+        self.assertIn("hello", out)
+
+    def test_extra_env_reaches_child_process(self):
+        out = freealign.run_vendor_cmd(
+            [sys.executable, "-c",
+             "import os; print(os.environ.get('FACET_TEST_TOKEN', 'MISSING'))"],
+            timeout=30, extra_env={"FACET_TEST_TOKEN": "hello"})
         self.assertIn("hello", out)
 
     def test_missing_binary_raises_runtime_error(self):
@@ -192,7 +231,7 @@ class SweepTests(unittest.TestCase):
         self.assertFalse(aligned["百炼免费"]["changed"])
 
     def test_command_failure_keeps_mapping(self):
-        def broken(cmd, timeout=120):
+        def broken(cmd, timeout=120, extra_env=None):
             raise RuntimeError("命令不存在")
         report = self.sweep(runner=broken)
         self.assertEqual(report["patch"], {})
@@ -202,6 +241,82 @@ class SweepTests(unittest.TestCase):
     def test_empty_quota_clears_concrete_keys_keeps_auto(self):
         report = self.sweep(text=json.dumps([]))
         self.assertEqual(report["patch"], {"百炼免费": {"auto": ""}})
+
+    def test_credentials_injected_and_keyed_per_value(self):
+        captured = []
+
+        def run(cmd, timeout=120, extra_env=None):
+            captured.append((tuple(cmd), dict(extra_env or {})))
+            return json.dumps(bl_rows())
+
+        raw = align_config()
+        raw["credentials"] = {"bailian": {"BL_TOKEN": "abc"}}
+        self.app = App(parse_config(raw))
+        self.app.providers = registry_fixture()
+        report = freealign.run_free_align(self.app, "manual", _run_cmd=run)
+        self.assertEqual(captured,
+                         [(("fake-bl", "usage", "free"), {"BL_TOKEN": "abc"})])
+        self.assertEqual(report["alerts"], [])
+        # Unrelated providers keep empty injection; the sweep still works.
+        raw2 = align_config()
+        raw2["credentials"] = {"volcengine": {"VOLC_ACCESSKEY": "ak"}}
+        app2 = App(parse_config(raw2))
+        app2.providers = registry_fixture()
+        captured.clear()
+        freealign.run_free_align(app2, "manual", _run_cmd=run)
+        self.assertEqual(captured, [(("fake-bl", "usage", "free"), {})])
+
+    def test_same_command_same_credentials_run_once(self):
+        seen = []
+
+        def run(cmd, timeout=120, extra_env=None):
+            seen.append(extra_env)
+            return json.dumps(bl_rows())
+
+        raw = align_config()
+        dup = dict(raw["channels"][0])
+        dup["name"] = "百炼免费B"
+        raw["channels"].append(dup)
+        raw["credentials"] = {"bailian": {"BL_TOKEN": "abc"}}
+        app = App(parse_config(raw))
+        app.providers = registry_fixture()
+        report = freealign.run_free_align(app, "manual", _run_cmd=run)
+        self.assertEqual(len(seen), 1)  # same command + same creds → once
+        self.assertEqual(report["alerts"], [])
+
+    def test_volcengine_families_resolve_to_versioned_names(self):
+        app = App(parse_config(volc_config()))
+        app.providers = volc_registry()
+        rows = json.dumps([
+            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 100,
+             "expires": FUTURE},
+        ])
+        with mock.patch("planrouter.freealign.probe_models",
+                        return_value={"ok": True,
+                                      "endpoint": "https://ark.../models",
+                                      "models": ["kimi-k3-1-pro-261024"]}):
+            report = freealign.run_free_align(app, "manual",
+                                              _run_cmd=fake_runner(rows))
+        self.assertEqual(report["patch"], {
+            "火山免费": {"auto": "",
+                         "kimi-k3-1-pro-261024": "kimi-k3-1-pro-261024"},
+        })
+        self.assertEqual(report["alerts"], [])
+
+    def test_volcengine_resolution_failure_keeps_mapping(self):
+        app = App(parse_config(volc_config()))
+        app.providers = volc_registry()
+        rows = json.dumps([
+            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 100,
+             "expires": FUTURE},
+        ])
+        with mock.patch("planrouter.freealign.probe_models",
+                        return_value={"ok": False, "error": "401"}):
+            report = freealign.run_free_align(app, "manual",
+                                              _run_cmd=fake_runner(rows))
+        self.assertEqual(report["patch"], {})
+        self.assertEqual(len(report["alerts"]), 1)
+        self.assertIn("版本名解析失败", report["alerts"][0]["message"])
 
 
 class ApplyTests(unittest.TestCase):

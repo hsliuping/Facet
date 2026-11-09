@@ -9,6 +9,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -290,6 +291,134 @@ class CatalogAppTests(unittest.TestCase):
         result = self.app.probe_channel_models(
             {"name": "plan-a", "provider": "volcengine", "mode": "payg"})
         self.assertTrue(result["ok"])
+        self.assertNotIn("source", result)
+        self.assertEqual(result["models"], ["model-a", "model-b"])
+
+    def test_probe_channel_models_ark_quota_management_plane(self):
+        import dataclasses
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
+        }]
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-ui",
+                                        "VOLC_SECRETKEY": "sk-ui"}})
+        items = [
+            {"FoundationModelName": "doubao-seed-1-6", "State": "Available",
+             "InitialInferenceFreeUsage": {"Total": 500000, "Consumed": 100000}},
+            {"FoundationModelName": "doubao-seed-1-6-flash", "State": "Available",
+             "InitialInferenceFreeUsage": {"Total": 2000, "Consumed": 2000}},
+        ]
+        with mock.patch("planrouter.server.ark_quota.list_items",
+                        return_value=items) as li, \
+             mock.patch("planrouter.server.probe_models",
+                        return_value={"ok": True, "endpoint": "https://u/models",
+                                      "models": ["doubao-seed-1-6",
+                                                 "kimi-k3-1-pro-261024"]}) as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "ark-quota")
+        # flash has zero remaining quota -> not offered; a callable kimi name
+        # without a matching management family is also not offered.
+        self.assertEqual(result["models"], ["doubao-seed-1-6"])
+        self.assertTrue(str(result["endpoint"]).startswith("management:"))
+        li.assert_called_once_with("ak-ui", "sk-ui")
+        pm.assert_called_once()
+
+    def test_probe_channel_models_ark_quota_resolves_version_suffix(self):
+        import dataclasses
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
+        }]
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-ui",
+                                        "VOLC_SECRETKEY": "sk-ui"}})
+        items = [
+            {"FoundationModelName": "kimi-k3-1-pro", "State": "Available",
+             "InitialInferenceFreeUsage": {"Total": 500000, "Consumed": 32}},
+        ]
+        with mock.patch("planrouter.server.ark_quota.list_items",
+                        return_value=items), \
+             mock.patch("planrouter.server.probe_models",
+                        return_value={"ok": True, "endpoint": "https://u/models",
+                                      "models": ["kimi-k3-1-pro-261024",
+                                                 "doubao-seed-evolving"]}):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        # family name resolves to its versioned callable id
+        self.assertEqual(result["models"], ["kimi-k3-1-pro-261024"])
+
+    def test_probe_channel_models_ark_quota_draft_credentials_win(self):
+        import dataclasses
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-saved",
+                                        "VOLC_SECRETKEY": "sk-saved"}})
+        draft = {"name": "plan-a", "provider": "volcengine", "mode": "payg",
+                 "credentials": {"volcengine": {"VOLC_ACCESSKEY": "ak-draft",
+                                                "VOLC_SECRETKEY": "sk-draft"}}}
+        with mock.patch("planrouter.server.ark_quota.list_items",
+                        return_value=[]) as li, \
+             mock.patch("planrouter.server.probe_models",
+                        return_value={"ok": True, "endpoint": "https://u/models",
+                                      "models": ["a"]}):
+            result = self.app.probe_channel_models(draft, allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 0)
+        self.assertIn("免费额度", result["hint"])
+        li.assert_called_once_with("ak-draft", "sk-draft")
+
+    def test_probe_channel_models_ark_quota_failure_reported(self):
+        import dataclasses
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-bad",
+                                        "VOLC_SECRETKEY": "sk-bad"}})
+        with mock.patch("planrouter.server.ark_quota.list_items",
+                        side_effect=RuntimeError("HTTP 401：InvalidCredentials")):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertFalse(result["ok"])
+        self.assertIn("401", result["error"])
+        self.assertIn("IAM", result["hint"])
+
+    def test_probe_channel_models_ark_quota_without_credentials_falls_back(self):
+        import os
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
+        }]
+        # No saved credentials; blank out any ambient env AK/SK too.
+        env = dict(os.environ)
+        env["VOLC_ACCESSKEY"] = ""
+        env["VOLC_SECRETKEY"] = ""
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertNotIn("source", result)
+        self.assertEqual(result["models"], ["model-a", "model-b"])
+        self.assertEqual(len(self.upstream.seen), 1)
+
+    def test_background_catalog_sweep_keeps_data_plane(self):
+        import dataclasses
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-ui",
+                                        "VOLC_SECRETKEY": "sk-ui"}})
+        with mock.patch("planrouter.server.ark_quota.list_items") as li:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "volcengine", "mode": "payg"})
+        li.assert_not_called()
         self.assertNotIn("source", result)
         self.assertEqual(result["models"], ["model-a", "model-b"])
 

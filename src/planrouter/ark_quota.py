@@ -173,6 +173,44 @@ def rows_from_items(items: list, today: str | None = None) -> list[dict]:
     return out
 
 
+def resolve_callable_names(families: list[str],
+                           callables: list[str]) -> list[str]:
+    """Map management-plane family names to data-plane callable ids.
+
+    ``ListModelActivations`` reports a per-family activation name
+    (``FoundationModelName``, e.g. ``kimi-k3-1-pro``) while the data-plane
+    ``/models`` route lists the concrete id a chat call must use — for
+    third-party models that is the family name plus a version-date suffix
+    (``kimi-k3-1-pro-261024``). A family present verbatim in the callable
+    list (the doubao family) is kept as-is; otherwise the latest id carrying
+    a pure-numeric ``-suffix`` is chosen. This numeric rule keeps families
+    that share a prefix distinct (``deepseek-v4-1-flash`` never matches
+    ``deepseek-v4-1-flash-economy-261017``). Families resolve to at most one
+    name each, in family order; unmatched families are dropped.
+    """
+    callable_set = {str(m).strip() for m in callables if str(m).strip()}
+    out: list[str] = []
+    seen: set[str] = set()
+    for family in families:
+        family = str(family).strip()
+        if not family:
+            continue
+        if family in callable_set:
+            pick = family
+        else:
+            candidates = sorted(
+                m for m in callable_set
+                if m.startswith(family + "-")
+                and m[len(family) + 1:].isdigit())
+            if not candidates:
+                continue
+            pick = candidates[-1]  # latest version-date suffix
+        if pick not in seen:
+            seen.add(pick)
+            out.append(pick)
+    return out
+
+
 def _int(value) -> int:
     try:
         return int(value or 0)

@@ -75,7 +75,7 @@
 | LLM7 | 免费匿名（token 可选提额） | 无需注册 | 无 Key | [3.5](#35-llm7免注册免-key) |
 | OVHcloud AI Endpoints | 免费匿名（2 RPM） | 无需注册 | 无 Key | [3.6](#36-ovhcloud-ai-endpoints免注册) |
 | 魔搭 ModelScope | 每日登录领 250 魔粒（约 250–500 次调用） | 手机号（需绑阿里云） | `ms-` | [3.7](#37-魔搭-modelscope免费推理) |
-| 火山引擎方舟 | 按量 + 部分免费模型 + Coding 套餐 | 实名认证 | 火山方舟 Key | [4.1](#41-火山引擎方舟豆包) |
+| 火山引擎方舟 | 按量 + 部分免费模型 + Coding 套餐 | 实名认证 | 火山方舟 Key；免费额度对齐另需 IAM AK/SK | [4.1](#41-火山引擎方舟豆包) |
 | 智谱 GLM | 按量 + 新人额度 + Coding 套餐 | 手机号 | `id.` 长串 | [4.2](#42-智谱-glm) |
 | 阿里云百炼 | 按量 + 新人免费额度（新模型 90 天窗口）+ Token Plan | 实名认证 | `sk-` | [4.3](#43-阿里云百炼) |
 | 腾讯元宝（混元） | 按量 | 实名认证 | 混元 API KEY | [4.4](#44-腾讯元宝混元) |
@@ -309,6 +309,14 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 |---|---|
 | 按量付费 | `https://ark.cn-beijing.volces.com/api/v3` |
 | Coding 套餐（订阅后） | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+
+**查哪些模型还有免费额度（协作奖励计划）**
+
+步骤 3 里说的免费额度（如 `doubao-seed-*-lite` 的赠送 token）来自火山「协作奖励计划」。它的剩余额度没有公开查询 API，需要走**管理面**接口查询——这需要 **IAM AK/SK**：控制台右上角头像 → **访问控制 IAM** → **API 访问密钥**（直链：[console.volcengine.com/iam](https://console.volcengine.com/iam)）创建。注意区分两种 Key：方舟「API Key 管理」发的是 `ark-` 开头的**数据面** Key，只用于调用模型；免费额度对齐用的是**管理面** IAM 密钥，两者互不通用。
+
+**配置推荐走控制台界面**：管理台 → 渠道配置 → 编辑「火山引擎免费」渠道，厂家选火山引擎（按量付费）后，弹窗底部会出现 **IAM Access Key（AK）／ IAM Secret Key（SK）** 输入框，填入保存即可。凭据写入 `router.json` 的 `credentials` 段（与渠道 API Key 同级保护）；提交后回显为 `***`，留空表示保持已配值；界面配置值优先于环境变量。无头部署可用 `VOLC_ACCESSKEY` / `VOLC_SECRETKEY` 环境变量兜底（compose.yaml 已透传）。配好后在渠道编辑器点「从上游拉取模型清单」，拉到的就是管理面上**有免费额度的模型**清单（未配 IAM AK/SK 时仍走数据面 `/models` 的全量清单）。
+
+这套对齐与百炼一样内置为 Facet 的**每日定时任务**（`defaults.free_align_hours` 控制间隔，0 关闭）：网关自动执行随包安装的 `facet-ark-quota` CLI，只保留仍有免费额度的模型作为渠道映射，额度耗尽/过期的自动摘掉，**日常无需手动管理**。想手动核对可单独执行 `facet-ark-quota --output json`；机制细节见[方舟免费额度接入](planrouter-ark-free-quota.md)。
 
 ### 4.2 智谱 GLM
 

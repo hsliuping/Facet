@@ -148,6 +148,50 @@ class RowsTests(unittest.TestCase):
         self.assertEqual(ark_quota.rows_from_items([None, 1, {}]), [])
 
 
+class ResolveCallableNamesTests(unittest.TestCase):
+    def test_exact_family_kept_verbatim(self):
+        self.assertEqual(
+            ark_quota.resolve_callable_names(
+                ["doubao-seed-evolving"],
+                ["doubao-seed-evolving", "other"]),
+            ["doubao-seed-evolving"])
+
+    def test_numeric_version_suffix_resolves(self):
+        self.assertEqual(
+            ark_quota.resolve_callable_names(
+                ["kimi-k3-1-pro"],
+                ["kimi-k3-1-pro-261024", "other"]),
+            ["kimi-k3-1-pro-261024"])
+
+    def test_shared_prefix_families_do_not_cross_match(self):
+        callables = ["deepseek-v4-1-flash-261017",
+                     "deepseek-v4-1-flash-economy-261017"]
+        self.assertEqual(
+            ark_quota.resolve_callable_names(
+                ["deepseek-v4-1-flash", "deepseek-v4-1-flash-economy"],
+                callables),
+            ["deepseek-v4-1-flash-261017",
+             "deepseek-v4-1-flash-economy-261017"])
+
+    def test_picks_latest_suffix(self):
+        self.assertEqual(
+            ark_quota.resolve_callable_names(
+                ["kimi-k3-1-pro"],
+                ["kimi-k3-1-pro-250901", "kimi-k3-1-pro-261024"]),
+            ["kimi-k3-1-pro-261024"])
+
+    def test_unmatched_family_dropped(self):
+        self.assertEqual(
+            ark_quota.resolve_callable_names(["ghost-family"], ["a", "b"]),
+            [])
+
+    def test_deduplicates_preserving_order(self):
+        self.assertEqual(
+            ark_quota.resolve_callable_names(
+                ["a-1", "a-1", "b"], ["a-1-1", "b"]),
+            ["a-1-1", "b"])
+
+
 class PagingTests(unittest.TestCase):
     @staticmethod
     def _urlopen(calls: list, bodies: list, urls: list):
