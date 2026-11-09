@@ -375,9 +375,13 @@ function channelHaystack(c) {
 function renderChannels() {
   const list = $('channel-list');
   const kw = (state.channelFilter || '').trim().toLowerCase();
+  // Enabled channels first, then the config order (priority; the backend
+  // sort stays untouched because it also drives $free expansion and retry
+  // order). Array.prototype.sort is stable, so ties keep their order.
   const shown = state.config.channels
     .map((c, i) => [c, i])
-    .filter(([c]) => !kw || channelHaystack(c).includes(kw));
+    .filter(([c]) => !kw || channelHaystack(c).includes(kw))
+    .sort((a, b) => (a[0].enabled === false ? 1 : 0) - (b[0].enabled === false ? 1 : 0));
   list.innerHTML = shown.length
     ? shown.map(([c, i]) => channelCard(c, i)).join('')
     : `<div class="card"><p class="hint">${state.config.channels.length
