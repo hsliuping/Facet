@@ -17,6 +17,7 @@ from planrouter import providers as providers_mod
 from planrouter import subscriptions as subs
 from planrouter.core import load_config, parse_config
 from planrouter.server import App
+from planrouter.usage import UsageRecorder
 
 
 def providers_registry_fixture() -> dict:
@@ -1294,6 +1295,26 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertFalse(models["gpt-old"]["test"]["ok"])
         self.assertTrue(models["gpt-keep"]["in_queue"])
         self.assertIsNone(models["gpt-keep"]["test"])
+
+    def test_free_payload_reports_routing_state_and_usage(self):
+        """Each free model shows whether the router would call it and its spend."""
+        self.make_channel_free("a")
+        maint.label_dead_model(self.app, "a", "gpt-old", False, "HTTP Error 404")
+        recorder = UsageRecorder(self.path.parent / "usage-test.json")
+        recorder.record("a", True, 120, model="gpt-keep",
+                        input_tokens=100, cached_tokens=40)
+        self.app.usage = recorder
+        payload = maint.free_models_payload(self.app)
+        summary = payload["summary"]
+        self.assertEqual((summary["routable"], summary["dead"]), (1, 1))
+        self.assertEqual((summary["used"], summary["tokens"]), (1, 120))
+        (channel,) = payload["channels"]
+        rows = {m["model"]: m for m in channel["models"]}
+        self.assertFalse(rows["gpt-old"]["routable"])
+        self.assertIn("失效", rows["gpt-old"]["skip_reason"])
+        self.assertTrue(rows["gpt-keep"]["routable"])
+        self.assertEqual(rows["gpt-keep"]["usage"]["requests"], 1)
+        self.assertEqual(channel["cache"]["cached_tokens"], 40)
 
     def test_mixed_catalog_hides_paid_mapping_values(self):
         """An OpenRouter-style mixed catalog demotes non-:free mappings."""

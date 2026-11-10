@@ -71,22 +71,44 @@ def _json(h: BaseHTTPRequestHandler, status: int, payload: dict, extra: dict | N
     h.wfile.write(data)
 
 
-def _usage(data: bytes, protocol: str) -> int:
+def _usage_fields(usage: dict) -> tuple[int, int, int]:
+    """(total, input, cached) tokens from an upstream usage block.
+
+    Vendors report prompt-cache hits differently (OpenAI
+    prompt_tokens_details.cached_tokens, Anthropic cache_read_input_tokens,
+    DeepSeek prompt_cache_hit_tokens), so the shape of the block decides how
+    it is read rather than the client protocol (a gateway may convert the
+    body but keep upstream usage verbatim).
+    """
+    try:
+        cached = int(usage.get("cache_read_input_tokens")
+                     or (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                     or usage.get("prompt_cache_hit_tokens")
+                     or usage.get("cached_tokens") or 0)
+        if "prompt_tokens" in usage or "total_tokens" in usage:
+            prompt = int(usage.get("prompt_tokens") or 0)
+            completion = int(usage.get("completion_tokens") or 0)
+            total = int(usage.get("total_tokens") or prompt + completion)
+            return total, prompt, min(cached, prompt)
+        prompt = (int(usage.get("input_tokens") or 0)
+                  + int(usage.get("cache_creation_input_tokens") or 0) + cached)
+        return (prompt + int(usage.get("output_tokens") or 0), prompt,
+                min(cached, prompt))
+    except (TypeError, ValueError, AttributeError):
+        return 0, 0, 0
+
+
+def _usage(data: bytes, protocol: str = OPENAI) -> tuple[int, int, int]:
     try:
         usage = (json.loads(data).get("usage") or {})
     except (ValueError, AttributeError):
-        return 0
-    try:
-        if protocol == OPENAI:
-            return int(usage.get("total_tokens") or 0)
-        return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-    except (TypeError, ValueError):
-        return 0
+        return 0, 0, 0
+    return _usage_fields(usage)
 
 
-def _stream_tokens(data: bytes, protocol: str) -> int:
+def _stream_tokens(data: bytes, protocol: str = OPENAI) -> tuple[int, int, int]:
     """Sum `usage` blocks from SSE data lines (OpenAI final chunk, Anthropic deltas)."""
-    total = 0
+    total = prompt = cached = 0
     for line in data.split(b"\n"):
         line = line.strip()
         if not line.startswith(b"data:"):
@@ -101,14 +123,13 @@ def _stream_tokens(data: bytes, protocol: str) -> int:
                 usage = event["message"].get("usage") or {}
         except (ValueError, AttributeError):
             continue
-        try:
-            if protocol == OPENAI:
-                total += int(usage.get("total_tokens") or 0)
-            else:
-                total += int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-        except (TypeError, ValueError):
+        if not usage:
             continue
-    return total
+        total_add, prompt_add, cached_add = _usage_fields(usage)
+        total += total_add
+        prompt += prompt_add
+        cached += cached_add
+    return total, prompt, cached
 
 
 def _estimate_tokens(body: dict) -> int:
@@ -492,9 +513,12 @@ class App:
         if self.persistence:
             self.persistence.stop()
 
-    def record_usage(self, channel: str, success: bool, tokens: int = 0) -> None:
+    def record_usage(self, channel: str, success: bool, tokens: int = 0,
+                     model: str = "", input_tokens: int = 0,
+                     cached_tokens: int = 0) -> None:
         if self.usage:
-            self.usage.record(channel, success, tokens)
+            self.usage.record(channel, success, tokens, model=model,
+                              input_tokens=input_tokens, cached_tokens=cached_tokens)
 
     def apply_quota(self, name: str, headers) -> None:
         """Observe upstream quota headers; cool early when the window is empty."""
@@ -2169,7 +2193,7 @@ class App:
                 state.mark_cooldown(
                     seconds, reason, now, half_open=not quota,
                 )
-            self.record_usage(channel.name, False)
+            self.record_usage(channel.name, False, model=wire)
             # Quota exhaustion is the plan running out, not instability:
             # it cools the channel but never touches the stability score.
             if not quota:
@@ -2180,7 +2204,7 @@ class App:
                 state = self.store.states[channel.name]
                 state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_network", now, half_open=True)
-            self.record_usage(channel.name, False)
+            self.record_usage(channel.name, False, model=wire)
             self.store.record_score(channel.name, wire, -5)
             return (502, "transient_network", 30.0)
         except Exception as exc:  # keep the gateway alive on unexpected upstream shapes
@@ -2188,7 +2212,7 @@ class App:
                 state = self.store.states[channel.name]
                 state.last_error = repr(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
-            self.record_usage(channel.name, False)
+            self.record_usage(channel.name, False, model=wire)
             self.store.record_score(channel.name, wire, -5)
             return (502, "transient_internal", 30.0)
         else:
@@ -2225,7 +2249,7 @@ class App:
             for key, value in extra.items():
                 h.send_header(key, value)
             h.end_headers()
-            stream_tokens = 0
+            stream_tokens = stream_input = stream_cached = 0
             buffer = b""
             try:
                 while True:
@@ -2239,12 +2263,18 @@ class App:
                     buffer += chunk
                     if b"\n" in buffer:
                         complete, buffer = buffer.rsplit(b"\n", 1)
-                        stream_tokens += _stream_tokens(complete, protocol)
+                        add_total, add_input, add_cached = _stream_tokens(complete, protocol)
+                        stream_tokens += add_total
+                        stream_input += add_input
+                        stream_cached += add_cached
                     if len(buffer) > 65536:  # never parse an unbounded non-SSE line
                         buffer = b""
             except (BrokenPipeError, ConnectionResetError):
                 pass
-            stream_tokens += _stream_tokens(buffer, protocol)
+            add_total, add_input, add_cached = _stream_tokens(buffer, protocol)
+            stream_tokens += add_total
+            stream_input += add_input
+            stream_cached += add_cached
             if adapter is not None:
                 tail = adapter.finish()
                 if tail:
@@ -2253,20 +2283,22 @@ class App:
             with self.store.lock:
                 self.store.states[channel.name].mark_success(stream_tokens, time.time())
             self.store.record_score(channel.name, wire, 1)
-            self.record_usage(channel.name, True, stream_tokens)
+            self.record_usage(channel.name, True, stream_tokens, model=wire,
+                              input_tokens=stream_input, cached_tokens=stream_cached)
             self.apply_quota(channel.name, resp.headers)
             if delivery is not None:
                 delivery["tokens"] = stream_tokens
             return None
 
         data = resp.read()
-        tokens = _usage(data, protocol)
+        tokens, input_tokens, cached_tokens = _usage(data, protocol)
         if delivery is not None:
             delivery["tokens"] = tokens
         with self.store.lock:
             self.store.states[channel.name].mark_success(tokens, time.time())
         self.store.record_score(channel.name, wire, 1)
-        self.record_usage(channel.name, True, tokens)
+        self.record_usage(channel.name, True, tokens, model=wire,
+                          input_tokens=input_tokens, cached_tokens=cached_tokens)
         self.apply_quota(channel.name, resp.headers)
         if adapter is not None:
             data = adapter.finish(data)

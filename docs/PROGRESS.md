@@ -106,6 +106,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-10 | 免费池可观测与缓存率：用量记录下沉到 (渠道, 模型) 粒度并采集上游缓存字段（`prompt_tokens_details.cached_tokens` / `cache_read_input_tokens` / `prompt_cache_hit_tokens`），`/api/usage` 新增渠道缓存命中率、`/api/maintenance` 的免费模型新增「参与路由 / 失效标记 / 冷却 / 仅目录」状态与近 30 天调用次数、token 消耗、缓存率及池汇总（可路由 / 失效 / 测验通过 / 调用过）；全量 653 测试通过 |
 | 2026-11-10 | 控制台两项（`819567a`）：①定时任务可视化——`ScheduledTask` 基类统一目录刷新 / 自维护 / 免费额度对齐三个后台循环，`GET /api/tasks` 暴露状态，自维护面板新增「定时任务」卡片（状态 / 周期 / 上次与下次运行 / 上次结果），手动触发经 `note_run` 同步回写；②管理密钥首启简化——默认 `admin`，登录后「管理密钥」可重设为自定义值或随机生成并写回 `router.json`（重启仍生效），管理接口不再接受网关 key，compose / `.env` 默认 `ROUTER_ADMIN_KEY=admin`；容器重建后实测 admin 登录 200、轮换后旧 key 401 / 新 key 200，全量 634 测试通过 |
 | 2026-11-09 | Facet 注册表自维护落地（[R9](planrouter-requirements.md)）：`tools/sync_models_dev.py` 修复悬空标注（上游下架模型不再产生无 provider 僵尸条目）、新增 `tools/weekly_maintenance.py` 一键编排同步→校验→打包（staging 先验后落盘）+ 渠道目录交叉验证 + facet-auto / facet-cheap 建议链生成（仅报告，合入路由仍人工编辑）；产出进 `registry/maintenance-log.jsonl` 与 `route-suggestions.json`；计划任务 `FacetWeeklyMaintenance` 每周日 03:30 自动跑；正本刷新至 2026-11-09（2578 条），测试基线 562→580 |
 | 2026-11-09 | 新增需求清单 [planrouter-requirements.md](planrouter-requirements.md)：汇总 PROGRESS.md / superagent 行动清单 / 设计文档的需求项（R1–R8）并补验收标准；进度状态仍以本文件为唯一基准 |

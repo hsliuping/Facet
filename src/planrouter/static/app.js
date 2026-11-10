@@ -1387,6 +1387,7 @@ function renderUsage() {
   const totalTokens = tokens.reduce((a, b) => a + b, 0);
   const distribution = (usage.channels || []).slice(0, 6);
   const largest = Math.max(...distribution.map((c) => c.requests), 1);
+  const cacheRows = (usage.channels || []).filter((c) => c.input_tokens);
   el.innerHTML = `
     <div class="chart-grid">
       <div class="chart-block"><h4>每日请求数（合计 ${totalRequests}）</h4>${bars(requests, '#5b9dff')}</div>
@@ -1399,6 +1400,17 @@ function renderUsage() {
         <div class="dist-bar"><span style="width:${(c.requests / largest * 100).toFixed(1)}%"></span></div>
         <span class="dist-value">${c.requests} 次</span>
       </div>`).join('') : '<div class="chart-empty">暂无渠道用量</div>'}
+    </div>
+    <div class="chart-block" style="margin-top:14px">
+      <h4>渠道缓存命中率（缓存输入 / 总输入，近 ${usage.range} 天）</h4>
+      ${cacheRows.length ? cacheRows.slice(0, 6).map((c) => {
+        const rate = (c.cached_tokens / c.input_tokens * 100).toFixed(1);
+        return `<div class="dist-row">
+          <span>${esc(c.name)}</span>
+          <div class="dist-bar"><span style="width:${rate}%"></span></div>
+          <span class="dist-value">${rate}%（${Number(c.cached_tokens).toLocaleString()} / ${Number(c.input_tokens).toLocaleString()} tok）</span>
+        </div>`;
+      }).join('') : '<div class="chart-empty">上游未上报缓存字段（prompt_tokens_details.cached_tokens / cache_read_input_tokens），暂无数据</div>'}
     </div>
     <p class="hint">${esc(usage.note || '')}</p>`;
 }
@@ -1867,20 +1879,42 @@ function renderFreeModels(free) {
       + '它的模型才能进入维护模型候选。</p>';
     return;
   }
-  box.innerHTML = channels.map((ch) => {
+  const summary = (free && free.summary) || {};
+  const head = summary.models ? `<p class="sub-note">免费池 · 近 ${summary.days} 天：`
+    + `可路由 ${summary.routable} 个模型（维护队列 ${summary.queue} 个）`
+    + ` · 失效标记 ${summary.dead} · 测验通过 ${summary.passed}/${summary.tested}`
+    + ` · 调用过 ${summary.used} 个 · 合计 ${Number(summary.tokens || 0).toLocaleString()} tokens。`
+    + `「可路由」= 已映射到渠道且渠道启用、未冷却、无失效标记；目录 :free 模型需先映射才会被真实请求调用。</p>`
+    : '';
+  box.innerHTML = head + channels.map((ch) => {
+    const cache = ch.cache || {};
+    const cacheText = cache.input_tokens
+      ? ` · 缓存命中 ${(cache.cached_tokens / cache.input_tokens * 100).toFixed(1)}%` : '';
+    const routable = (ch.models || []).filter((m) => m.routable).length;
     const rows = (ch.models || []).map((m) => {
       const tag = m.test ? (m.test.ok ? '通过' : '未通过') : '未测';
       const cls = m.test ? (m.test.ok ? 'active' : 'expired') : 'unknown';
       const err = m.test && !m.test.ok ? ` · ${esc(m.test.error || '答案不符')}` : '';
+      const route = m.routable
+        ? ' <span class="tag active">参与路由</span>'
+        : ` <span class="tag expired">不参与路由</span> <span class="sub-note">${esc(m.skip_reason || '')}</span>`;
+      const use = m.usage || {};
+      const useText = use.requests
+        ? `调用 ${use.requests} 次 · ${Number(use.tokens || 0).toLocaleString()} tok`
+          + (use.input_tokens ? ` · 缓存 ${(use.cached_tokens / use.input_tokens * 100).toFixed(1)}%` : '')
+          + (use.last_used ? ` · 最近 ${new Date(use.last_used * 1000).toLocaleString()}` : '')
+        : `近 ${summary.days || 30} 天未调用`;
       return maintItem(tag, cls,
-        `<code>${esc(m.model)}</code>${m.in_queue ? ' <span class="tag active">队列中</span>' : ''}`
-        + ` <span class="sub-note">${m.source === 'mapping' ? '渠道映射' : '目录 :free'}${err}</span>`
+        `<code>${esc(m.model)}</code>${m.in_queue ? ' <span class="tag active">队列中</span>' : ''}${route}`
+        + ` <span class="sub-note">${m.source === 'mapping' ? '渠道映射' : '目录 :free'}`
+        + ` · ${useText}${err}</span>`
         + ` <button class="btn small ghost free-test" data-channel="${esc(ch.name)}"`
         + ` data-model="${esc(m.model)}">测试</button>`);
     }).join('');
     return `<div class="maint-report"><div class="maint-head"><strong>${esc(ch.name)}</strong>`
       + `${channelTierBadge(ch.name)} ${freeModelStateTag(ch)}`
-      + `<span class="sub-note">${(ch.models || []).length} 个模型`
+      + `<span class="sub-note">${(ch.models || []).length} 个模型 · ${routable} 个可路由`
+      + cacheText
       + (ch.excluded ? ` · ${ch.excluded} 个非免费映射未列出` : '')
       + (ch.skipped ? ` · ${ch.skipped} 个非对话模型未列出` : '') + `</span></div>`
       + (rows || '<p class="sub-note">无渠道映射，目录中也没有 :free 模型。</p>')

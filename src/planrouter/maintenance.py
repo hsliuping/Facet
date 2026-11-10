@@ -1216,14 +1216,31 @@ def test_single_model(app, channel_name: str, model: str) -> dict:
     return row
 
 
+FREE_USAGE_DAYS = 30  # window for per-model request/token figures in the console
+
+
 def free_models_payload(app) -> dict:
-    """Free-tier channels and every free model they could donate to the pool,
-    each with its last quiz outcome, for the console overview. Paid-looking
-    mappings on mixed catalogs stay hidden but are counted in "excluded"."""
+    """Free-tier channels and every free model they could donate to the pool.
+
+    Each (channel, model) row carries its last quiz outcome plus what the
+    router sees right now: whether it is actually routable (mapping-based,
+    channel enabled/not blocked/not cooling, no dead label), and the
+    recorded requests/tokens/cache-hit counters for the recent window.
+    Paid-looking mappings on mixed catalogs stay hidden but are counted in
+    "excluded"."""
     snapshot = app.store.snapshot()["channels"]
     with app.maintenance_pool_lock:
         tests = dict(app.maintenance_pool.get("tests") or {})
         queue = list(app.maintenance_pool.get("queue") or [])
+    dead = dead_model_labels(app)
+    blocked = app.blocked_channels()
+    usage_by_model: dict[tuple[str, str], dict] = {}
+    cache_by_channel: dict[str, dict] = {}
+    if getattr(app, "usage", None):
+        stats = app.usage.model_stats(FREE_USAGE_DAYS)
+        usage_by_model = {(row["channel"], row["model"]): row
+                          for row in stats["models"]}
+        cache_by_channel = {row["name"]: row for row in stats["cache"]}
     channels = []
     for channel in app.config.channels:
         if channel.tier != "free":
@@ -1239,10 +1256,31 @@ def free_models_payload(app) -> dict:
                 if any(e["model"] == model for e in entries):
                     continue
                 test = tests.get(model)
+                label = dead.get(_dead_key(channel.name, model))
+                usage = usage_by_model.get((channel.name, model))
+                routable = (source == "mapping" and channel.enabled
+                            and not label and channel.name not in blocked
+                            and not state.get("cooling"))
+                if routable:
+                    skip = ""
+                elif not channel.enabled:
+                    skip = "渠道已停用"
+                elif channel.name in blocked:
+                    skip = str(blocked[channel.name])
+                elif label:
+                    skip = "测验失败已标记失效，待复验"
+                elif state.get("cooling"):
+                    skip = f"渠道冷却中：{state.get('reason') or ''}".rstrip("：")
+                else:
+                    skip = "仅目录候选，未映射到渠道"
                 entries.append({
                     "model": model, "source": source,
                     "in_queue": model in queue,
                     "test": dict(test) if test else None,
+                    "dead": dict(label) if label else None,
+                    "routable": routable,
+                    "skip_reason": skip,
+                    "usage": dict(usage) if usage else None,
                 })
         channels.append({
             "name": channel.name,
@@ -1252,9 +1290,25 @@ def free_models_payload(app) -> dict:
             "cooldown_reason": str(state.get("reason") or ""),
             "excluded": paid_hidden,
             "skipped": nonchat_hidden,
+            "cache": cache_by_channel.get(channel.name),
             "models": entries,
         })
-    return {"channels": channels}
+    everything = [entry for channel in channels for entry in channel["models"]]
+    summary = {
+        "channels": len(channels),
+        "models": len(everything),
+        "routable": sum(1 for entry in everything if entry["routable"]),
+        "dead": sum(1 for entry in everything if entry["dead"]),
+        "queue": len(queue),
+        "tested": sum(1 for entry in everything if entry["test"]),
+        "passed": sum(1 for entry in everything if (entry["test"] or {}).get("ok")),
+        "used": sum(1 for entry in everything
+                    if (entry["usage"] or {}).get("requests")),
+        "tokens": sum(int((entry["usage"] or {}).get("tokens") or 0)
+                      for entry in everything),
+        "days": FREE_USAGE_DAYS,
+    }
+    return {"channels": channels, "summary": summary}
 
 
 def pick_maintenance_models(app) -> tuple[list[str], str]:

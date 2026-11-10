@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
 COUNTERS = ("requests", "success", "failed", "tokens")
+TOKEN_COUNTERS = ("input_tokens", "cached_tokens")
 
 
 class UsageRecorder:
@@ -43,7 +45,15 @@ class UsageRecorder:
         while not self._stop.wait(self.interval):
             self.flush()
 
-    def record(self, channel: str, success: bool, tokens: int = 0, on: date | None = None) -> None:
+    def record(self, channel: str, success: bool, tokens: int = 0,
+               on: date | None = None, model: str = "",
+               input_tokens: int = 0, cached_tokens: int = 0) -> None:
+        """Count one request for `channel` (and optionally its wire model).
+
+        `input_tokens`/`cached_tokens` come from the upstream usage block so
+        the console can show a cache hit rate; they stay absent when the
+        upstream does not report cache details.
+        """
         day = (on or date.today()).isoformat()
         with self.lock:
             bucket = self.data["days"].setdefault(day, {})
@@ -51,6 +61,21 @@ class UsageRecorder:
             entry["requests"] += 1
             entry["success" if success else "failed"] += 1
             entry["tokens"] += int(tokens or 0)
+            if input_tokens or cached_tokens:
+                entry["input_tokens"] = int(entry.get("input_tokens") or 0) + int(input_tokens or 0)
+                entry["cached_tokens"] = int(entry.get("cached_tokens") or 0) + int(cached_tokens or 0)
+            if model:
+                models = entry.setdefault("models", {})
+                row = models.setdefault(model, {
+                    "requests": 0, "success": 0, "failed": 0, "tokens": 0,
+                    **{key: 0 for key in TOKEN_COUNTERS}, "last_used": 0.0,
+                })
+                row["requests"] += 1
+                row["success" if success else "failed"] += 1
+                row["tokens"] += int(tokens or 0)
+                row["input_tokens"] = int(row.get("input_tokens") or 0) + int(input_tokens or 0)
+                row["cached_tokens"] = int(row.get("cached_tokens") or 0) + int(cached_tokens or 0)
+                row["last_used"] = time.time()
             self.dirty = True
 
     def flush(self) -> None:
@@ -82,14 +107,54 @@ class UsageRecorder:
             timeline.append(item)
             for name, values in bucket.items():
                 aggregate = totals.setdefault(
-                    name, {"name": name, **{key: 0 for key in COUNTERS}},
+                    name, {"name": name, **{key: 0 for key in COUNTERS},
+                           **{key: 0 for key in TOKEN_COUNTERS}},
                 )
                 for key in COUNTERS:
                     aggregate[key] += values.get(key, 0)
+                for key in TOKEN_COUNTERS:
+                    aggregate[key] += int(values.get(key) or 0)
         channels = sorted(totals.values(), key=lambda item: -item["requests"])
         return {
             "range": days,
             "days": timeline,
             "channels": channels,
-            "note": "tokens 含上游报告的流式用量；套餐为月费，此处不折算按量费用",
+            "note": "tokens 含上游报告的流式用量；缓存率 = 缓存命中输入 / 总输入 tokens；"
+                    "套餐为月费，此处不折算按量费用",
+        }
+
+    def model_stats(self, days: int = 30, on: date | None = None) -> dict:
+        """Per (channel, model) request/token totals plus channel cache counters."""
+        on = on or date.today()
+        days = max(1, min(days, 365))
+        window = {(on - timedelta(days=offset)).isoformat() for offset in range(days)}
+        with self.lock:
+            snapshot = {day: dict(channels) for day, channels in self.data["days"].items()}
+        models: dict[tuple[str, str], dict] = {}
+        cache: dict[str, dict] = {}
+        for day, bucket in snapshot.items():
+            if day not in window:
+                continue
+            for name, values in bucket.items():
+                channel_cache = cache.setdefault(
+                    name, {"name": name, **{key: 0 for key in TOKEN_COUNTERS}})
+                for key in TOKEN_COUNTERS:
+                    channel_cache[key] += int(values.get(key) or 0)
+                for model, item in (values.get("models") or {}).items():
+                    if not isinstance(item, dict):
+                        continue
+                    row = models.setdefault((name, model), {
+                        "channel": name, "model": model,
+                        **{key: 0 for key in COUNTERS},
+                        **{key: 0 for key in TOKEN_COUNTERS}, "last_used": 0.0,
+                    })
+                    for key in COUNTERS + TOKEN_COUNTERS:
+                        row[key] += int(item.get(key) or 0)
+                    row["last_used"] = max(
+                        row["last_used"], float(item.get("last_used") or 0))
+        return {
+            "range": days,
+            "models": sorted(models.values(),
+                             key=lambda item: (-item["requests"], item["channel"], item["model"])),
+            "cache": sorted(cache.values(), key=lambda item: item["name"]),
         }

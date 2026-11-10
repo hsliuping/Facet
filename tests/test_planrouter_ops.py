@@ -210,6 +210,35 @@ class UsageTests(OpsFixture):
         self.assertEqual(app.usage.series(7)["days"][-1]["requests"], 1)
         self.assertEqual(app.usage.series(7)["days"][-1]["tokens"], 21)
 
+    def test_model_stats_and_cache_counters(self):
+        path = self.root / "usage-models.json"
+        recorder = UsageRecorder(path)
+        today = date.today()
+        recorder.record("plan-a", True, 120, on=today, model="model-a",
+                        input_tokens=100, cached_tokens=60)
+        recorder.record("plan-a", False, 0, on=today, model="model-a")
+        recorder.record("claude", True, 40, on=today, model="model-b",
+                        input_tokens=30, cached_tokens=0)
+        stats = recorder.model_stats(7, on=today)
+        row = next(r for r in stats["models"] if r["model"] == "model-a")
+        self.assertEqual((row["requests"], row["success"], row["failed"],
+                          row["tokens"], row["input_tokens"], row["cached_tokens"]),
+                         (2, 1, 1, 120, 100, 60))
+        cache = next(r for r in stats["cache"] if r["name"] == "plan-a")
+        self.assertEqual((cache["input_tokens"], cache["cached_tokens"]), (100, 60))
+
+    def test_usage_parses_upstream_cache_fields(self):
+        from planrouter.server import _usage
+        openai_shape = json.dumps({"usage": {
+            "prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105,
+            "prompt_tokens_details": {"cached_tokens": 40}}}).encode()
+        self.assertEqual(_usage(openai_shape), (105, 100, 40))
+        anthropic_shape = json.dumps({"usage": {
+            "input_tokens": 10, "output_tokens": 5,
+            "cache_read_input_tokens": 90}}).encode()
+        self.assertEqual(_usage(anthropic_shape), (105, 100, 90))
+        self.assertEqual(_usage(b"not json"), (0, 0, 0))
+
     def test_page_contains_chart_and_notification_controls(self):
         self.start([])
         with urlopen(self.base + "/", timeout=5) as resp:
