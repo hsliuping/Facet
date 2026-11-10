@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 WEB_PROFILE = "planrouter-web"
 URL_LINE = re.compile(r"dsh web: (http://\S+)")
@@ -114,6 +115,18 @@ def _command(cli: dict, profile: str, port: int | None) -> list[str]:
     args = ["--profile", profile, "--no-open"]
     if port:
         args.extend(["--port", str(port)])
+    # Container deployments: dsh rejects wildcard binds and its printed URL
+    # would point at the container's own loopback instead of the published
+    # host address, so the entrypoint passes both through the environment.
+    host = os.environ.get("DSH_WEB_HOST", "").strip()
+    if host:
+        args.extend(["--host", host])
+    public = os.environ.get("DSH_WEB_PUBLIC_URL", "").strip()
+    if public:
+        args.extend(["--public-url", public])
+        authority = urlsplit(public).netloc
+        if authority:
+            args.extend(["--trusted-host", authority])
     if cli["bin"]:
         node = _node()
         if not node:

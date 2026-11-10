@@ -214,6 +214,33 @@ class DshCatalogTest(unittest.TestCase):
         self.assertIn("claude-x", ids)
 
 
+class DshCommandTest(unittest.TestCase):
+    CLI = {"path": "/usr/local/bin/dsh",
+           "bin": "/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js"}
+
+    def _command(self, env: dict) -> list[str]:
+        with mock.patch.object(dsh, "_node", return_value="/usr/local/bin/node"), \
+                mock.patch.dict(os.environ, env):
+            return dsh._command(self.CLI, "planrouter-web", None)
+
+    def test_container_launch_binds_the_interface_and_advertises_the_host_url(self):
+        command = self._command({"DSH_WEB_HOST": "172.17.0.2",
+                                 "DSH_WEB_PUBLIC_URL": "http://127.0.0.1:3081/"})
+        self.assertEqual(command[:2], ["/usr/local/bin/node", self.CLI["bin"]])
+        self.assertEqual(command[command.index("--host") + 1], "172.17.0.2")
+        self.assertEqual(command[command.index("--public-url") + 1],
+                         "http://127.0.0.1:3081/")
+        # The fence has to trust the advertised authority, not the bind one.
+        self.assertEqual(command[command.index("--trusted-host") + 1],
+                         "127.0.0.1:3081")
+
+    def test_host_launch_adds_no_bind_flags(self):
+        command = self._command({"DSH_WEB_HOST": "", "DSH_WEB_PUBLIC_URL": ""})
+        self.assertNotIn("--host", command)
+        self.assertNotIn("--public-url", command)
+        self.assertNotIn("--trusted-host", command)
+
+
 class DshUrlTest(unittest.TestCase):
     def test_startup_line_yields_the_tokenised_url(self):
         line = "dsh web: http://127.0.0.1:3080/?token=abc123"
