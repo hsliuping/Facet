@@ -43,19 +43,21 @@ class ScoreBookkeepingTests(unittest.TestCase):
         self.store = StateStore(parse_config(scoring_config()))
 
     def test_success_adds_one_failure_drops_five(self):
-        self.store.record_score("free-a", "auto-a", 1)
-        self.store.record_score("free-a", "auto-a", 1)
-        self.store.record_score("free-a", "auto-a", -5)
-        self.assertEqual(self.store.score("free-a", "auto-a"), -3)
+        self.store.record_score("free-a", "auto-a", 1, now=1000.0)
+        self.store.record_score("free-a", "auto-a", 1, now=1000.0)
+        self.store.record_score("free-a", "auto-a", -5, now=1000.0)
+        self.assertEqual(self.store.score("free-a", "auto-a", now=1000.0), -3)
 
     def test_unknown_pair_is_zero(self):
         self.assertEqual(self.store.score("free-a", "never-seen"), 0)
 
     def test_scores_for_filters_by_channel(self):
-        self.store.record_score("free-a", "auto-a", 2)
-        self.store.record_score("free-b", "auto-b", -5)
-        self.assertEqual(self.store.scores_for("free-a"), {"auto-a": 2})
-        self.assertEqual(self.store.scores_for("free-b"), {"auto-b": -5})
+        self.store.record_score("free-a", "auto-a", 2, now=1000.0)
+        self.store.record_score("free-b", "auto-b", -5, now=1000.0)
+        self.assertEqual(self.store.scores_for("free-a", now=1000.0),
+                         {"auto-a": 2})
+        self.assertEqual(self.store.scores_for("free-b", now=1000.0),
+                         {"auto-b": -5})
 
 
 class DecayTests(unittest.TestCase):
@@ -91,11 +93,12 @@ class DecayTests(unittest.TestCase):
             store.score("free-a", "auto-a", now=1_000_000.0), -5.0)
 
     def test_reset_all_one_channel_one_wire(self):
-        self.store.record_score("free-a", "auto-a", -5)
-        self.store.record_score("free-a", "m1a", 3)
-        self.store.record_score("free-b", "auto-b", -2)
+        self.store.record_score("free-a", "auto-a", -5, now=1000.0)
+        self.store.record_score("free-a", "m1a", 3, now=1000.0)
+        self.store.record_score("free-b", "auto-b", -2, now=1000.0)
         self.assertEqual(self.store.reset_scores("free-a", "auto-a"), 1)
-        self.assertEqual(self.store.scores_for("free-a"), {"m1a": 3})
+        self.assertEqual(self.store.scores_for("free-a", now=1000.0),
+                         {"m1a": 3})
         self.assertEqual(self.store.reset_scores("free-a"), 1)
         self.assertEqual(self.store.scores_for("free-a"), {})
         self.assertEqual(self.store.reset_scores(), 1)
@@ -117,8 +120,8 @@ class PickOrderingTests(unittest.TestCase):
         self.assertEqual(self.candidates(), ["free-b", "free-a"])
 
     def test_equal_score_keeps_chain_order(self):
-        self.store.record_score("free-a", "auto-a", 2)
-        self.store.record_score("free-b", "auto-b", 2)
+        self.store.record_score("free-a", "auto-a", 2, now=0.0)
+        self.store.record_score("free-b", "auto-b", 2, now=0.0)
         self.assertEqual(self.candidates(), ["free-a", "free-b"])
 
     def test_sticky_channel_stays_first_despite_lower_score(self):
@@ -130,13 +133,13 @@ class PickOrderingTests(unittest.TestCase):
 class PersistenceTests(unittest.TestCase):
     def test_capture_restore_roundtrip(self):
         store = StateStore(parse_config(scoring_config()))
-        store.record_score("free-a", "auto-a", 4)
-        store.record_score("free-b", "auto-b", -5)
+        store.record_score("free-a", "auto-a", 4, now=1000.0)
+        store.record_score("free-b", "auto-b", -5, now=1000.0)
         data = capture(store)
         other = StateStore(parse_config(scoring_config()))
         restore(other, data)
-        self.assertEqual(other.score("free-a", "auto-a"), 4)
-        self.assertEqual(other.score("free-b", "auto-b"), -5)
+        self.assertEqual(other.score("free-a", "auto-a", now=1000.0), 4)
+        self.assertEqual(other.score("free-b", "auto-b", now=1000.0), -5)
 
     def test_restore_drops_unknown_channels(self):
         store = StateStore(parse_config(scoring_config()))
@@ -159,12 +162,12 @@ class AppScoringTests(unittest.TestCase):
         self.app = App(parse_config(scoring_config()))
 
     def test_swap_preserves_scores_and_drops_deleted_channels(self):
-        self.app.store.record_score("free-a", "auto-a", 3)
+        self.app.store.record_score("free-a", "auto-a", 3, now=1000.0)
         raw = scoring_config()
         raw["channels"] = [c for c in raw["channels"] if c["name"] != "free-b"]
         raw["routes"][0]["channels"] = ["free-a"]
         self.app._swap(parse_config(raw))
-        self.assertEqual(self.app.store.score("free-a", "auto-a"), 3)
+        self.assertEqual(self.app.store.score("free-a", "auto-a", now=1000.0), 3)
         self.assertEqual(self.app.store.scores_for("free-b"), {})
 
     def test_ui_state_exposes_scores(self):
