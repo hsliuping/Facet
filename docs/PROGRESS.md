@@ -25,6 +25,7 @@
 - [x] OpenAI / Anthropic 双协议兼容；模型名策略（branded / auto:链 / 精确匹配 / fallback 链）
 - [x] 套餐订阅管理：月费、到期提醒 webhook、过期自动停用关联渠道
 - [x] 渠道 free/paid 档位：渠道级标签 + 按模型手动切换（`7859b8d`、`7e9a529`）
+- [x] 火山引擎 Agent 套餐模式：注册表 `providers.json` 新增 `agent` 模式（OpenAI 协议 `/api/plan/v3`、Anthropic 协议 `/api/plan` 由 anthropic 渠道承载），专属 Key 不与 Coding 套餐通用；模型清单由每日维护抓取套餐概览写入，控制台直接选「Agent 套餐」即可（`0afe225`）
 - [x] 渠道出站代理：转发流量与维护直达调用都走 `proxy`（`0d9086a`）
 - [x] 统一 CLI：`facet serve`（`planrouter` 为过渡别名）（`3dba6b1`）
 - [x] 渠道厂家强制：渠道必须挂厂家（「没有厂家就没有渠道」）；内置注册表扩至 20 家（openrouter / google / zai），种子渠道与编辑器全量对齐，旧控制台标签页保存不再抹掉 provider/mode（`cd527d1`）
@@ -42,6 +43,7 @@
 - [x] 免费池：仅免费渠道捐候选，测验通过进持久化队列，干活前复验（`9582ebc`、`9e456d4`）
 - [x] 维护调用走直达不走路由；维护日志 `maintenance.jsonl` 持久化 + 控制台查看器（`0f8a132`）
 - [x] 免费模型总览、测验过滤与串行探测（`aacbf5b`）；维护刷新调用透出上游 429 错误体（`09072ad`）
+- [x] 免费池可观测与缓存率：用量记录下沉到 (渠道, 模型) 粒度并采集上游缓存字段（`prompt_tokens_details.cached_tokens` / `cache_read_input_tokens` / `prompt_cache_hit_tokens`），`/api/usage` 新增渠道缓存命中率，`/api/maintenance` 免费模型新增「参与路由 / 失效标记 / 冷却 / 仅目录」状态与近 30 天调用次数 / token 消耗 / 缓存率及池汇总（`18ad705`）；控制台「自维护」面板据此显示可路由数、测验通过数、缓存率
 
 ### 控制台 UI
 
@@ -53,6 +55,7 @@
 - [x] 渠道「使用文档」浮窗：页内渲染本地手册 `docs/api-key-guide.md` 对应厂家小节，不跳厂家官网；浮层独立于编辑器（关闭后草稿完好），可切换完整手册并按锚点跳转；`/api/guide` 按请求读盘（改手册即时生效），`/api/guide/img` 限 docs 目录内防穿越；截图未补显示占位提示；渲染修复：步骤间空行不再打断编号、截图原地水合不跑位
 - [x] 定时任务可视化：抽出 `ScheduledTask` 基类统一三个后台循环（目录刷新 / 自维护 / 免费额度对齐）的开关、周期与状态回写，新增 `GET /api/tasks` 与「自维护」面板的「定时任务」卡片（任务 / 状态 / 周期 / 上次运行 / 下次运行 / 上次结果），手动触发也会回写「上次运行」（`819567a`）
 - [x] 管理密钥首启简化：默认 `admin`（`DEFAULT_ADMIN_KEY`），登录后可用右上角「管理密钥」重设自定义值或随机生成（`POST /api/admin/key` 写回 `router.json` 并立即生效）；管理接口不再接受网关 key，compose / `.env` 默认 `ROUTER_ADMIN_KEY=admin`（`819567a`）
+- [x] 渠道行「复制」：一键整体克隆渠道（端点、真实密钥或 `env:` 引用、模型映射、限流、计费标注），新名自动 `-copy` 去重并紧跟源渠道落盘热生效；克隆不继承冷却状态、不自动加入路由链（`210e2c5`）
 
 ### 首启与文档
 
@@ -69,16 +72,15 @@
 | 事项 | 状态 |
 |---|---|
 | free-tier 渠道 | 已恢复主力服务（46/55 成功、约 24 万 tokens）；免费额度耗尽时按上游重置头自动冷却 |
-| 桥接渠道恢复 | codex-plan / claude-plan / glm-plan 已临时禁用（本地桥未运行 / GLM key 未设）；跑起 8080/8081 桥或提供智谱 key（User 级 `GLM_PLAN_KEY`）后把渠道改回 enabled 即恢复 |
+| 桥接渠道恢复 | codex-plan / claude-plan / glm-plan 已临时禁用（本地桥未运行 / GLM key 未设）；跑起 8080/8081 桥或提供智谱 key（User 级 `GLM_PLAN_KEY`）后把渠道改回 enabled 即恢复；**glm-plan 需额外排查**：`/health` 显示 `channel header missing authorization` 连续失败，疑似渠道 Key 未配置或协议 Header 映射不对，非桥问题 |
+| 火山引擎 Agent 套餐渠道 | 注册表 agent 模式模型清单已恢复到 22 个；LLM 提取提示词已加「禁止改写分隔符」规则+示例，采纳前对已有清单做归一化（`.`/`-`/`_` 等价）比对，变体自动映射回原始拼写；「regex 兜底只增不删」护栏已上线，不会再被回砍到 5 个 |
 | 正式试用（容器栈） | 网关已容器化常驻（[planrouter-container-trial.md](planrouter-container-trial.md)）：router/mock 双容器 healthy、宿主 127.0.0.1:8787、状态挂载 ./data、每小时指标监控运行中；试用通过后定版本号打 tag |
-| 观察项：控制台自动刷新偶发跳回渠道配置 tab | 等用户确认日常复现，复现则修 |
 
 ## 接下来
 
-- [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复
+- [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册
 - [ ] **superagent 对接 P0 后半**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 底座已接通并实测（样例见 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)）；剩验证 super_agent 原型 Router / Worker 能否分别指定模型
-- [ ] **tab 跳回 bug**：复现即修
 - [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过再定版本号与 tag
 - [ ] **P1–P3**（superagent）：Worker 模型档位评估（facet-cheap 够不够）→ 运维走 `/api/*` + admin key 的 policy 草案 → 吸收三条设计原则到维护层
 
@@ -106,6 +108,9 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-11 | 厂家模型清单 LLM 提取降噪：`build_plan_models_prompt` 加「禁止改写分隔符」规则与示例（不得把 `doubao-seed-2.0-mini` 写成 `doubao-seed-2-0-mini`）；`_refresh_provider_mode` 采纳前对已有清单做归一化（`.`/`-`/`_` 等价）比对，LLM 提取的拼写变体自动映射回已有原始拼写，避免变体覆盖正确写法；tab 跳回观察项与「接下来」中对应条目移除（用户确认 tab 不再使用） |
+| 2026-11-11 | 控制台渠道行新增「复制」按钮（`210e2c5`）：一键整体克隆渠道（端点、真实密钥或 `env:` 引用、模型映射、限流、计费标注），新名自动 `-copy` 去重并紧跟源渠道落盘热生效；克隆不继承冷却状态、不自动加入路由链；端到端验证通过后清理 |
+| 2026-11-11 | 火山引擎 Agent 套餐：注册表 `providers.json` 新增 `agent` 模式（OpenAI `/api/plan/v3`、Anthropic `/api/plan` 由 anthropic 渠道承载），专属 Key；模型清单由每日维护抓取套餐概览写入（`0afe225`）。修复 agent 渠道「只拉到 5 个模型」问题：根因是 regex 兜底只认出 kimi/deepseek 等 5 个第三方模型并把 LLM 提取的 17 个豆包/GLM 删掉；上线「regex 兜底只增不删」护栏，手动触发维护由 LLM 恢复到 22 个模型并清理 2 条 LLM 误写的横杠变体条目；手册 2.1/2.2 讲清密钥粒度与账号×套餐配置、第九章解释免费池与缓存率口径 |
 | 2026-11-10 | 免费池可观测与缓存率：用量记录下沉到 (渠道, 模型) 粒度并采集上游缓存字段（`prompt_tokens_details.cached_tokens` / `cache_read_input_tokens` / `prompt_cache_hit_tokens`），`/api/usage` 新增渠道缓存命中率、`/api/maintenance` 的免费模型新增「参与路由 / 失效标记 / 冷却 / 仅目录」状态与近 30 天调用次数、token 消耗、缓存率及池汇总（可路由 / 失效 / 测验通过 / 调用过）；全量 653 测试通过 |
 | 2026-11-10 | 控制台两项（`819567a`）：①定时任务可视化——`ScheduledTask` 基类统一目录刷新 / 自维护 / 免费额度对齐三个后台循环，`GET /api/tasks` 暴露状态，自维护面板新增「定时任务」卡片（状态 / 周期 / 上次与下次运行 / 上次结果），手动触发经 `note_run` 同步回写；②管理密钥首启简化——默认 `admin`，登录后「管理密钥」可重设为自定义值或随机生成并写回 `router.json`（重启仍生效），管理接口不再接受网关 key，compose / `.env` 默认 `ROUTER_ADMIN_KEY=admin`；容器重建后实测 admin 登录 200、轮换后旧 key 401 / 新 key 200，全量 634 测试通过 |
 | 2026-11-09 | Facet 注册表自维护落地（[R9](planrouter-requirements.md)）：`tools/sync_models_dev.py` 修复悬空标注（上游下架模型不再产生无 provider 僵尸条目）、新增 `tools/weekly_maintenance.py` 一键编排同步→校验→打包（staging 先验后落盘）+ 渠道目录交叉验证 + facet-auto / facet-cheap 建议链生成（仅报告，合入路由仍人工编辑）；产出进 `registry/maintenance-log.jsonl` 与 `route-suggestions.json`；计划任务 `FacetWeeklyMaintenance` 每周日 03:30 自动跑；正本刷新至 2026-11-09（2578 条），测试基线 562→580 |

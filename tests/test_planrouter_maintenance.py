@@ -706,6 +706,23 @@ class RefreshProvidersTests(unittest.TestCase):
         self.assertEqual(report["applied"], [])
         self.assertFalse((self.path.parent / "providers.json").exists())
 
+    def test_llm_spelling_variants_of_existing_models_are_dropped(self):
+        # doubao-seed-2-0-mini is a separator variant of the existing
+        # doubao-seed-2.0-mini; only the new kimi-k3 should be added.
+        coding = self.app.providers[0]["modes"]["coding"]
+        coding["models"] = ["doubao-seed-2.0-mini"]
+        self.patch_fetch("<html><body><ul><li>x</li></ul></body></html>")
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            defaults=dataclasses.replace(self.app.config.defaults,
+                                         maintenance_model="gpt-x"))
+        self.app._maintenance_llm_call = lambda model, prompt: (
+            '["doubao-seed-2-0-mini", "kimi-k3"]')
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(coding["models"],
+                         ["doubao-seed-2.0-mini", "kimi-k3"])
+
 
 class ProviderModelsEndpointTests(unittest.TestCase):
     """refresh_providers can also pull model lists from models_url JSON."""

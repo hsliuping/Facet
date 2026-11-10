@@ -337,7 +337,10 @@ def build_plan_models_prompt(doc_text: str) -> str:
         " ASCII 标识符（不含空格和中文；豆包/doubao 开头的是真实模型，必须保留）。"
         "必须完整覆盖文档表格里列出的全部模型（文本、图像、视频、语音等全模态模型"
         "都要包含）。排除 Harness/功能名称（如 Agent 记忆、Computer Use Agent）。"
-        "仅输出 JSON 字符串数组，不要输出其他文字：\n" + doc_text[:12000]
+        "严格按文档中出现的原始拼写输出，不得自行改写分隔符：文档写点号就输出点号、"
+        "写横杠就输出横杠，不要把 doubao-seed-2.0-mini 改成 doubao-seed-2-0-mini，"
+        "也不要把 glm-5.3 改成 glm_5_3。仅输出 JSON 字符串数组，不要输出其他文字：\n"
+        + doc_text[:12000]
     )
 
 
@@ -355,6 +358,11 @@ def parse_plan_models_reply(text: str) -> list[str]:
     if not isinstance(data, list):
         return []
     return [str(m).strip() for m in data if str(m).strip()]
+
+
+def _normalize_model_id(model_id: str) -> str:
+    """Normalize separators for variant detection (`.`/`-`/`_` are equivalent)."""
+    return re.sub(r"[._-]", "", str(model_id)).lower()
 
 
 def clean_plan_models(ids) -> list[str]:
@@ -678,6 +686,17 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
 
     old = [str(m) for m in mode.get("models") or []]
     new = [str(m).strip() for m in extracted if str(m).strip()]
+    # LLM extraction occasionally rewrites separators (doubao-seed-2.0-mini ->
+    # doubao-seed-2-0-mini). Since ``mode["models"]`` is replaced wholesale, a
+    # variant would silently oust the correct spelling. Map any extracted model
+    # whose normalized form matches an existing entry back to that entry's
+    # literal spelling, so the canonical spelling wins and nothing is dropped.
+    old_norm = {_normalize_model_id(m): m for m in old}
+    normalized: list[str] = []
+    for m in new:
+        canonical = old_norm.get(_normalize_model_id(m))
+        normalized.append(canonical if canonical else m)
+    new = normalized
     added = [m for m in new if m not in old]
     removed = [m for m in old if m not in new]
     if source == "regex":
