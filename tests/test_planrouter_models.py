@@ -80,6 +80,7 @@ class ModelPolicyTests(unittest.TestCase):
     def test_defaults_include_branded_names(self):
         self.assertEqual(self.cfg.models.branded["facet-auto"], "default")
         self.assertEqual(self.cfg.models.branded["facet-cheap"], "cheap")
+        self.assertEqual(self.cfg.models.branded["facet-agent"], "default")
         self.assertTrue(self.cfg.models.fallback_unknown)
 
     def test_reserved_names_are_internal(self):
@@ -90,6 +91,12 @@ class ModelPolicyTests(unittest.TestCase):
             self.assertEqual(decision.mode, "auto", name)
             self.assertEqual(decision.exposed, "auto", name)
         self.assertEqual(resolve_model(self.cfg, "openai", "facet-cheap").hint, "cheap")
+
+    def test_facet_agent_is_agent_mode(self):
+        decision = resolve_model(self.cfg, "openai", "facet-agent")
+        self.assertEqual(decision.mode, "agent")
+        self.assertEqual(decision.exposed, "auto")
+        self.assertEqual(decision.hint, "default")
 
     def test_exact_match_precedes_internal_schedule(self):
         decision = resolve_model(self.cfg, "openai", "task-model")
@@ -184,6 +191,48 @@ class ModelGatewayTests(unittest.TestCase):
         self.assertEqual(hdrs["X-Routed-Via"], "plan-a/wire-a-auto")
         self.assertEqual(hdrs["X-Routed-Model-Mode"], "auto")
         self.assertEqual(hdrs["X-Routed-Requested-Model"], "facet-auto")
+        self.assertEqual(self.upstream.seen[-1], "wire-a-auto")
+
+    def test_facet_agent_skips_models_that_cannot_call_tools(self):
+        """The registry says this model has no tool support → never attempted."""
+        app = self.httpd.app  # type: ignore[union-attr]
+        app.store.record_catalog(
+            "plan-a", ["aimlapi/gemma-2-27b-it", "gpt-4o"], "http://a/v1")
+        status, hdrs, _ = self.completion("facet-agent")
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs["X-Routed-Model-Mode"], "agent")
+        self.assertEqual(self.upstream.seen[-1], "gpt-4o")
+        self.assertNotIn("aimlapi/gemma-2-27b-it", self.upstream.seen)
+
+    def test_facet_agent_prefers_tool_callable_models_over_catalog_order(self):
+        """A capability-unknown model listed first must not win over a known one."""
+        app = self.httpd.app  # type: ignore[union-attr]
+        app.store.record_catalog("plan-a", ["aaa-unknown-model", "gpt-4o"],
+                                 "http://a/v1")
+        status, hdrs, _ = self.completion("facet-agent")
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs["X-Routed-Model-Mode"], "agent")
+        self.assertEqual(self.upstream.seen[-1], "gpt-4o")
+
+    def test_facet_agent_does_not_dump_a_tool_less_catalog(self):
+        """A channel whose whole catalog is unusable is not brute-forced."""
+        app = self.httpd.app  # type: ignore[union-attr]
+        app.store.record_catalog("plan-a", ["aimlapi/gemma-2-27b-it"], "http://a/v1")
+        app.store.record_catalog("plan-b", ["gpt-4o"], "http://b/v1")
+        status, hdrs, _ = self.completion("facet-agent")
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs["X-Routed-Via"], "plan-b/gpt-4o")
+        self.assertNotIn("aimlapi/gemma-2-27b-it", self.upstream.seen)
+
+    def test_facet_agent_with_catalog_enumerates_models(self):
+        """facet-agent uses catalog models; with no catalog it falls back to the
+        channel's own auto mapping (wire-a-auto), matching facet-auto behavior."""
+        # No catalog recorded in this fixture → agent mode degrades to the
+        # channel's auto mapping so the first call still succeeds.
+        status, hdrs, _ = self.completion("facet-agent")
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs["X-Routed-Model-Mode"], "agent")
+        self.assertEqual(hdrs["X-Routed-Requested-Model"], "facet-agent")
         self.assertEqual(self.upstream.seen[-1], "wire-a-auto")
 
     def test_custom_brand_and_cheap_alias(self):

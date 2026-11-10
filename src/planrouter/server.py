@@ -23,6 +23,7 @@ from . import maintenance as maint
 from . import dsh as dsh_mod
 from . import freealign as freealign_mod
 from . import providers as providers_mod
+from . import facts as facts_mod
 from . import ark_quota
 from .audit import RequestLog
 from .core import (
@@ -232,6 +233,18 @@ def _free_align_summary(report: dict) -> str:
     if alerts:
         text += f" · {alerts} 个失败"
     return text
+
+
+def _row_better(old: dict, new: dict) -> bool:
+    """Pick the best channel entry for one shared wire model: free beats paid,
+    known tool-call beats unknown beats none, then the higher stability score."""
+    def rank(row: dict) -> tuple:
+        tool = (0 if row["tool_call"] is True
+                else 1 if row["tool_call"] is None else 2)
+        tier = 0 if row["tier"] == "free" else 1
+        return (tier, tool, -row["score"])
+
+    return rank(new) < rank(old)
 
 
 class ScheduledTask:
@@ -1364,6 +1377,129 @@ class App:
                    self.free_align_runner)
         return {"tasks": [runner.status() for runner in runners if runner]}
 
+    def recommend_models(self, purpose: str = "agent",
+                         limit: int = 20) -> dict:
+        """Pick models from every channel's catalog that suit a purpose.
+
+        "agent" buckets models by their registry tool-call capability:
+        known-supporting first, then unknown (a catalog id the bundled
+        registry does not recognise), then known-not-supporting. Cooled
+        ("dead") models are excluded outright — an agent cannot use them.
+        """
+        import time as _time
+
+        facts = facts_mod.snapshot()
+        dead = maint.dead_model_set(self)
+        blocked = set(self.blocked_channels())
+        candidates: dict[str, dict] = {}
+
+        for channel in self.config.channels:
+            if not channel.enabled or channel.name in blocked:
+                continue
+            catalog = self.store.catalog_view(channel.name)
+            for wire in catalog.get("models") or []:
+                if (channel.name, wire) in dead:
+                    continue
+                key = facts.resolve(wire) if facts.available else None
+                rec = facts.record(key) if key else {}
+                tier = model_tier(channel, self.subscriptions, wire)
+                score = self.store.scores_for(channel.name).get(wire, 0)
+                row = {
+                    "wire_model": wire,
+                    "channel": channel.name,
+                    "registry_key": key or "",
+                    "matched": bool(rec),
+                    "tier": tier,
+                    "tool_call": (rec.get("tool_call")
+                                 if isinstance(rec, dict) and rec else None),
+                    "context_window": rec.get("context_window") if rec else None,
+                    "cost": rec.get("cost") or {} if rec else {},
+                    "score": int(score or 0),
+                }
+                existing = candidates.get(wire)
+                if existing is None or _row_better(existing, row):
+                    candidates[wire] = row
+
+        if purpose == "agent":
+            # Models the registry says cannot call tools are unusable for an
+            # agent, so they never reach this list (and never reach runtime
+            # selection either — see _agent_candidates).
+            rows = [row for row in candidates.values() if row["tool_call"] is not False]
+
+            def bucket(row: dict) -> int:
+                return 0 if row["tool_call"] is True else 1
+
+            rows.sort(
+                key=lambda r: (
+                    bucket(r),
+                    0 if r["tier"] == "free" else 1,
+                    r["tier"],
+                    -r["score"],
+                    -(r["context_window"] or 0),
+                    r["wire_model"],
+                ),
+            )
+        else:
+            rows = sorted(
+                candidates.values(),
+                key=lambda r: (
+                    0 if r["tier"] == "free" else 1,
+                    r["tier"],
+                    -r["score"],
+                    r["wire_model"],
+                ),
+            )
+
+        rows = rows[: max(1, int(limit))] if limit else rows
+        return {
+            "purpose": purpose,
+            "generated_at": _time.time(),
+            "coverage": facts.coverage() if facts.available else {},
+            "items": rows,
+            "unknown_capability": sum(1 for r in rows if not r["matched"]),
+        }
+
+    def _agent_candidates(self) -> list[tuple[str, str]]:
+        """Ranked (channel_name, wire_model) pairs for facet-agent, best first.
+
+        Same ranking as the console's "Agent 模型推荐" table so the attempts
+        logged on the request page read top-down like that table: models the
+        bundled registry knows can call tools first, capability-unknown next,
+        and models it says *cannot* call tools are dropped outright — an
+        agent cannot drive them. Dead (probe-verified) models and disabled
+        or blocked channels are skipped too.
+        """
+        facts = facts_mod.snapshot()
+        dead = maint.dead_model_set(self)
+        blocked = set(self.blocked_channels())
+        rows: list[tuple[tuple, str, str]] = []
+        for channel in self.config.channels:
+            if not channel.enabled or channel.name in blocked:
+                continue
+            scores = self.store.scores_for(channel.name)
+            for wire in (self.store.catalog_view(channel.name).get("models") or []):
+                if (channel.name, wire) in dead:
+                    continue
+                key = facts.resolve(wire) if facts.available else None
+                rec = facts.record(key) if key else {}
+                tool = rec.get("tool_call") if isinstance(rec, dict) and rec else None
+                if tool is False:
+                    continue
+                tier = model_tier(channel, self.subscriptions, wire)
+                rows.append((
+                    (0 if tool is True else 1,
+                     0 if tier == "free" else 1,
+                     tier,
+                     -int(scores.get(wire, 0)),
+                     -int(rec.get("context_window") or 0) if rec else 0,
+                     wire,
+                     channel.name),
+                    channel.name,
+                    wire,
+                ))
+        rows.sort(key=lambda row: row[0])
+        return [(name, wire) for _, name, wire in rows]
+
     def _jsonl_history_payload(self, filename: str, memory_reports: list,
                                limit: int = 50) -> dict:
         """Newest-first run history from a JSONL log (maintenance / free-align).
@@ -1486,8 +1622,9 @@ class App:
         A catalog is a *known list*, not a whitelist: unknown names are still
         passed through, but a channel whose catalog provably lacks the wire
         model is skipped to pre-empt a doomed upstream call. Internal
-        scheduling (auto) is exempt — the wire model there is the channel's
-        own configured mapping, not a client-supplied name.
+        scheduling (auto / agent) is exempt — the wire model there is the
+        channel's own configured mapping or a catalog-enumerated model, not
+        a client-supplied name.
         """
         if decision.mode not in ("exact", "fallback"):
             return candidates, []
@@ -1866,9 +2003,14 @@ class App:
             }, audit)
             return
 
+        if decision.mode == "agent":
+            agent_candidates = self._agent_candidates()
+        else:
+            agent_candidates = None
         candidates, _ = self.store.pick(
             protocol, decision.hint, decision.exposed, session,
             decision=decision, blocked=blocked,
+            agent_candidates=agent_candidates,
         )
         candidates = [(channel, wire) for channel, wire in candidates
                       if channel.name not in blocked]

@@ -67,9 +67,11 @@ def open_with_proxy(req, timeout, proxy: str = ""):
 # Tools usually demand a concrete model id. These branded ids are ours: putting
 # one into a tool's model field means "let the router schedule internally".
 AUTO_MODEL = "auto"
+AGENT_MODEL = "facet-agent"
 DEFAULT_BRANDED_MODELS = {
     "facet-auto": "default",
     "facet-cheap": "cheap",
+    AGENT_MODEL: "default",
 }
 INTERNAL_MODEL_PREFIXES = ("auto:", "facet:")
 
@@ -423,7 +425,8 @@ def resolve_model(
     ordered = route.channels if route else ()
 
     if internal_hint is not None:
-        return ModelDecision("auto", route_hint, AUTO_MODEL, requested,
+        mode = "agent" if requested == AGENT_MODEL else "auto"
+        return ModelDecision(mode, route_hint, AUTO_MODEL, requested,
                              "internal-model-name")
 
     exact = tuple(
@@ -902,12 +905,21 @@ class StateStore:
         now: float | None = None,
         decision: ModelDecision | None = None,
         blocked: set[str] | frozenset[str] | None = None,
+        agent_candidates: list[tuple[str, str]] | None = None,
     ) -> tuple[list[tuple[Channel, str]], Route | None]:
         """Return ([(channel, wire_model), ...], route) in attempt order.
 
         `decision` comes from resolve_model. Exact matches get their own
         channels first; if every exact channel is cooling, the router's own
         schedule takes over so a quota window never breaks the calling tool.
+
+        `agent` mode (decision.mode == "agent") uses `agent_candidates`, a
+        pre-ranked [(channel_name, wire_model), ...] list of models that can
+        actually drive a tool (see App._agent_candidates). The order is kept
+        verbatim — no stability re-sort — so the attempts match the console's
+        recommendation table. Only channels this route can reach are used,
+        and a session's sticky channel does not pin the choice: the candidate
+        set itself changes as scores and catalogs move.
         """
         now = time.time() if now is None else now
         excluded = set(blocked or ())
@@ -928,6 +940,7 @@ class StateStore:
                 ordered = self._rotate_tier(protocol, route, ordered)
             exact: list[tuple[Channel, str]] = []
             scheduled: list[tuple[Channel, str]] = []
+            reachable: dict[str, Channel] = {}
             for name in ordered:
                 channel = self.config.channel(name)
                 if (channel is None or not channel.enabled or name in excluded
@@ -936,14 +949,32 @@ class StateStore:
                 ok, _ = self.states[name].available(now, channel.rate)
                 if not ok:
                     continue
+                reachable[name] = channel
                 if decision.mode == "exact" and name in decision.exact_channels:
                     wire = wire_model(channel, decision.exposed)
                     if wire:
                         exact.append((channel, wire))
                     continue
+                if decision.mode == "agent":
+                    continue  # filled from the caller's ranked list below
                 wire = dispatch_wire_model(channel, decision.requested)
                 if wire:
                     scheduled.append((channel, wire))
+            if decision.mode == "agent":
+                for name, wire in (agent_candidates or ()):
+                    channel = reachable.get(name)
+                    if channel is not None:
+                        scheduled.append((channel, wire))
+                if not scheduled:
+                    # No usable catalog entry anywhere (fresh install, or
+                    # every catalog model is tool-less / labelled dead): give
+                    # each reachable channel one shot through its own auto
+                    # mapping so the alias still works.
+                    for channel in reachable.values():
+                        wire = dispatch_wire_model(channel, decision.requested)
+                        if wire:
+                            scheduled.append((channel, wire))
+                return scheduled, route
             # Stability reordering: within each group, higher score first;
             # equal scores keep the chain order. The sticky session channel
             # (position 0, if any) stays pinned to the front.

@@ -1544,6 +1544,20 @@ async function loadRequests() {
   renderRequests();
 }
 
+// The audit log stores UTC ("2026-11-10T04:39:54Z"). Show it in the browser's
+// local timezone; keep the date on a second line only when it is not today.
+function logTime(ts) {
+  const d = new Date(ts);
+  if (!ts || Number.isNaN(d.getTime())) return { time: '—', date: '' };
+  const now = new Date();
+  const sameDay = d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return {
+    time: d.toLocaleTimeString('zh-CN', { hour12: false }),
+    date: sameDay ? '' : `${d.getMonth() + 1}-${d.getDate()}`,
+  };
+}
+
 function renderRequests() {
   const data = state.requests;
   const tbody = $('requests-body');
@@ -1560,8 +1574,9 @@ function renderRequests() {
   tbody.innerHTML = data.entries.map((e) => {
     const cls = e.status === 'ok' || e.status === 'local' ? 'active'
       : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
+    const at = logTime(e.ts);
     return `<tr>
-      <td>${esc((e.ts || '').slice(11, 19))}</td>
+      <td>${esc(at.time)}${at.date ? `<br><span class="sub-note">${esc(at.date)}</span>` : ''}</td>
       <td><code>${esc(e.model || '—')}</code></td>
       <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(e.reason || '')}</span></td>
       <td>${esc(e.channel || '—')}<br><span class="sub-note">${esc(e.wire_model || '')}</span></td>
@@ -1579,12 +1594,81 @@ async function loadMaintenance() {
   state.maintenance = await api('/api/maintenance');
   renderMaintenance();
   await loadTasks().catch(() => {});
+  await loadRecommendations().catch(() => {});
 }
 
 async function loadTasks() {
   state.tasks = await api('/api/tasks');
   renderTasks();
 }
+
+async function loadRecommendations() {
+  state.recommendations = await api('/api/recommend?purpose=agent&limit=20');
+  renderRecommendations();
+}
+
+function renderRecommendations() {
+  const body = $('recommend-body');
+  const note = $('recommend-note');
+  const data = state.recommendations;
+  if (!data) return;
+  const items = data.items || [];
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="7" class="sub-note">暂无推荐模型：请先拉取一次渠道模型目录（自维护 → 立即运行）。</td></tr>';
+    note.textContent = '';
+    return;
+  }
+  // Top row: the alias itself — this is what users copy into their tools.
+  const aliasRow = `<tr style="background:#f0f7ff">
+      <td><code>facet-agent</code><br><span class="sub-note">推荐工具里填这个</span></td>
+      <td>所有符合条件的渠道</td>
+      <td><span class="tag free">免费优先</span></td>
+      <td><span class="tag active">支持</span></td>
+      <td>—</td>
+      <td>—</td>
+      <td><button class="btn small primary" data-copy-model="facet-agent">复制 facet-agent</button></td>
+    </tr>`;
+  body.innerHTML = aliasRow + items.map((it) => {
+    const unknown = it.matched === false;
+    const toolText = it.tool_call === true
+      ? '<span class="tag active">支持</span>'
+      : '<span class="tag unknown">未知</span>';
+    const ctx = it.context_window ? `${Number(it.context_window).toLocaleString()} tok` : '—';
+    const score = typeof it.score === 'number' ? it.score : 0;
+    return `<tr${unknown ? ' class="row-unknown"' : ''}>
+      <td><code>${esc(it.wire_model)}</code>${unknown ? '<br><span class="sub-note">能力未知（registry 未收录）</span>' : ''}</td>
+      <td>${esc(it.channel || '—')}</td>
+      <td>${tierBadge(it.tier) || '<span class="sub-note">—</span>'}</td>
+      <td>${toolText}</td>
+      <td>${esc(ctx)}</td>
+      <td><span class="tag ${score >= 0 ? 'active' : 'expired'}">${score}</span></td>
+      <td><button class="btn small ghost" data-copy-model="${esc(it.wire_model)}">复制模型名</button></td>
+    </tr>`;
+  }).join('');
+  const cov = data.coverage || {};
+  note.textContent = `目录覆盖 ${cov.matched ?? 0}/${cov.total ?? items.length} 个已映射模型`
+    + (data.unknown_capability ? ` · ${data.unknown_capability} 个模型能力未知（registry 未收录，排在「支持工具调用」之后）` : '')
+    + ` · 已剔除不支持工具调用、冷却/失效的模型，免费优先，按稳定性排序`;
+}
+
+$('recommend-body').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-copy-model]');
+  if (!btn) return;
+  const name = btn.getAttribute('data-copy-model');
+  try {
+    await navigator.clipboard.writeText(name);
+    toast(`已复制：${name}`);
+  } catch (_) {
+    // Fallback for non-secure contexts: select into a hidden textarea.
+    const ta = document.createElement('textarea');
+    ta.value = name;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast(`已复制：${name}`); }
+    catch (_2) { toast(`复制失败，请手动复制：${name}`, 'bad'); }
+    ta.remove();
+  }
+});
 
 const TASK_STATES = {
   running: ['运行中', 'unknown'],
@@ -1719,6 +1803,10 @@ $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toas
 
 $('btn-refresh-tasks').onclick = () => loadTasks()
   .then(() => toast('定时任务状态已刷新', 'good'))
+  .catch((e) => toast(e.message, 'bad'));
+
+$('btn-refresh-recommend').onclick = () => loadRecommendations()
+  .then(() => toast('模型推荐已刷新', 'good'))
   .catch((e) => toast(e.message, 'bad'));
 
 $('btn-verify-free').onclick = async (e) => {

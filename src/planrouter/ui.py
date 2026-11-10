@@ -12,10 +12,25 @@ from . import dsh as dsh_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
-# Bundled usage manual (docs/api-key-guide.md in the repository checkout),
-# rendered by the console in a floating panel; absent when planrouter runs
-# from an installed wheel, which the UI degrades on with a hint.
-GUIDE_PATH = Path(__file__).resolve().parents[2] / "docs" / "api-key-guide.md"
+# Bundled usage manual, rendered by the console in a floating panel. It lives
+# in the repository's docs/ during development and is copied to /opt/planrouter
+# by the Docker image; when neither is present (a bare `pip install`) the UI
+# degrades to a hint pointing at the vendor's own documentation.
+_GUIDE_CANDIDATES = (
+    Path(__file__).resolve().parents[2] / "docs" / "api-key-guide.md",  # checkout
+    Path("/opt/planrouter/docs/api-key-guide.md"),                      # container
+    Path(__file__).parent / "docs" / "api-key-guide.md",                 # wheel
+)
+
+
+def _guide_path() -> Path:
+    for candidate in _GUIDE_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return _GUIDE_CANDIDATES[0]
+
+
+GUIDE_PATH = _guide_path()
 GUIDE_IMG_NAME = re.compile(r"^[A-Za-z0-9._/-]+$")
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -380,6 +395,17 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
 
     if path == "/api/tasks" and method == "GET":
         _json(h, 200, app.tasks_payload())
+        return True
+
+    if path == "/api/recommend" and method == "GET":
+        query = urlsplit(h.path or "").query
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        purpose = params.get("purpose", "agent")
+        try:
+            limit = int(params.get("limit", "20"))
+        except ValueError:
+            limit = 20
+        _json(h, 200, app.recommend_models(purpose, limit))
         return True
 
     if path == "/api/admin/key" and method == "POST":
