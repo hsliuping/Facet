@@ -57,6 +57,9 @@ RUN python -m pip install --no-index --no-cache-dir /tmp/wheels/*.whl \
 COPY docker/entrypoint.py /opt/planrouter/entrypoint.py
 COPY docker/mock_upstream.py /opt/planrouter/mock_upstream.py
 COPY docker/router.example.json /opt/planrouter/router.example.json
+# Console usage manual (docs/api-key-guide.md + its screenshots). ui.py looks
+# here when the package is installed without a repository checkout.
+COPY docs/ /opt/planrouter/docs/
 COPY docker/smoke_test.py /opt/planrouter/smoke_test.py
 # Shipped DSH profile: entrypoint copies it into $HOME/.dsh on first run.
 COPY docker/dsh-profile/ /opt/planrouter/dsh-profile/

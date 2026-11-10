@@ -4,7 +4,7 @@
 > 对应项或移入「已完成」，并在文末「更新记录」追加一行。本文件是唯一的进度
 > 基准，功能口径以 [README.zh-CN.md](../README.zh-CN.md) 为准。
 
-**最后更新**：2026-11-09
+**最后更新**：2026-11-10
 
 ---
 
@@ -51,6 +51,8 @@
 - [x] 冷却中渠道黄色高亮 + 「冷却中 · 剩 N 分钟」标签（`3a69154`）
 - [x] 渠道行内「测试」按钮（免开编辑器）；测试模型名随渠道保存（`test_model`）；测试通过自动解除冷却（`3a69154`）
 - [x] 渠道「使用文档」浮窗：页内渲染本地手册 `docs/api-key-guide.md` 对应厂家小节，不跳厂家官网；浮层独立于编辑器（关闭后草稿完好），可切换完整手册并按锚点跳转；`/api/guide` 按请求读盘（改手册即时生效），`/api/guide/img` 限 docs 目录内防穿越；截图未补显示占位提示；渲染修复：步骤间空行不再打断编号、截图原地水合不跑位
+- [x] 定时任务可视化：抽出 `ScheduledTask` 基类统一三个后台循环（目录刷新 / 自维护 / 免费额度对齐）的开关、周期与状态回写，新增 `GET /api/tasks` 与「自维护」面板的「定时任务」卡片（任务 / 状态 / 周期 / 上次运行 / 下次运行 / 上次结果），手动触发也会回写「上次运行」（`819567a`）
+- [x] 管理密钥首启简化：默认 `admin`（`DEFAULT_ADMIN_KEY`），登录后可用右上角「管理密钥」重设自定义值或随机生成（`POST /api/admin/key` 写回 `router.json` 并立即生效）；管理接口不再接受网关 key，compose / `.env` 默认 `ROUTER_ADMIN_KEY=admin`（`819567a`）
 
 ### 首启与文档
 
@@ -104,6 +106,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-10 | 控制台两项（`819567a`）：①定时任务可视化——`ScheduledTask` 基类统一目录刷新 / 自维护 / 免费额度对齐三个后台循环，`GET /api/tasks` 暴露状态，自维护面板新增「定时任务」卡片（状态 / 周期 / 上次与下次运行 / 上次结果），手动触发经 `note_run` 同步回写；②管理密钥首启简化——默认 `admin`，登录后「管理密钥」可重设为自定义值或随机生成并写回 `router.json`（重启仍生效），管理接口不再接受网关 key，compose / `.env` 默认 `ROUTER_ADMIN_KEY=admin`；容器重建后实测 admin 登录 200、轮换后旧 key 401 / 新 key 200，全量 634 测试通过 |
 | 2026-11-09 | Facet 注册表自维护落地（[R9](planrouter-requirements.md)）：`tools/sync_models_dev.py` 修复悬空标注（上游下架模型不再产生无 provider 僵尸条目）、新增 `tools/weekly_maintenance.py` 一键编排同步→校验→打包（staging 先验后落盘）+ 渠道目录交叉验证 + facet-auto / facet-cheap 建议链生成（仅报告，合入路由仍人工编辑）；产出进 `registry/maintenance-log.jsonl` 与 `route-suggestions.json`；计划任务 `FacetWeeklyMaintenance` 每周日 03:30 自动跑；正本刷新至 2026-11-09（2578 条），测试基线 562→580 |
 | 2026-11-09 | 新增需求清单 [planrouter-requirements.md](planrouter-requirements.md)：汇总 PROGRESS.md / superagent 行动清单 / 设计文档的需求项（R1–R8）并补验收标准；进度状态仍以本文件为唯一基准 |
 | 2026-11-09 | 新增架构与功能总览 [planrouter-architecture.md](planrouter-architecture.md)：分层架构图、模块职责、入口链、请求处理数据流、HTTP API 面、配置模型、数据资产、自维护子系统、功能清单与非目标 |
