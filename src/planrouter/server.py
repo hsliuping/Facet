@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -39,6 +40,9 @@ from .usage import UsageRecorder
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
 UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
+# First-run management credential: simple to type, replaced by the console's
+# rotate action (or by listen.admin_key) as soon as the deployment is set up.
+DEFAULT_ADMIN_KEY = "admin"
 
 
 def _header_safe(value) -> str:
@@ -213,24 +217,57 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     return merged
 
 
-class CatalogRefresher:
-    """Background sweep: re-fetch every channel's upstream model catalog.
+def _maintenance_summary(report: dict) -> str:
+    return (f"应用 {len(report.get('applied') or [])} 项"
+            f" · 建议 {len(report.get('suggestions') or [])} 条"
+            f" · 注意 {len(report.get('alerts') or [])} 条")
 
-    Runs once shortly after startup, then every
-    defaults.catalog_refresh_hours (re-read each cycle so hot-reloaded
-    config takes effect; 0 still means enabled — the sweep simply uses the
-    default interval until restart disables it).
+
+def _free_align_summary(report: dict) -> str:
+    text = f"{len(report.get('aligned') or [])} 个免费渠道已核对"
+    changed = len(report.get("patch") or {})
+    if changed:
+        text += f" · 改写 {changed} 个映射"
+    alerts = len(report.get("alerts") or [])
+    if alerts:
+        text += f" · {alerts} 个失败"
+    return text
+
+
+class ScheduledTask:
+    """Shared loop and status bookkeeping for the periodic sweeps.
+
+    The console lists every task with its cycle, last outcome and next run,
+    so all of them report through the same fields. The interval is re-read
+    each cycle: hot-reloaded config takes effect without a restart, and 0
+    still means "keep the default interval" until a restart disables it.
     """
 
-    FIRST_SWEEP_DELAY = 30.0
+    key = ""
+    label = ""
+    description = ""
+    hours_key = ""
+    FIRST_DELAY = 60.0
 
     def __init__(self, app: "App"):
         self.app = app
         self._stop = threading.Event()
         self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="planrouter-catalog")
+            target=self._loop, daemon=True, name=f"planrouter-{self.key}")
+        self.last_run_at = 0.0
+        self.next_run_at = 0.0
+        self.last_summary = ""
+        self.last_error = ""
+        self.running = False
+
+    def hours(self) -> float:
+        return float(getattr(self.app.config.defaults, self.hours_key) or 24)
+
+    def interval(self) -> float:
+        return max(1.0, self.hours()) * 3600.0
 
     def start(self) -> None:
+        self.next_run_at = time.time() + self.FIRST_DELAY
         self._thread.start()
 
     def stop(self) -> None:
@@ -238,19 +275,74 @@ class CatalogRefresher:
         if self._thread.is_alive():
             self._thread.join(timeout=5)
 
-    def _interval(self) -> float:
-        hours = self.app.config.defaults.catalog_refresh_hours
-        return max(1.0, float(hours or 24)) * 3600.0
+    def note_run(self, summary: str) -> None:
+        """Record a run triggered outside the loop (console buttons)."""
+        self.last_run_at = time.time()
+        self.last_summary = summary
 
     def _loop(self) -> None:
-        if self._stop.wait(self.FIRST_SWEEP_DELAY):
+        if self._stop.wait(self.FIRST_DELAY):
             return
-        self.app.refresh_all_catalogs()
-        while not self._stop.wait(self._interval()):
-            self.app.refresh_all_catalogs()
+        while True:
+            self._run()
+            self.next_run_at = time.time() + self.interval()
+            if self._stop.wait(self.interval()):
+                return
+
+    def _run(self) -> None:
+        self.running = True
+        self.last_run_at = time.time()
+        try:
+            self.last_summary = self.run_once() or ""
+            self.last_error = ""
+        except Exception as exc:  # a broken sweep must never kill the gateway
+            self.last_error = str(exc) or exc.__class__.__name__
+        finally:
+            self.running = False
+
+    def run_once(self) -> str:
+        raise NotImplementedError
+
+    def status(self) -> dict:
+        enabled = bool(getattr(self.app.config.defaults, self.hours_key))
+        return {
+            "key": self.key,
+            "label": self.label,
+            "description": self.description,
+            "enabled": enabled,
+            "hours": self.hours() if enabled else 0,
+            "state": "running" if self.running else ("idle" if enabled else "disabled"),
+            "last_run_at": self.last_run_at,
+            "next_run_at": self.next_run_at if enabled else 0,
+            "last_summary": self.last_summary,
+            "last_error": self.last_error,
+        }
 
 
-class MaintenanceRunner:
+class CatalogRefresher(ScheduledTask):
+    """Background sweep: re-fetch every channel's upstream model catalog.
+
+    Runs once shortly after startup, then every
+    defaults.catalog_refresh_hours.
+    """
+
+    key = "catalog"
+    label = "目录刷新"
+    description = "拉取各渠道上游模型目录，变化写回覆盖层并持久化"
+    hours_key = "catalog_refresh_hours"
+    FIRST_DELAY = 30.0
+
+    def run_once(self) -> str:
+        results = self.app.refresh_all_catalogs()
+        if not results:
+            return "没有可刷新的渠道"
+        failed = sum(1 for r in results if not r.get("ok"))
+        if failed:
+            return f"{len(results)} 个渠道，{failed} 个失败"
+        return f"{len(results)} 个渠道全部刷新"
+
+
+class MaintenanceRunner(ScheduledTask):
     """Daily self-maintenance: catalog-confirmed auto-fixes + free-quota LLM analysis.
 
     Runs once shortly after startup (after the first catalog sweep), then
@@ -259,42 +351,18 @@ class MaintenanceRunner:
     maintenance LLM for advisory notes, and record a report.
     """
 
-    FIRST_RUN_DELAY = 120.0
+    key = "maintenance"
+    label = "自维护"
+    description = "刷新目录，自动应用目录确证的变更，LLM 分析出建议并记录报告"
+    hours_key = "maintenance_hours"
+    FIRST_DELAY = 120.0
     MAX_REPORTS = 20
 
-    def __init__(self, app: "App"):
-        self.app = app
-        self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="planrouter-maintenance")
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=5)
-
-    def _interval(self) -> float:
-        hours = self.app.config.defaults.maintenance_hours
-        return max(1.0, float(hours or 24)) * 3600.0
-
-    def _loop(self) -> None:
-        if self._stop.wait(self.FIRST_RUN_DELAY):
-            return
-        try:
-            self.app.run_maintenance("scheduled")
-        except Exception:  # maintenance must never kill the gateway
-            pass
-        while not self._stop.wait(self._interval()):
-            try:
-                self.app.run_maintenance("scheduled")
-            except Exception:
-                pass
+    def run_once(self) -> str:
+        return _maintenance_summary(self.app.run_maintenance("scheduled"))
 
 
-class FreeAlignRunner:
+class FreeAlignRunner(ScheduledTask):
     """Scheduled free-quota alignment for free-tier channels (freealign.py).
 
     Vendors like Bailian expose their free-quota state only through a local
@@ -305,38 +373,14 @@ class FreeAlignRunner:
     maintenance sweep, then every defaults.free_align_hours.
     """
 
-    FIRST_RUN_DELAY = 150.0
+    key = "free_align"
+    label = "免费额度对齐"
+    description = "重跑厂家免费额度工具，改写免费渠道的模型映射"
+    hours_key = "free_align_hours"
+    FIRST_DELAY = 150.0
 
-    def __init__(self, app: "App"):
-        self.app = app
-        self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="planrouter-freealign")
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=5)
-
-    def _interval(self) -> float:
-        hours = self.app.config.defaults.free_align_hours
-        return max(1.0, float(hours or 24)) * 3600.0
-
-    def _loop(self) -> None:
-        if self._stop.wait(self.FIRST_RUN_DELAY):
-            return
-        try:
-            self.app.run_free_align("scheduled")
-        except Exception:  # alignment must never kill the gateway
-            pass
-        while not self._stop.wait(self._interval()):
-            try:
-                self.app.run_free_align("scheduled")
-            except Exception:
-                pass
+    def run_once(self) -> str:
+        return _free_align_summary(self.app.run_free_align("scheduled"))
 
 
 class App:
@@ -409,14 +453,16 @@ class App:
             self.usage.start()
         if self.notifier:
             self.notifier.start()
+        # The task objects exist even when a sweep is switched off, so the
+        # console can still list it (and show the last manual run).
+        self.catalog_refresher = CatalogRefresher(self)
+        self.maintenance_runner = MaintenanceRunner(self)
+        self.free_align_runner = FreeAlignRunner(self)
         if self.config.defaults.catalog_refresh_hours:
-            self.catalog_refresher = CatalogRefresher(self)
             self.catalog_refresher.start()
         if self.config.defaults.maintenance_hours:
-            self.maintenance_runner = MaintenanceRunner(self)
             self.maintenance_runner.start()
         if self.config.defaults.free_align_hours:
-            self.free_align_runner = FreeAlignRunner(self)
             self.free_align_runner.start()
 
     def stop_background(self) -> None:
@@ -626,6 +672,18 @@ class App:
         self.raw = merged
         self._swap(config)
         return config
+
+    def rotate_admin_key(self, key: str = "") -> str:
+        """Persist a new management key (random when empty) and apply it live."""
+        value = (key or "").strip() or "sk-admin-" + secrets.token_hex(16)
+        if len(value) < 4:
+            raise ValueError("管理密钥至少 4 个字符")
+        raw = dict(self.raw)
+        listen = dict(raw.get("listen") or {})
+        listen["admin_key"] = value
+        raw["listen"] = listen
+        self.apply_config(raw)
+        return value
 
     def _check_vendor_binding(self, config: Config) -> None:
         """Every channel must be bound to a real vendor entry.
@@ -976,6 +1034,8 @@ class App:
         report["finished_at"] = time.time()
         report["channels_total"] = len(self.config.channels)
         self._record_maintenance(report)
+        if self.maintenance_runner:
+            self.maintenance_runner.note_run(_maintenance_summary(report))
         return report
 
     def _maintenance_llm_call(self, model: str, prompt: str) -> str:
@@ -1244,6 +1304,8 @@ class App:
                 })
         report["finished_at"] = time.time()
         self._record_free_align(report)
+        if self.free_align_runner:
+            self.free_align_runner.note_run(_free_align_summary(report))
         return report
 
     def _record_free_align(self, report: dict) -> None:
@@ -1295,6 +1357,12 @@ class App:
                 "reports": list(reversed(free_reports)),
             },
         }
+
+    def tasks_payload(self) -> dict:
+        """The console's task list: cycle, latest outcome and next run."""
+        runners = (self.catalog_refresher, self.maintenance_runner,
+                   self.free_align_runner)
+        return {"tasks": [runner.status() for runner in runners if runner]}
 
     def _jsonl_history_payload(self, filename: str, memory_reports: list,
                                limit: int = 50) -> dict:
@@ -1614,10 +1682,18 @@ class App:
         return hmac.compare_digest(provided, expected)
 
     def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
-        """Management endpoints can require a key distinct from the tool's key."""
-        expected = self.config.listen.admin_key
-        if not expected:
-            return self._authorized(h)
+        """Management endpoints use admin_key, which starts out as "admin".
+
+        A config with no credentials at all keeps the console open (same rule
+        as the gateway); once any key is configured, "admin" must be rotated
+        through the console's 管理密钥 dialog.
+        """
+        if self.config.listen.admin_key:
+            expected = self.config.listen.admin_key
+        elif not self.config.listen.api_key:
+            return True
+        else:
+            expected = DEFAULT_ADMIN_KEY
         provided = h.headers.get("X-Admin-Key")
         if not provided:
             auth = h.headers.get("Authorization") or ""

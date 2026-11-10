@@ -106,11 +106,13 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(channels["plan-b"]["api_key"], "env:PLAN_B_KEY")
         self.assertEqual(config["_readme"], "test config")
 
-    def test_api_requires_gateway_key_but_page_does_not(self):
+    def test_api_requires_admin_key_but_page_does_not(self):
         base = self.start(base_config(gateway_key="gw-secret"))
         status, _, _ = self.call(base, "GET", "/api/config")
         self.assertEqual(status, 401)
         status, _, _ = self.call(base, "GET", "/api/config", key="gw-secret")
+        self.assertEqual(status, 401)
+        status, _, _ = self.call(base, "GET", "/api/config", key="admin")
         self.assertEqual(status, 200)
         status, _, _ = self.call(base, "GET", "/")
         self.assertEqual(status, 200)

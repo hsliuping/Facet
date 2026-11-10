@@ -113,7 +113,7 @@ function promptForAuth(isApi) {
     authPrompts[kind] = askText({
       title: isApi ? '需要管理密钥' : '需要网关密钥',
       message: isApi
-        ? '管理接口返回 401。填写 listen.admin_key（未单独设置时即网关密钥），也可点右上角「管理密钥」。'
+        ? '管理接口返回 401。首次登录默认填 admin；登录后可用右上角「管理密钥」重设或随机生成新的密钥。'
         : '网关接口返回 401。填写 listen.api_key，也可点右上角「网关密钥」。',
       password: true,
       remember: true,
@@ -1578,6 +1578,43 @@ $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.me
 async function loadMaintenance() {
   state.maintenance = await api('/api/maintenance');
   renderMaintenance();
+  await loadTasks().catch(() => {});
+}
+
+async function loadTasks() {
+  state.tasks = await api('/api/tasks');
+  renderTasks();
+}
+
+const TASK_STATES = {
+  running: ['运行中', 'unknown'],
+  idle: ['等待中', 'active'],
+  disabled: ['已关闭', 'expired'],
+};
+
+function renderTasks() {
+  const body = $('tasks-body');
+  const tasks = (state.tasks && state.tasks.tasks) || [];
+  if (!tasks.length) {
+    body.innerHTML = '<tr><td colspan="6" class="sub-note">没有后台任务</td></tr>';
+    return;
+  }
+  body.innerHTML = tasks.map((t) => {
+    const [stateText, cls] = TASK_STATES[t.state] || ['—', 'unknown'];
+    const cycle = t.enabled ? `每 ${t.hours} 小时` : '未启用';
+    const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '—');
+    const result = t.last_error
+      ? `<span class="tag expired">失败</span> ${esc(t.last_error)}`
+      : esc(t.last_summary || '—');
+    return `<tr>
+      <td><strong>${esc(t.label)}</strong><br><span class="sub-note">${esc(t.description || '')}</span></td>
+      <td><span class="tag ${cls}">${stateText}</span></td>
+      <td>${esc(cycle)}</td>
+      <td>${esc(when(t.last_run_at))}</td>
+      <td>${esc(when(t.next_run_at))}</td>
+      <td>${result}</td>
+    </tr>`;
+  }).join('');
 }
 
 const MAINT_TRIGGER = { manual: '手动运行', scheduled: '定时运行', first_run: '启动后首次运行' };
@@ -1679,6 +1716,10 @@ function maintReportRows(r, withApply) {
 }
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+
+$('btn-refresh-tasks').onclick = () => loadTasks()
+  .then(() => toast('定时任务状态已刷新', 'good'))
+  .catch((e) => toast(e.message, 'bad'));
 
 $('btn-verify-free').onclick = async (e) => {
   const b = e.target;
@@ -1976,16 +2017,31 @@ function renderMaintLogs() {
 $('btn-refresh-maintlog').onclick = () =>
   loadMaintLogs().catch((e) => toast(e.message, 'bad'));
 
+// The admin key is server-side state: "admin" until the operator rotates it.
+// The dialog both writes it to router.json (live immediately) and remembers it
+// locally, so the console keeps working with the new value after a reload.
 $('btn-admin-key').onclick = async () => {
   const answer = await askText({
     title: '管理密钥',
-    message: 'listen.admin_key，留空表示清除。密钥只保存在本机浏览器。',
-    value: state.adminKey, password: true, remember: true,
+    message: '首次登录默认是 admin。输入新的管理密钥并写入 router.json（立即生效）；留空则随机生成。',
+    password: true, remember: false, confirmText: '保存',
   });
   if (!answer) return;
-  state.adminKey = answer.value;
-  storeKey('admin', state.adminKey, answer.remember);
-  loadState().then(() => toast('管理密钥已更新')).catch((e) => toast(e.message, 'bad'));
+  try {
+    const res = await api('/api/admin/key', {
+      method: 'POST', body: answer.value ? { key: answer.value } : {},
+    });
+    state.adminKey = res.admin_key;
+    storeKey('admin', res.admin_key, true);
+    await askText({
+      title: '新的管理密钥已生效',
+      message: '请复制保存；本机浏览器已记住，下次打开免填。',
+      value: res.admin_key, password: false, confirmText: '知道了',
+    });
+    loadState().catch(() => {});
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
 };
 
 async function loadReport(month) {
@@ -2142,7 +2198,7 @@ async function runProbe(button, channels, model) {
     toast(data.ok ? '测试通过' : '测试未通过，查看详情', data.ok ? 'ok' : 'bad');
   } catch (err) {
     const hint = /未授权|401/.test(err.message)
-      ? '请点右上角「管理密钥」填入 listen.admin_key（默认值见 compose.yaml 或 .env）后重试'
+      ? '请点右上角「管理密钥」填入 listen.admin_key（首次登录默认 admin）后重试'
       : '';
     showTestResult([{ ok: false, name: '请求失败', error: err.message, hint }], null);
     toast(err.message, 'bad');

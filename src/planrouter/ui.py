@@ -378,6 +378,22 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, {"ok": True, "channels": len(config.channels)})
         return True
 
+    if path == "/api/tasks" and method == "GET":
+        _json(h, 200, app.tasks_payload())
+        return True
+
+    if path == "/api/admin/key" and method == "POST":
+        try:
+            body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+            key = app.rotate_admin_key(str(body.get("key") or ""))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        _json(h, 200, {"admin_key": key})
+        return True
+
     if path == "/api/maintenance" and method == "GET":
         _json(h, 200, app.maintenance_payload())
         return True

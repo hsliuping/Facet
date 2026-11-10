@@ -307,6 +307,31 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>定时任务</h3>
+                <p class="sub-note">后台按配置周期自动运行的任务：开关与周期由 <code>defaults</code> 控制，手动触发也会更新这里的「上次运行」</p>
+              </div>
+              <div class="actions">
+                <button class="btn small ghost" id="btn-refresh-tasks">刷新</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>任务</th><th>状态</th><th>周期</th><th>上次运行</th>
+                    <th>下次运行</th><th>上次结果</th>
+                  </tr>
+                </thead>
+                <tbody id="tasks-body">
+                  <tr><td colspan="6" class="sub-note">加载中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>维护概览</h3>
                 <p class="sub-note" id="maintenance-note">加载中…</p>
               </div>
