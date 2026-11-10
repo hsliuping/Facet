@@ -32,6 +32,10 @@ services:
         condition: service_healthy
     ports:
       - "${ROUTER_PORT:-8787}:8787"
+      # DSH web UI spawned by the console's "启动 DSH" entry. The entrypoint
+      # binds it inside the container and advertises this host address. The
+      # host side defaults to 3081 so a host-side dsh on 3080 keeps working.
+      - "${DSH_PORT:-3081}:3080"
     environment:
       # Override via a .env file next to this compose.yaml for real use.
       ROUTER_API_KEY: "${ROUTER_API_KEY:-test-router-key}"
@@ -48,6 +52,8 @@ services:
       # headless deploys — UI-configured credentials win when both exist.
       VOLC_ACCESSKEY: "${VOLC_ACCESSKEY:-}"
       VOLC_SECRETKEY: "${VOLC_SECRETKEY:-}"
+      # Published DSH port, so the entrypoint advertises a matching URL.
+      DSH_PORT: "${DSH_PORT:-3081}"
     volumes:
       # Bind mount: config, state, usage and the audit log are visible on the
       # host at ./data/. Edit ./data/router.json and POST /api/reload (or use

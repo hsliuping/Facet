@@ -1,0 +1,36 @@
+# DSH profile shipped with the image, seeded into $HOME/.dsh/profiles/
+# planrouter-web on first run.
+#
+# PlanRouter gateway integration:
+# - provider "planrouter" points at the in-container gateway (OpenAI Chat
+#   Completions on the loopback port the entrypoint listens on).
+# - apiKeyEnv reuses the ROUTER_API_KEY the gateway itself authenticates with,
+#   so no secret is copied into this file.
+# - compat flags request the most conservative wire shape (system role,
+#   max_tokens) so heterogeneous free-tier upstreams all accept the request.
+# - models is rewritten by the console on every launch (auto ids plus every
+#   backend id the router currently routes to); the two auto entries below only
+#   seed the picker before the first sync.
+- id: agent-default-model
+  config:
+    provider: planrouter
+    model: facet-auto
+- id: llm-pi-ai
+  config:
+    providers:
+      planrouter:
+        apiKeyEnv: ROUTER_API_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8787/v1
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: "facet-auto"
+            name: "自动 · 默认链"
+          - id: "facet-cheap"
+            name: "自动 · 省钱链"
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
