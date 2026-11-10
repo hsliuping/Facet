@@ -348,6 +348,7 @@ function channelCard(c, i) {
       ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>` : ''}
       <span class="row-actions">
         <button class="btn small" data-action="edit" data-index="${i}">编辑</button>
+        <button class="btn small ghost" data-action="duplicate" data-name="${esc(c.name)}">复制</button>
         <button class="btn small ghost" data-action="catalog" data-index="${i}" data-name="${esc(c.name)}">拉取模型</button>
         <button class="btn small ghost" data-action="test" data-index="${i}">测试</button>
         <button class="btn small ghost" data-action="toggle" data-index="${i}">${c.enabled === false ? '启用' : '停用'}</button>
@@ -3250,6 +3251,14 @@ function bindEvents() {
       return;
     }
     if (action === 'edit') openChannelEditor(i);
+    if (action === 'duplicate') {
+      try {
+        const r = await api('/api/channels/duplicate',
+          { method: 'POST', body: { name: b.dataset.name } });
+        toast(`已复制为「${r.name}」：密钥与映射一并复制，改好名称/Key 后记得加入路由链`);
+        await loadState();
+      } catch (err) { toast(err.message, 'bad'); }
+    }
     if (action === 'catalog') {
       const name = b.dataset.name;
       const label = b.textContent;

@@ -24,7 +24,8 @@ def base_config() -> dict:
     return {
         "listen": {"host": "127.0.0.1", "port": 0},
         "channels": [
-            {"name": "ark-free", "tier": "free",
+            {"name": "ark-free", "provider": "volcengine", "mode": "payg",
+             "tier": "free",
              "base_url": "https://ark.example/v3", "api_key": "k",
              "models": {"auto": "m"}},
             {"name": "claude", "protocol": "anthropic",
@@ -157,6 +158,42 @@ class AppCredentialsTests(unittest.TestCase):
         # Resolved values flow into the sweep's subprocess injection.
         self.assertEqual(self.app.config.credentials["volcengine"], {
             "VOLC_ACCESSKEY": "ak-plain", "VOLC_SECRETKEY": "sk-rotated"})
+
+
+class AppDuplicateChannelTests(unittest.TestCase):
+    """复制渠道：端点/密钥/映射整体克隆，新名去重后紧跟源渠道落盘。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "router.json"
+        self.path.write_text(json.dumps(base_config()), encoding="utf-8")
+        self.app = App(parse_config(base_config()), config_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_duplicate_copies_key_models_and_persists_after_source(self):
+        result = self.app.duplicate_channel("ark-free")
+        self.assertEqual(result, {"ok": True, "name": "ark-free-copy"})
+        names = [c["name"] for c in self.app.raw["channels"]]
+        self.assertEqual(names, ["ark-free", "ark-free-copy", "claude"])
+        clone = self.app.raw["channels"][1]
+        self.assertEqual(clone["api_key"], "k")  # real key copied, not "***"
+        self.assertEqual(clone["base_url"], "https://ark.example/v3")
+        self.assertEqual(clone["models"], {"auto": "m"})
+        # The clone is not silently added to route chains.
+        self.assertEqual(self.app.raw["routes"][0]["channels"], ["ark-free"])
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual([c["name"] for c in saved["channels"]], names)
+
+    def test_duplicate_dedupes_repeated_names(self):
+        self.app.duplicate_channel("ark-free")
+        result = self.app.duplicate_channel("ark-free")
+        self.assertEqual(result["name"], "ark-free-copy-2")
+
+    def test_duplicate_unknown_channel_raises(self):
+        with self.assertRaises(ValueError):
+            self.app.duplicate_channel("nope")
 
 
 if __name__ == "__main__":

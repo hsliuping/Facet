@@ -384,6 +384,22 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, result)
         return True
 
+    if path == "/api/channels/duplicate" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        name = incoming.get("name") if isinstance(incoming, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            _json(h, 400, {"error": {"message": "name 必须是非空字符串"}})
+            return True
+        try:
+            _json(h, 200, app.duplicate_channel(name.strip()))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
     if path == "/api/reload" and method == "POST":
         try:
             config = app.reload_from_disk()

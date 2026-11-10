@@ -710,6 +710,34 @@ class App:
         self._swap(config)
         return config
 
+    def duplicate_channel(self, name: str) -> dict:
+        """Clone a channel (endpoint, key, models, rates) under a new name.
+
+        The multi-account × multi-plan setup makes near-identical channels the
+        common case: copy one, then edit name/key/priority on the clone. The
+        stored key is copied verbatim (env: references stay references); the
+        clone starts with a clean state keyed by its new name and is inserted
+        right after the source so the priority order stays readable.
+        """
+        channels = list(self.raw.get("channels") or [])
+        index = next(
+            (i for i, c in enumerate(channels)
+             if isinstance(c, dict) and c.get("name") == name), None)
+        if index is None:
+            raise ValueError(f"渠道不存在：{name}")
+        existing = {c.get("name") for c in channels if isinstance(c, dict)}
+        base = f"{name}-copy"
+        new_name = base
+        n = 2
+        while new_name in existing:
+            new_name = f"{base}-{n}"
+            n += 1
+        clone = copy.deepcopy(channels[index])
+        clone["name"] = new_name
+        channels.insert(index + 1, clone)
+        self.apply_config({**self.raw, "channels": channels})
+        return {"ok": True, "name": new_name}
+
     def rotate_admin_key(self, key: str = "") -> str:
         """Persist a new management key (random when empty) and apply it live."""
         value = (key or "").strip() or "sk-admin-" + secrets.token_hex(16)
