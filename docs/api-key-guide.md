@@ -4,6 +4,14 @@
 > 文中所有 📷 是**截图位**——按说明操作到对应页面时截图，保存到
 > `docs/images/api-key-guide/` 目录并使用标注的文件名，图片会自动显示在本文档中。
 >
+> **为什么值得照着注册（不花您的钱）**：国内主流厂家（百炼、火山、魔搭、智谱、千帆、DeepSeek、Kimi）
+> 都给实名个人账号**免费额度**——新模型 90 天窗口、每日登录领魔粒、新人 100 万 token……
+> 这些额度**不用就作废，用了不扣您的钱**。用户不知道有免费、也不知道去哪领，是普遍痛点；
+> 本手册把注册入口、Key 位置、免费额度规则聚合在一起，照着点一遍即可。Facet 还会**每日自动对齐**
+> 哪些模型还有免费额度（见 [4.3 百炼](#43-阿里云百炼) 的 `usage free` 定时任务），帮您把白嫖额度一直用满。
+> 真正「匿名免注册」现在只剩极少数端点（且限速极低，见 [3.1](#31-pollinations免注册免-key)），
+> 其余各家**注册是拿免费额度的前提**，不是收费门槛。
+>
 > 密钥属于敏感信息：截图前请**遮住或截掉完整 Key**，只保留开头几个字符（如 `nvapi-…`）。
 >
 > 平台界面会随时间变化，本手册按 2026-11 时点整理；若界面不同，以实际为准并顺手更新本文。
@@ -21,8 +29,8 @@
   - [NVIDIA NIM（免费层）](#32-nvidia-nim免费层)
   - [OpenRouter 免费池](#33-openrouter免费池)
   - [Google AI Studio](#34-google-ai-studio)
-  - [LLM7（免注册）](#35-llm7免注册免-key)
-  - [OVHcloud AI Endpoints（免注册）](#36-ovhcloud-ai-endpoints免注册)
+  - [LLM7（匿名可用、注册提额）](#35-llm7匿名可用注册提额)
+  - [OVHcloud AI Endpoints（匿名可用、token 可选）](#36-ovhcloud-ai-endpoints匿名可用-token-可选)
   - [魔搭 ModelScope（免费推理）](#37-魔搭-modelscope免费推理)
 - [四、国内按量付费厂家](#四国内按量付费厂家)
   - [火山引擎方舟（豆包）](#41-火山引擎方舟豆包)
@@ -88,7 +96,7 @@
 
 | 厂家 | 费用 | 注册门槛 | Key 形态 | 本节 |
 |---|---|---|---|---|
-| Pollinations | 免费匿名 | 无需注册 | 无 Key | [3.1](#31-pollinations免注册免-key) |
+| Pollinations | 匿名只读 / 对话需注册 Key | 匿名仅可拉模型清单；对话调用需免费注册 | 匿名无 Key / 注册取 Bearer Token | [3.1](#31-pollinations免注册免-key) |
 | NVIDIA NIM | 免费层 | 邮箱 + 手机验证 | `nvapi-` | [3.2](#32-nvidia-nim免费层) |
 | OpenRouter | 免费模型 / 充值解锁更高限额 | 邮箱即可 | `sk-or-v1-` | [3.3](#33-openrouter免费池) |
 | Google AI Studio | 有免费额度 | Google 账号 | `AIza…` | [3.4](#34-google-ai-studio) |
@@ -109,6 +117,16 @@
 | Z.AI（智谱海外） | 按量 | 邮箱 | `sk-` 类 | [5.4](#54-zai智谱海外) |
 | OpenCode | 订阅（$10/月起） | 邮箱 | Console 内复制 | [6.1](#61-opencode) |
 | Command Code | 订阅（$15/月起） | 邮箱 | `cc-…` 类 | [6.2](#62-command-code) |
+
+### 2.0 优先注册顺序（免费量最大、模型最多的在前）
+
+如果只注册 1–3 家，按这个顺序来，免费额度最够用：
+
+1. **阿里云百炼**（[4.3](#43-阿里云百炼)）：新模型 90 天免费窗口、模型多、OpenAI 兼容，实名认证一次搞定；
+2. **火山引擎方舟**（[4.1](#41-火山引擎方舟)）：豆包 lightweight 系列长期有免费额度，且能接 Coding / Agent 套餐；
+3. **魔搭 ModelScope**（[3.7](#37-魔搭-modelscope免费推理)）：每天登录领 250 魔粒，白嫖国产开源模型。
+
+其余匿名档（Pollinations / LLM7 / OVHcloud / OpenRouter 免费池）只当**首启体验和最末兜底**——限速低、且 Pollinations 的对话接口已要求注册 Key（见 [3.1](#31-pollinations免注册免-key)），不建议当主力。
 
 ### 2.1 密钥为什么填在渠道上
 
@@ -176,13 +194,15 @@ Facet 的「渠道」是一个**可独立计费、独立限流、独立失效**�
 
 ### 3.1 Pollinations（免注册、免 Key）
 
-**官方入口**：[接口文档（APIDOCS）](https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md) ｜ [模型清单](https://gen.pollinations.ai/v1/models) ｜ [注册/捐赠获取 Token](https://pollinations.ai)
+**官方入口**：[接口文档（APIDOCS）](https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md) ｜ [模型清单（匿名可拉）](https://gen.pollinations.ai/v1/models) ｜ [注册取 Key](https://enter.pollinations.ai/keys)
 
-零密钥首启的默认渠道，**不需要任何 Key**，网关种子配置已自动建好。
+零密钥首启的默认渠道，网关种子配置已自动建好——但要注意**匿名档的实际能力**（2026-11 实测）：
 
-- 渠道参数：协议 `openai`，端点 `https://gen.pollinations.ai/v1`，密钥留空；
-- 匿名限速较低（个位数 RPM 级），适合当首启体验和最末兜底，不建议当主力；
-- 若要更高限额可到 [pollinations.ai](https://pollinations.ai) 捐赠/注册获取 Token，填进密钥栏即可。
+- `GET /v1/models` 匿名可拉（模型目录同步不受影响）；
+- `POST /v1/chat/completions` 匿名调用一律 **401 Unauthorized**，必须填注册 Key 才能对话；
+- 官方四档：**Anonymous**（仅可拉清单）→ **Seed**（免费注册、对话约 12 次/分钟）→ **Flower**（付费、高级模型）→ **Nectar**（企业、全模型无限额）。
+
+渠道参数：协议 `openai`，端点 `https://gen.pollinations.ai/v1`。匿名档只够当首启体验和最末兜底；要真正能用，到 [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) 免费注册拿 Token 填进密钥栏。**它不建议作为主力，优先注册百炼 / 火山 / 魔搭**（见 [2.0](#20-优先注册顺序免费量最大模型最多的在前)）。
 
 📷 **截图 3-1** ｜ 拍什么：控制台中 pollinations 渠道行（显示「测试通过」的绿色提示更佳） ｜ 存为：`pollinations-01-channel.png`
 
@@ -285,7 +305,7 @@ Google 官方免费额度（Gemini 系列），零密钥种子模板内置了禁
 
 ---
 
-### 3.5 LLM7（免注册、免 Key）
+### 3.5 LLM7（匿名可用、注册提额）
 
 **官方入口**：[接口文档](https://docs.llm7.io) ｜ [模型清单](https://api.llm7.io/v1/models) ｜ [注册/获取 Token（可选提额）](https://dash.llm7.io)
 
@@ -307,7 +327,7 @@ Google 官方免费额度（Gemini 系列），零密钥种子模板内置了禁
 
 ---
 
-### 3.6 OVHcloud AI Endpoints（免注册、免 Key）
+### 3.6 OVHcloud AI Endpoints（匿名可用、token 可选）
 
 **官方入口**：[接口文档（Getting started）](https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started) ｜ [模型目录](https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/) ｜ [OVHcloud 账号（仅 token 档需要）](https://www.ovhcloud.com)
 

@@ -89,6 +89,7 @@
           "base_url": "https://api.moonshot.cn/v1",
           "docs_url": "https://platform.moonshot.cn/docs",
           "keys_url": "https://platform.moonshot.cn/console/api-keys",
+          "models_url": "https://api.moonshot.cn/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -102,7 +103,7 @@
           "label": "按量付费",
           "protocol": "openai",
           "base_url": "https://api.xiaomimimo.com/v1",
-          "docs_url": "",
+          "docs_url": "https://platform.xiaomimimo.com/docs",
           "keys_url": "https://platform.xiaomimimo.com",
           "models_url": "https://api.xiaomimimo.com/v1/models",
           "tier": "paid",
@@ -112,7 +113,7 @@
           "label": "Token Plan 套餐",
           "protocol": "openai",
           "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
-          "docs_url": "",
+          "docs_url": "https://platform.xiaomimimo.com/docs",
           "keys_url": "https://platform.xiaomimimo.com",
           "models_url": "https://token-plan-cn.xiaomimimo.com/v1/models",
           "tier": "paid",
@@ -130,6 +131,7 @@
           "base_url": "https://api.anthropic.com",
           "docs_url": "https://docs.anthropic.com",
           "keys_url": "https://console.anthropic.com/settings/keys",
+          "models_url": "https://api.anthropic.com/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -145,6 +147,7 @@
           "base_url": "https://api.openai.com/v1",
           "docs_url": "https://platform.openai.com/docs",
           "keys_url": "https://platform.openai.com/api-keys",
+          "models_url": "https://api.openai.com/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -203,6 +206,7 @@
           "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
           "docs_url": "https://cloud.tencent.com/document/product/1729",
           "keys_url": "https://console.cloud.tencent.com/hunyuan/start",
+          "models_url": "https://api.hunyuan.cloud.tencent.com/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -218,6 +222,7 @@
           "base_url": "https://qianfan.baidubce.com/v2",
           "docs_url": "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
           "keys_url": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
+          "models_url": "https://qianfan.baidubce.com/v2/models",
           "tier": "paid",
           "models": []
         }
@@ -233,6 +238,7 @@
           "base_url": "https://api.x.ai/v1",
           "docs_url": "https://docs.x.ai/docs/models",
           "keys_url": "https://console.x.ai",
+          "models_url": "https://api.x.ai/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -272,7 +278,7 @@
           "label": "套餐 API",
           "protocol": "openai",
           "base_url": "https://api.commandcode.ai/provider/v1",
-          "docs_url": "",
+          "docs_url": "https://docs.commandcode.ai",
           "keys_url": "https://commandcode.ai/settings/keys",
           "models_url": "https://api.commandcode.ai/provider/v1/models",
           "tier": "paid",
@@ -289,7 +295,7 @@
           "protocol": "openai",
           "base_url": "https://gen.pollinations.ai/v1",
           "docs_url": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
-          "keys_url": "https://pollinations.ai",
+          "keys_url": "https://enter.pollinations.ai/keys",
           "models_url": "https://gen.pollinations.ai/v1/models",
           "tier": "free",
           "models": []
@@ -369,6 +375,7 @@
           "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
           "docs_url": "https://ai.google.dev/gemini-api/docs",
           "keys_url": "https://aistudio.google.com/apikey",
+          "models_url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
           "tier": "free",
           "models": []
         }
@@ -384,6 +391,7 @@
           "base_url": "https://api.z.ai/api/paas/v4",
           "docs_url": "https://docs.z.ai",
           "keys_url": "https://z.ai/manage-api-key/apikey-keys",
+          "models_url": "https://api.z.ai/api/paas/v4/models",
           "tier": "paid",
           "models": []
         }
