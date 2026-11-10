@@ -14,6 +14,8 @@
 
 - [一、密钥怎么填进 Facet](#一密钥怎么填进-facet)
 - [二、厂家总览](#二厂家总览)
+  - [密钥为什么填在渠道上](#21-密钥为什么填在渠道上)
+  - [同一账号开通多个套餐怎么配](#22-同一账号开通多个套餐怎么配)
 - [三、免费渠道（零成本起步）](#三免费渠道零成本起步)
   - [Pollinations（免注册）](#31-pollinations免注册免-key)
   - [NVIDIA NIM（免费层）](#32-nvidia-nim免费层)
@@ -53,6 +55,9 @@
   - [LangGraph / AutoGen / CrewAI（多 Agent 框架）](#710langgraph--autogen--crewaimulti-agent-框架)
   - [故障排查](#711-故障排查)
 - [八、附录：端点与协议速查表](#八附录端点与协议速查表)
+- [九、控制台观测：免费池与缓存率](#九控制台观测免费池与缓存率)
+  - [免费池：哪些模型真的会被调用](#91-免费池哪些模型真的会被调用)
+  - [缓存命中率怎么看](#92-缓存命中率怎么看)
 
 ---
 
@@ -70,7 +75,8 @@
 - 编辑已有渠道时，密钥栏显示 `***` 表示不改已有 Key，留空保存即可；
 - **导出配置不含密钥明文**，配置文件在本地 `<config 目录>/router.json`；
 - 想用环境变量：写 `env:NVIDIA_API_KEY` 这样的引用，Facet 启动时解析；
-- 添加渠道后点该行的 **测试** 按钮验证连通性（可在编辑器里预先填好「测试模型」并随渠道保存）。
+- 添加渠道后点该行的 **测试** 按钮验证连通性（可在编辑器里预先填好「测试模型」并随渠道保存）；
+- 一个账号开通了多个套餐（如 Agent + Coding）时，每个套餐单独建一个渠道，见 [2.2](#22-同一账号开通多个套餐怎么配)。
 
 📷 **截图 1-1** ｜ 拍什么：控制台「新增渠道」弹窗全貌（可遮住密钥值） ｜ 存为：`general-01-add-channel.png`
 
@@ -103,6 +109,66 @@
 | Z.AI（智谱海外） | 按量 | 邮箱 | `sk-` 类 | [5.4](#54-zai智谱海外) |
 | OpenCode | 订阅（$10/月起） | 邮箱 | Console 内复制 | [6.1](#61-opencode) |
 | Command Code | 订阅（$15/月起） | 邮箱 | `cc-…` 类 | [6.2](#62-command-code) |
+
+### 2.1 密钥为什么填在渠道上
+
+Facet 的「渠道」是一个**可独立计费、独立限流、独立失效**的调用单元：一个端点 + 一把 Key + 一组模型映射 + 一条优先级/冷却策略。密钥的粒度天然与此对齐：
+
+- 同一厂家的不同产品线（按量、Coding 套餐、Agent 套餐）端点不同；
+- 套餐 Key 往往是**专属**的：以火山引擎为例，Coding Plan 的 Key 不能用于 Agent Plan，Agent Plan 的 Key 也不能用于普通按量接口；
+- 配额、冷却、额度耗尽、套餐到期都按 Key／套餐独立计算。
+
+所以「Key 填在渠道上」不是临时妥协，而是唯一正确的位置：渠道就是 Key 的作用域。换 Key 只改这一个渠道，不会影响同账号的其它套餐。**不要**把同一账号的多把 Key 合并进一个渠道，也不要把 Key 提到全局——网关无法从请求内容推断这次想用哪个套餐。
+
+### 2.2 同一账号开通多个套餐怎么配
+
+规则一句话：**账号 × 套餐 = 一个渠道**。N 个账号、每个 M 个套餐，就是 N×M 个渠道，每个渠道填该套餐自己的端点与专属 Key。
+
+例如 2 个火山引擎账号、每个账号都开了 Agent 套餐和 Coding 套餐，就建 4 个渠道：
+
+```json
+"channels": [
+  {"name": "volc-a-agent", "provider": "volcengine", "mode": "agent",
+   "protocol": "openai", "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+   "api_key": "env:VOLC_A_AGENT_KEY", "tier": "paid", "priority": 10,
+   "models": {"auto": "doubao-seed-2.1-pro", "doubao-seed-2.1-pro": "doubao-seed-2.1-pro"}},
+  {"name": "volc-a-coding", "provider": "volcengine", "mode": "coding",
+   "protocol": "openai", "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+   "api_key": "env:VOLC_A_CODING_KEY", "tier": "paid", "priority": 20,
+   "models": {"auto": "doubao-seed-2.1-pro", "doubao-seed-2.1-pro": "doubao-seed-2.1-pro"}},
+  {"name": "volc-b-agent", "provider": "volcengine", "mode": "agent",
+   "protocol": "openai", "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+   "api_key": "env:VOLC_B_AGENT_KEY", "tier": "paid", "priority": 30,
+   "models": {"auto": "doubao-seed-2.1-pro", "doubao-seed-2.1-pro": "doubao-seed-2.1-pro"}},
+  {"name": "volc-b-coding", "provider": "volcengine", "mode": "coding",
+   "protocol": "openai", "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+   "api_key": "env:VOLC_B_CODING_KEY", "tier": "paid", "priority": 40,
+   "models": {"auto": "doubao-seed-2.1-pro", "doubao-seed-2.1-pro": "doubao-seed-2.1-pro"}}
+],
+"routes": [
+  {"name": "default", "protocol": "openai",
+   "channels": ["volc-a-agent", "volc-a-coding", "volc-b-agent", "volc-b-coding"]}
+]
+```
+
+> 以上是 `router.json` 的**片段**，只截取与本例相关的部分：实际文件里还要保留原有的 `listen`、以及未展示的其它路由（含 `anthropic:default`）。`agent` 模式已内置在注册表，控制台里厂家选「火山引擎方舟」、模式选「Agent 套餐」即可，不必手抄 JSON。
+
+**账号维度不进渠道，而是进「订阅」**——订阅记录回答「哪个账号、哪个套餐、多少钱、何时到期、提醒几天」，并用 `channels` 关联到具体渠道名：
+
+```json
+{"vendor": "火山引擎", "account": "账号 A", "plan": "Agent 套餐",
+ "price": 199, "currency": "CNY", "billing_cycle": "monthly",
+ "started_at": "2026-10-10", "expires_at": "2026-12-10", "remind_days": 7,
+ "channels": ["volc-a-agent"]}
+```
+
+为什么必须一分为二：
+
+- **命名**：推荐 `<厂家>-<账号简称>-<套餐>`。渠道名会进入订阅关联、路由列表和用量统计，建好后尽量别改。
+- **不能合并套餐**：一个渠道只能填一个 `base_url`；两个套餐塞进去，模型目录、冷却、到期、限流都会互相污染。
+- **到期互不影响**：开启「过期阻断」后，只有过期套餐对应的渠道被摘掉，同账号另一个套餐继续可用。这正是「账号」与「渠道」分开记录的价值。
+- **路由顺序**：同账号的多个套餐一起进 `default`（或对应协议的路由），用 `priority` 决定先试谁；各套餐配额独立，一个限流冷却不会拖累另一个。
+- **Key 引用**：用 `env:VOLC_A_AGENT_KEY` 这类引用，不要明文；两把 Key 恰好相同时，也分别写在不同渠道的 `api_key` 字段里。
 
 ---
 
@@ -323,6 +389,15 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 |---|---|
 | 按量付费 | `https://ark.cn-beijing.volces.com/api/v3` |
 | Coding 套餐（订阅后） | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+| Agent 套餐（订阅后，OpenAI 协议） | `https://ark.cn-beijing.volces.com/api/plan/v3` |
+| Agent 套餐（订阅后，Anthropic 协议） | `https://ark.cn-beijing.volces.com/api/plan` |
+
+**Agent 套餐要点**
+
+- Agent 套餐、Coding 套餐、按量付费是**三条独立产品线**：分别购买、分别签发 Key，Key 互不通用（Agent Plan 的 Key 用不到 Coding Plan，反之亦然）。
+- 在控制台建渠道时，厂家选「火山引擎方舟」、模式选「**Agent 套餐**」，端点会自动带出 OpenAI 协议的 `/api/plan/v3`；想在 Facet 后面接 Claude Code 这类说 Anthropic 协议的工具，再单独建一个 `protocol: anthropic`、端点 `/api/plan` 的渠道（两者不能共用一个渠道）。
+- Agent 套餐的模型清单由每日维护任务抓取「[套餐概览](https://console.volcengine.com/ark/region:cn-beijing/docs/agent-plan-personal-plan-overview)」文档写入注册表。**刚建好渠道就点「从上游拉取模型清单」可能只拿到一部分**——套餐端点本身不返回完整目录，等维护跑过一轮（或手动触发一次维护）再拉，才是文档里的完整清单。
+- Agent 套餐按 AFP（Agent 燃料值）计费，额度用尽后的行为与 Coding 套餐一致：上游报额度错误时渠道进入冷却，冷却结束自动重试；这条路不参与「协作奖励计划」的免费额度对齐。
 
 **查哪些模型还有免费额度（协作奖励计划）**
 
@@ -946,7 +1021,7 @@ user_proxy.initiate_chat(assistant, message="Write a hello world python")
 | LLM7 | `https://api.llm7.io/v1` | — | openai |
 | OVHcloud | `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1` | — | openai |
 | ModelScope | `https://api-inference.modelscope.cn/v1` | — | openai |
-| 火山引擎方舟 | `https://ark.cn-beijing.volces.com/api/v3` | `https://ark.cn-beijing.volces.com/api/coding/v3` | openai |
+| 火山引擎方舟 | `https://ark.cn-beijing.volces.com/api/v3` | Coding：`https://ark.cn-beijing.volces.com/api/coding/v3`；Agent：`https://ark.cn-beijing.volces.com/api/plan/v3`（OpenAI）/ `https://ark.cn-beijing.volces.com/api/plan`（Anthropic） | openai；Agent 另支持 anthropic |
 | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `https://open.bigmodel.cn/api/coding/paas/v4` | openai |
 | 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | openai |
 | DeepSeek | `https://api.deepseek.com/v1` | — | openai |
@@ -956,6 +1031,77 @@ user_proxy.initiate_chat(assistant, message="Write a hello world python")
 | xAI Grok | `https://api.x.ai/v1` | — | openai |
 | 小米 MiMo | `https://api.xiaomimimo.com/v1` | `https://token-plan-cn.xiaomimimo.com/v1` | openai |
 
+## 九、控制台观测：免费池与缓存率
+
+### 9.1 免费池：哪些模型真的会被调用
+
+**位置**：控制台 → **免费池**。页面顶部汇总行回答「一共多少、多少能用」：
+
+| 汇总项 | 含义 |
+|---|---|
+| 渠道数 | 标记为免费的渠道数量 |
+| 模型数 | 这些渠道下发现的模型总数（含仅目录候选、失效模型） |
+| 可路由 | **真正会进入路由尝试**的模型数，即下面「参与路由」为是的数量 |
+| 失效 | 测验失败、暂时打上失效标记的模型数 |
+| 排队 / 已测 / 通过 | 维护模型池的测验进度 |
+| 已用 / tokens | 近 30 天内至少被真实请求调用过的模型数，以及这些请求上报的 token 总量 |
+
+一个模型显示「**参与路由**」，必须同时满足（与网关实际选路完全一致）：
+
+1. 渠道处于启用状态；
+2. 渠道没有被订阅过期阻断；
+3. 渠道不在冷却期；
+4. 模型没有被标记失效（测验失败后会失效 6 小时，复验通过自动解除）；
+5. 模型来自渠道的 `models` 映射，而不是「仅在目录里出现」。
+
+不满足时该行会显示「不参与路由」并给出唯一原因：
+
+| 状态文案 | 含义 |
+|---|---|
+| 渠道已停用 | 渠道的启用开关被关掉了 |
+| 订阅已过期（附具体文案） | 关联订阅到期，过期阻断生效 |
+| 测验失败已标记失效，待复验 | 维护测验没通过，暂时从路由中摘除 |
+| 渠道冷却中：<上游原因> | 上游限流／额度／错误触发的冷却，时间到自动恢复 |
+| 仅目录候选，未映射到渠道 | 上游目录里有、但渠道 `models` 没配，永远不会发请求；加映射或采纳维护建议即可 |
+
+模型行上还有三个容易误读的信息：
+
+- **测验**：通过／失败／排队中／未测。它只证明「这个模型能正常返回」，**不等于**它一定被调用；
+- **近 30 天**：调用 N 次 · X tok · 缓存 y% · 最近调用时间。显示「近 30 天未调用」表示从未被真实请求命中，常见原因是优先级靠后、请求总被更靠前的渠道先满足，或刚加入池子还没轮到；
+- **缓存率**：按模型统计的缓存命中率，上游没报缓存字段时该模型不显示。
+
+三个常见误会：
+
+- 「测验通过却没被调用」：测验只是准入条件，路由还受优先级、冷却、失效标记、订阅状态影响；
+- 「没被调用过 = 不可用」：只有真实请求才算调用，维护测验不计入调用次数；
+- 「重启后数据清零」：用量按天落盘到 `usage.json`，重启不清零；面板默认展示 30 天窗口。
+
+### 9.2 缓存命中率怎么看
+
+**位置**：控制台 → **用量**，渠道分布下方新增「渠道缓存命中率（缓存输入 / 总输入，近 N 天）」；免费池的渠道标题和每个模型行也显示缓存率。
+
+**口径**：`cached_tokens / input_tokens`，即上游明确告知「本次输入中有多少 token 命中缓存」占全部输入 token 的比例。Anthropic 的输入按 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` 计算。
+
+**字段来源**（按响应里 `usage` 的形状识别，不按渠道协议）：
+
+| 上游 | 字段 |
+|---|---|
+| OpenAI 兼容 | `usage.prompt_tokens_details.cached_tokens`（兼容顶层 `cached_tokens`） |
+| DeepSeek | `usage.prompt_cache_hit_tokens` |
+| Anthropic | `usage.cache_read_input_tokens` / `cache_creation_input_tokens` |
+
+流式请求同样统计：从 SSE 的 usage 事件累加（OpenAI 是最后一个 chunk，Anthropic 是 `message_start` + `message_delta`）。
+
+**什么时候显示「暂无数据」**：
+
+- 上游完全没有上报缓存字段 → 显示「暂无数据」。这既不是 0%，也不是网关漏统计；
+- 有缓存统计但一次都没命中 → 显示 0%；
+- 渠道缓存率是该渠道所有请求的汇总；某个模型没报缓存字段时，它的输入仍计入分母、缓存按 0 计，会轻微拉低渠道比率。
+
+**怎么看这个数**：缓存率取决于上游的上下文缓存策略和你的请求是否复用相同前缀，不同厂家之间不能横向比较；同一个渠道短期内波动大，通常是请求前缀变化（例如每轮都改 system prompt）导致的。
+
+为什么之前看不到：旧版用量只按渠道记「请求数／成功／失败／token」，既没有模型维度也没有缓存字段，控制台自然呈现不出来；现在记录下沉到「渠道 → 模型」，两处都能看到。
+
 ---
 
 ## 更新记录
@@ -964,3 +1110,4 @@ user_proxy.initiate_chat(assistant, message="Write a hello world python")
 |---|---|
 | 2026-11-10 | 新增第七章「在 Trae / IDE 里使用 Facet」及第八章端点速查；补充容器 host 与常见 401/200 空白问题；**扩充分支**：Claude Code、Cline/Roo Code、OpenHands/Devika、Windsurf/Zed/Cursor、LangChain/LlamaIndex、LangGraph/AutoGen/CrewAI 共 9 个流行框架的配置示例，并强化 Agent tool calling 注意事项 |
 | 2026-11-10 | 新增 7.4.1 「三种内置别名」章节，说明 `facet-auto` / `facet-cheap` / **`facet-agent`** 的区别与适用场景；同步把 Claude Code / Cline / Roo Code / LangChain / OpenHands 的示例模型名统一改为 `facet-agent`，并说明响应头 `X-Routed-Model-Mode: agent` 的验证方式 |
+| 2026-11-10 | 新增 2.1「密钥为什么填在渠道上」与 2.2「同一账号开通多个套餐怎么配」，讲清「账号 × 套餐 = 一个渠道」与订阅只记账号/套餐/到期；4.1 补火山 Agent 套餐双协议端点（`/api/plan/v3`、`/api/plan`）与专属 Key 说明；附录同步；新增第九章「控制台观测：免费池与缓存率」，解释 `routable` 判定、`skip_reason` 与缓存率口径，消除「测验通过≠被调用」「无缓存字段≠0%」等误会 |
