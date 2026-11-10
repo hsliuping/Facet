@@ -281,11 +281,18 @@ def fetch_plan_doc(url: str, proxy: str = "") -> str:
 def html_to_text(raw: str) -> str:
     """Reduce an HTML page to plain text: drop script/style, tags, entities.
 
-    <li> items become "- " lines so the list-line extractor still sees them
-    after tag stripping.
+    <li> items and table rows become "- " lines so the list-line extractor
+    still sees them after tag stripping. Some vendors (Volcengine's agent plan
+    overview) publish their model list only inside an HTML table, which the
+    plain tag stripper would otherwise flatten into one unlabeled blob.
     """
     raw = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1\s*>", " ", raw)
     raw = re.sub(r"(?is)<li\b[^>]*>", "\n- ", raw)
+    # Collapse a whole table row into one "- " line; cell text keeps a tab
+    # separator so neighbouring cells cannot merge into one fake token.
+    raw = re.sub(r"(?is)<tr\b[^>]*>(.*?)</tr>",
+                 lambda m: "\n- " + " ".join(m.group(1).split()) + " ", raw)
+    raw = re.sub(r"(?is)</(td|th)>", " \t", raw)
     raw = re.sub(r"(?s)<[^>]+>", " ", raw)
     raw = html.unescape(raw)
     out: list[str] = []
@@ -376,11 +383,13 @@ def _llm_extract_doc_models(app, doc_text: str, label: str, kind: str,
     """LLM extraction of plan model ids from doc text.
 
     Calls the first working maintenance model (explicit ids or the verified
-    queue when defaults.maintenance_model is empty/auto; a model whose reply
-    does not parse is dropped from the queue). Returns the cleaned model
-    list, or None when no candidate worked. Stays silent when no maintenance
-    model is configured and the queue is empty — rules are the designed
-    fallback then; alerts only when candidates were tried and all failed.
+    queue plus the pool's untried candidates when defaults.maintenance_model
+    is empty/auto; each failure is dropped and the next candidate is tried).
+    Returns the cleaned model list, or None only when no candidate is left —
+    every candidate having been tried before rules take over. Stays silent
+    when no maintenance model is configured and no pool candidate exists —
+    rules are the designed fallback then; alerts only when candidates were
+    tried and all failed.
     """
     models, _mode = pick_maintenance_models(app)
     if not models:
@@ -442,6 +451,12 @@ def refresh_plan_models(app, report: dict) -> None:
         new = [str(m).strip() for m in extracted if str(m).strip()]
         added = [m for m in new if m not in old]
         removed = [m for m in old if m not in new]
+        if source == "regex":
+            # The regex fallback is noisy: it can miss real ids (a table-only
+            # page yields a subset), so it may add but never remove. Removing
+            # models needs the confirmed LLM extraction.
+            new = old + added
+            removed = []
         if not new or (not added and not removed):
             continue
         record["models"] = new
@@ -665,6 +680,12 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
     new = [str(m).strip() for m in extracted if str(m).strip()]
     added = [m for m in new if m not in old]
     removed = [m for m in old if m not in new]
+    if source == "regex":
+        # Regex doc extraction is the noisiest source (doc sidebars yield
+        # tokens like "agent."): it may add but never remove. Removing models
+        # needs a confirmed LLM extraction or the vendor's own models API.
+        new = old + added
+        removed = []
     if not added and not removed:
         return False
     mode["models"] = new
@@ -1242,7 +1263,10 @@ def pick_maintenance_models(app) -> tuple[list[str], str]:
     mode is "fixed" when defaults.maintenance_model lists explicit ids and
     "pool" when the verified queue drives selection. In pool mode an empty
     queue triggers one probe (bounded by PROBE_COOLDOWN so a fully dead
-    free pool cannot turn maintenance into a probe storm).
+    free pool cannot turn maintenance into a probe storm). Behind the
+    verified queue the pool's untried free candidates are appended: a model
+    that fails falls through to the next one instead of dropping the work
+    onto the regex fallback while candidates remain.
     """
     raw = str(app.config.defaults.maintenance_model or "").strip()
     if raw and raw.lower() != "auto":
@@ -1250,26 +1274,41 @@ def pick_maintenance_models(app) -> tuple[list[str], str]:
         return ids, "fixed"
     with app.maintenance_pool_lock:
         queue = list(app.maintenance_pool.get("queue") or [])
+        tested = set(app.maintenance_pool.get("tests") or ())
         last_probe = float(app.maintenance_pool.get("last_probe_at") or 0)
     if not queue and time.time() - last_probe >= PROBE_COOLDOWN:
         probe_maintenance_models(app)
         with app.maintenance_pool_lock:
             queue = list(app.maintenance_pool.get("queue") or [])
-    return queue, "pool"
+            tested = set(app.maintenance_pool.get("tests") or ())
+    dead = {key.partition("\u0000")[2] for key in dead_model_labels(app)}
+    extra = [m for m in free_model_candidates(app)
+             if m not in queue and m not in tested and m not in dead]
+    return queue + extra, "pool"
 
 
 def drop_maintenance_model(app, model: str, error: str) -> None:
-    """Remove a model that just failed real maintenance work from the queue."""
+    """Record a model that just failed real maintenance work as tried-and-failed.
+
+    It leaves the verified queue and its failure joins `tests`, so never-tried
+    pool candidates stay ahead of it next time instead of the same dead
+    weight being retried on every maintenance run.
+    """
     with app.maintenance_pool_lock:
         queue = app.maintenance_pool.get("queue") or []
-        if model not in queue:
-            return
-        queue.remove(model)
+        if model in queue:
+            queue.remove(model)
+        message = f"维护调用失败：{str(error)[:140]}"
+        tests = app.maintenance_pool.setdefault("tests", {})
+        tests[model] = {"model": model, "ok": False, "hit": 0,
+                        "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                        "error": message, "tested_at": time.time()}
+        _trim_tests(tests)
         results = app.maintenance_pool.setdefault("results", [])
         results.insert(0, {
             "model": model, "ok": False, "hit": 0,
             "expected": len(MAINTENANCE_QUIZ_ANSWER),
-            "error": f"维护调用失败：{str(error)[:140]}",
+            "error": message,
         })
         del results[20:]
         save_maintenance_pool(app)

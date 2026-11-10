@@ -408,6 +408,19 @@ class ExtractPlanModelsTests(unittest.TestCase):
         self.assertIn("A & B", text)
         self.assertEqual(maint.extract_plan_models(text), ["glm-5.3", "kimi-k3"])
 
+    def test_html_to_text_keeps_table_models_extractable(self):
+        """Volcengine's agent-plan page lists its models only inside a table."""
+        raw = ("<html><body><table><tr><th>分类</th><th>领域</th><th>模型名称</th>"
+               "<th>长度限制(token)</th></tr>"
+               "<tr><td>文本</td><td>通用</td><td>\n      doubao-seed-2.1-pro\n    "
+               "</td><td>32k</td></tr>"
+               "<tr><td>文本</td><td>通用</td><td>deepseek-v4-pro</td>"
+               "<td>128k</td></tr>"
+               "</table></body></html>")
+        text = maint.html_to_text(raw)
+        self.assertEqual(maint.extract_plan_models(text),
+                         ["doubao-seed-2.1-pro", "deepseek-v4-pro"])
+
     def test_parse_plan_models_reply(self):
         self.assertEqual(maint.parse_plan_models_reply('["a-b", "c.d"]'), ["a-b", "c.d"])
         self.assertEqual(maint.parse_plan_models_reply('答案：["a-b"] 以上'), ["a-b"])
@@ -455,10 +468,13 @@ class RefreshPlanModelsTests(unittest.TestCase):
                          "</ul></body></html>")
         report = self.app.run_maintenance("manual")
         record = self.app.subscriptions[0]
-        self.assertEqual(record["models"], ["doubao-seed-2.1-pro", "doubao-seed-2.0-mini"])
+        # Regex fallback may add but never remove: "old-model" stays until an
+        # LLM extraction confirms its removal.
+        self.assertEqual(record["models"],
+                         ["old-model", "doubao-seed-2.1-pro", "doubao-seed-2.0-mini"])
         entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
         self.assertEqual(entry["source"], "regex")
-        self.assertEqual((entry["added"], entry["removed"]), (2, 1))
+        self.assertEqual((entry["added"], entry["removed"]), (2, 0))
         self.assertEqual(entry["vendor"], "火山引擎")
         self.assertEqual(entry["plan"], "coding plan")
         self.assertIn("新增 2 个", entry["reason"])
@@ -513,7 +529,10 @@ class RefreshPlanModelsTests(unittest.TestCase):
 
         self.app._maintenance_llm_call = boom
         report = self.app.run_maintenance("manual")
-        self.assertEqual(self.app.subscriptions[0]["models"], ["doubao-seed-2.1-pro"])
+        # The regex fallback keeps "old-model": losing the LLM must never
+        # shrink the list.
+        self.assertEqual(self.app.subscriptions[0]["models"],
+                         ["old-model", "doubao-seed-2.1-pro"])
         entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
         self.assertEqual(entry["source"], "regex")
         self.assertIn("plan_models_llm", [a["kind"] for a in report["alerts"]])
@@ -533,6 +552,17 @@ class RefreshPlanModelsTests(unittest.TestCase):
         self.patch_fetch("<html><body><ul><li>old-model</li></ul></body></html>")
         report = self.app.run_maintenance("manual")
         self.assertEqual(self.app.subscriptions[0]["models"], ["old-model"])
+        self.assertEqual([e for e in report["applied"]
+                          if e["action"] == "update_plan_models"], [])
+
+    def test_regex_subset_never_removes_existing_models(self):
+        # A regex extraction that sees only part of the list must not shrink
+        # it: no change is applied at all.
+        self.app.subscriptions[0]["models"] = ["m-keep", "m-also-keep"]
+        self.patch_fetch("<html><body><ul><li>m-keep</li></ul></body></html>")
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"],
+                         ["m-keep", "m-also-keep"])
         self.assertEqual([e for e in report["applied"]
                           if e["action"] == "update_plan_models"], [])
 
@@ -575,10 +605,12 @@ class RefreshProvidersTests(unittest.TestCase):
         report = {"applied": [], "suggestions": [], "alerts": []}
         maint.refresh_providers(self.app, report)
         coding = self.app.providers[0]["modes"]["coding"]
-        self.assertEqual(coding["models"], ["doubao-seed-2.1-pro", "kimi-k3"])
+        # Regex fallback adds but never removes: "old-model" survives.
+        merged = ["old-model", "doubao-seed-2.1-pro", "kimi-k3"]
+        self.assertEqual(coding["models"], merged)
         entry = next(e for e in report["applied"]
                      if e["action"] == "update_provider_models")
-        self.assertEqual((entry["added"], entry["removed"]), (2, 1))
+        self.assertEqual((entry["added"], entry["removed"]), (2, 0))
         self.assertEqual(entry["vendor"], "火山引擎方舟")
         self.assertEqual(entry["mode"], "coding")
         self.assertIn("新增 2 个", entry["reason"])
@@ -587,13 +619,11 @@ class RefreshProvidersTests(unittest.TestCase):
         self.assertTrue(overlay.is_file())
         data = json.loads(overlay.read_text(encoding="utf-8"))
         saved = next(p for p in data["providers"] if p["id"] == "volcengine")
-        self.assertEqual(saved["modes"]["coding"]["models"],
-                         ["doubao-seed-2.1-pro", "kimi-k3"])
+        self.assertEqual(saved["modes"]["coding"]["models"], merged)
         # Reloaded registry (builtin + overlay) sees the refreshed list too.
         reloaded = providers_mod.load_providers(self.path.parent)
         saved2 = next(p for p in reloaded if p["id"] == "volcengine")
-        self.assertEqual(saved2["modes"]["coding"]["models"],
-                         ["doubao-seed-2.1-pro", "kimi-k3"])
+        self.assertEqual(saved2["modes"]["coding"]["models"], merged)
 
     def test_empty_extraction_alerts_and_keeps_data(self):
         self.patch_fetch("<html><body><p>页面里没有模型清单</p></body></html>")
@@ -637,8 +667,9 @@ class RefreshProvidersTests(unittest.TestCase):
         self.app._maintenance_llm_call = boom
         report = {"applied": [], "suggestions": [], "alerts": []}
         maint.refresh_providers(self.app, report)
+        # Regex fallback never removes: "old-model" survives the LLM outage.
         self.assertEqual(self.app.providers[0]["modes"]["coding"]["models"],
-                         ["from-regex"])
+                         ["old-model", "from-regex"])
         entry = next(e for e in report["applied"]
                      if e["action"] == "update_provider_models")
         self.assertEqual(entry["source"], "regex")
@@ -662,6 +693,16 @@ class RefreshProvidersTests(unittest.TestCase):
         maint.refresh_providers(self.app, report)
         self.assertEqual(report["applied"], [])
         self.assertEqual(report["alerts"], [])
+        self.assertFalse((self.path.parent / "providers.json").exists())
+
+    def test_regex_subset_never_removes_provider_models(self):
+        coding = self.app.providers[0]["modes"]["coding"]
+        coding["models"] = ["m-keep", "m-also-keep"]
+        self.patch_fetch("<html><body><ul><li>m-keep</li></ul></body></html>")
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(coding["models"], ["m-keep", "m-also-keep"])
+        self.assertEqual(report["applied"], [])
         self.assertFalse((self.path.parent / "providers.json").exists())
 
 
@@ -953,7 +994,8 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         self.addCleanup(setattr, maint, "fetch_plan_doc", original_doc)
         self.addCleanup(setattr, maint, "fetch_models_json", original_api)
         report = self.refresh()
-        self.assertEqual(vendor["modes"]["coding"]["models"], ["from-doc"])
+        self.assertEqual(vendor["modes"]["coding"]["models"],
+                         ["old-model", "from-doc"])
         self.assertEqual(vendor["modes"]["payg"]["models"], ["old-model"])
         self.assertEqual(
             [e["mode"] for e in report["applied"]], ["coding"])
@@ -975,7 +1017,8 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         self.assertEqual([e["vendor"] for e in report["applied"]], ["第二厂家"])
         self.assertEqual(self.app.providers[0]["modes"]["coding"]["models"],
                          ["old-model"])
-        self.assertEqual(second["modes"]["coding"]["models"], ["from-doc"])
+        self.assertEqual(second["modes"]["coding"]["models"],
+                         ["old-model", "from-doc"])
         overlay = self.path.parent / "providers.json"
         data = json.loads(overlay.read_text(encoding="utf-8"))
         self.assertEqual([p["id"] for p in data["providers"]],
@@ -1322,6 +1365,58 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual((source, models), ("llm", ["kimi-k3", "glm-5.3"]))
         self.assertEqual(calls, ["dead-model", "good-model"])
         self.assertEqual(self.app.maintenance_pool["queue"], ["good-model"])
+
+    def test_queue_failure_falls_through_to_untried_pool_models(self):
+        """A dead queue model falls to an untried pool candidate, not regex."""
+        self.make_channel_free("a")
+        self.app.maintenance_pool["queue"] = ["queued-model"]
+        self.app.maintenance_pool["last_probe_at"] = time.time()  # probe cooling
+        calls: list[str] = []
+
+        def llm(model, prompt):
+            calls.append(model)
+            if model == "queued-model":
+                raise RuntimeError("boom")
+            return json.dumps(["kimi-k3"])
+        self.app._maintenance_llm_call = llm
+        report = {"alerts": [], "applied": []}
+        models, source = maint.extract_doc_models(
+            self.app, "doc text", "doc", "plan_models_llm", report)
+        self.assertEqual((source, models), ("llm", ["kimi-k3"]))
+        self.assertEqual(calls, ["queued-model", "gpt-old"])
+        self.assertEqual(report["alerts"], [])
+        # the failure is recorded as tried, so the next run starts past it
+        self.assertEqual(maint.pick_maintenance_models(self.app)[0],
+                         ["gpt-old", "gpt-keep"])
+
+    def test_regex_fallback_waits_for_every_pool_candidate(self):
+        self.make_channel_free("a")
+        self.app.maintenance_pool["last_probe_at"] = time.time()  # probe cooling
+        calls: list[str] = []
+
+        def llm(model, prompt):
+            calls.append(model)
+            raise RuntimeError("boom")
+        self.app._maintenance_llm_call = llm
+        report = {"alerts": [], "applied": []}
+        models, source = maint.extract_doc_models(
+            self.app, "- kimi-k3", "doc", "plan_models_llm", report)
+        self.assertEqual((source, models), ("regex", ["kimi-k3"]))
+        self.assertEqual(calls, ["gpt-old", "gpt-keep"])
+        self.assertEqual(len(report["alerts"]), 1)
+        self.assertIn("全部候选失败", report["alerts"][0]["message"])
+
+    def test_extraction_without_candidates_stays_silent_on_regex(self):
+        """No candidate at all: rules are the designed fallback, no alert."""
+        self.app.maintenance_pool["last_probe_at"] = time.time()  # probe cooling
+        calls: list[str] = []
+        self.app._maintenance_llm_call = lambda model, prompt: calls.append(model)
+        report = {"alerts": [], "applied": []}
+        models, source = maint.extract_doc_models(
+            self.app, "- kimi-k3", "doc", "plan_models_llm", report)
+        self.assertEqual((source, models), ("regex", ["kimi-k3"]))
+        self.assertEqual(calls, [])
+        self.assertEqual(report["alerts"], [])
 
     def test_explicit_model_list_is_used_verbatim(self):
         self.app.config = dataclasses.replace(
