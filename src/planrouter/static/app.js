@@ -707,15 +707,14 @@ function renderDashboard() {
       : '未运行'));
     if (dsh.url) {
       dshRows.push(dashRow('界面地址',
-        `<a href="${esc(dsh.url)}" target="_blank" rel="noopener">打开</a>`));
+        `<a href="${esc(dshUrl(dsh.url))}" target="_blank" rel="noopener">打开</a>`));
     }
     if (dsh.note) dshRows.push(dashRow('提示', esc(dsh.note)));
   }
   $('dash-dsh').innerHTML = dshRows.join('');
-  // The "打开 DSH 界面" control is a real anchor: when the CLI already reports
-  // a tokenised URL, a plain click opens the tab (no popup, no await in the
-  // way). Without one the click handler starts DSH first.
-  $('btn-dsh-open').href = (dsh && dsh.running && dsh.url) ? dsh.url : '#';
+  // Keep the anchor on the console's hostname (see dshUrl); the click itself is
+  // handled by the popup below, but Ctrl/middle clicks use this href.
+  $('btn-dsh-open').href = (dsh && dsh.running && dsh.url) ? dshUrl(dsh.url) : '#';
 
   // 近 7 天用量趋势：与用量报表页同一套 bars/sparkline。
   const usage = state.dashUsage;
@@ -758,44 +757,58 @@ async function startDshOnly() {
   }
 }
 
-// Cold start: DSH was not running, so there is no URL to link to yet. Claim a
-// tab while the click still counts as a user gesture — window.open() issued
-// after `await` loses the gesture and the browser leaves it blank — then point
-// it at the tokenised URL once the CLI reports one.
-async function openDshFirstRun() {
-  const open = $('btn-dsh-open');
-  let win = null;
-  try { win = window.open('', '_blank'); } catch (e) { win = null; }
-  if (win) {
-    try {
-      win.document.write('<p style="font:14px/1.7 system-ui,sans-serif;padding:24px;color:#444">正在启动 DeepSeek Harness，完成后自动进入界面…</p>');
-    } catch (e) { /* about:blank not writable yet: keep it blank */ }
-  }
+// Open DSH in its own popup window; the window is claimed synchronously inside
+// the click so the navigation keeps the user gesture.
+const DSH_WIN = 'planrouter-dsh';
+
+// dsh always prints 127.0.0.1:3080 while the console may be served from
+// localhost:8010. Those are different sites, and DSH's session cookie is
+// SameSite=Strict: Chrome/Edge do store it on the token URL but then refuse to
+// send it on the redirect that follows the cross-site navigation, so `GET /`
+// answers 401 — plain text on a white background, which reads as a blank page.
+// Same-site (localhost:8010 -> localhost:3080) keeps the cookie flowing, so
+// keep DSH on the console's loopback alias. Only the loopback aliases are
+// interchangeable in practice, and dsh listens on loopback only.
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+function dshUrl(url) {
+  if (!url) return '';
   try {
-    const result = await startDshRequest();
-    if (!result.url) {
-      if (win) win.close();
-      toast('DSH 启动后仍未返回访问地址，请刷新后重试', 'warn');
-    } else if (win) {
-      win.location.replace(result.url);
-    } else {
-      toast('已启动，请再点一次「打开 DSH 界面」', 'ok');
+    const u = new URL(url);
+    const here = window.location.hostname;
+    if (LOOPBACK_HOSTS.includes(u.hostname) && LOOPBACK_HOSTS.includes(here)) {
+      u.hostname = here;
     }
-  } catch (e) {
-    if (win) win.close();
-    toast(e.message, 'bad');
-    loadDashboard().catch(() => {});
-  }
+    return u.href;
+  } catch (e) { return url; }
+}
+
+function dshPopup(url) {
+  const width = 1280;
+  const height = 900;
+  const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+  const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+  try {
+    const win = window.open(url, DSH_WIN,
+      `popup=yes,width=${width},height=${height},left=${left},top=${top}`);
+    if (win) win.focus();
+    return win;
+  } catch (e) { return null; }
 }
 
 $('btn-dsh-start').onclick = startDshOnly;
-// Already running: the anchor's href carries the tokenised URL, so the click
-// itself opens the tab (a real gesture, the same as pasting the URL). Only a
-// cold start needs the popup dance above.
-$('btn-dsh-open').onclick = (ev) => {
-  if (state.dshInfo && state.dshInfo.running && state.dshInfo.url) return;
+// Modified clicks (Ctrl/Shift/Cmd/middle) fall through to the anchor's own href.
+$('btn-dsh-open').onclick = async (ev) => {
+  if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
-  openDshFirstRun();
+  const dsh = state.dshInfo;
+  if (dsh && dsh.running && dsh.url) {
+    if (!dshPopup(dshUrl(dsh.url))) toast('浏览器拦截了弹窗，请允许本站弹窗后重试', 'warn');
+    return;
+  }
+  // Cold start: no URL yet, so the window can only be opened after dsh reports
+  // one — the first click starts it, the second opens it.
+  await startDshOnly();
 };
 
 function renderSubscriptions() {
