@@ -9,6 +9,11 @@ when asked.
 The CLI writes its tokenised URL to stdout (`dsh web: http://...?token=...`).
 Nothing is persisted here: a URL obtained by another shell is not reusable,
 so only a process spawned by this module is reported as openable.
+
+The model picker inside DSH is built from the profile's *static* `models`
+list, not from the gateway's GET /v1/models, so `sync_models` rewrites that
+block before every launch: the router's auto ids stay selectable next to every
+backend id the console currently routes to.
 """
 from __future__ import annotations
 
@@ -25,8 +30,17 @@ from pathlib import Path
 WEB_PROFILE = "planrouter-web"
 URL_LINE = re.compile(r"dsh web: (http://\S+)")
 BASE_URL_LINE = re.compile(r"^\s*baseURL:\s*(\S+)\s*$", re.MULTILINE)
+MODELS_LINE = re.compile(r"^\s*models:\s*$")
 LOG_LINES = 80
 START_TIMEOUT = 90.0
+
+# Friendly labels for the ids the router itself owns; a bare `auto:<route>`
+# or `facet:<route>` falls back to the generic form below.
+AUTO_LABELS = {
+    "facet-auto": "自动 · 默认链",
+    "facet-cheap": "自动 · 省钱链",
+    "auto": "自动 · 默认链（auto）",
+}
 
 _lock = threading.Lock()
 _start_lock = threading.Lock()
@@ -156,6 +170,88 @@ def _profile_base_url(directory: Path) -> str:
         return ""
     matches = BASE_URL_LINE.findall(text)
     return matches[-1] if matches else ""
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _models_block(lines: list[str]) -> tuple[int, int] | None:
+    """Locate the `models:` list of the planrouter provider.
+
+    Returns the half-open range [first item line, first line after the list),
+    or None when the profile carries no such block.
+    """
+    entry = next((i for i, line in enumerate(lines)
+                  if line.strip() == "- id: llm-pi-ai"), None)
+    if entry is None:
+        return None
+    key = next((i for i in range(entry + 1, len(lines))
+                if MODELS_LINE.match(lines[i])), None)
+    if key is None:
+        return None
+    key_indent = _indent(lines[key])
+    end = key + 1
+    while end < len(lines) and (not lines[end].strip()
+                                or _indent(lines[end]) > key_indent):
+        end += 1
+    return key + 1, end
+
+
+def _label(item: dict) -> str:
+    """Picker text: which auto chain it is, or id plus its backend channel."""
+    name = item.get("id") or ""
+    if item.get("mode") == "auto":
+        return AUTO_LABELS.get(name) or f"自动 · {name}"
+    owner = item.get("owned_by") or ""
+    return f"{name} · {owner}" if owner else name
+
+
+def _render_models(models: list[dict], indent: int) -> list[str]:
+    pad = " " * indent
+    out: list[str] = []
+    for item in models:
+        name = str(item.get("id") or "").strip()
+        if not name:
+            continue
+        out.append(f"{pad}- id: {json.dumps(name, ensure_ascii=False)}")
+        out.append(f"{pad}  name: {json.dumps(_label(item), ensure_ascii=False)}")
+    return out
+
+
+def sync_models(models: list[dict], profile: str = WEB_PROFILE) -> bool:
+    """Rewrite the profile's provider model list to match the gateway.
+
+    DSH only offers what its patch layer declares, so backend ids stay
+    invisible in the picker until they appear here. Called before each launch,
+    which keeps the list in step with channels enabled or disabled in the
+    console; an unchanged list leaves the file untouched.
+    """
+    patch = profile_dir(profile) / "cordis.patch.yml"
+    try:
+        text = patch.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lines = text.splitlines(keepends=True)
+    block = _models_block(lines)
+    if block is None:
+        return False
+    start, end = block
+    indent = _indent(lines[start - 1]) + 2
+    rendered = [line + "\n" for line in _render_models(models, indent)]
+    if not rendered:
+        return False
+    updated = lines[:start] + rendered + lines[end:]
+    updated_text = "".join(updated)
+    if updated_text == text:
+        return True
+    tmp = patch.with_name(patch.name + ".tmp")
+    try:
+        tmp.write_text(updated_text, encoding="utf-8")
+        os.replace(tmp, patch)
+    except OSError:
+        return False
+    return True
 
 
 def status(profile: str = WEB_PROFILE) -> dict:

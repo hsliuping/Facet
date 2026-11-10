@@ -1138,13 +1138,59 @@ class App:
         """Report whether the DeepSeek Harness client shares this host."""
         return dsh_mod.status()
 
+    def dsh_models(self) -> list[dict]:
+        """Catalogue entries the DSH picker should offer.
+
+        DSH builds its model list from the profile's static `models` block, so
+        the console publishes auto ids and backend ids side by side there. Left
+        out: the bare `auto` / `auto:<route>` / `facet:<route>` aliases (they
+        schedule the same chains as the branded ids and only duplicate them),
+        and models the free-pool probe already failed — offering a known
+        broken id just produces errors in the picker.
+
+        Free-tier models must additionally carry a passing probe result: the
+        daily maintenance sweep tests them and a free channel's mappings are
+        mostly unverified, so untested ones stay hidden until the sweep (or
+        the per-model 测试 button) records a pass.
+
+        The probe records results per *upstream* id (the mapping value) while
+        /v1/models exposes the mapping key, so each id is resolved through its
+        channel before the check.
+        """
+        branded = set(self.config.models.branded)
+        with self.maintenance_pool_lock:
+            tests = dict(self.maintenance_pool.get("tests") or {})
+        channels = {channel.name: channel for channel in self.config.channels}
+        entries: list[dict] = []
+        for item in self.model_list()["data"]:
+            name = item["id"]
+            if item["mode"] == "auto":
+                if name not in branded:
+                    continue
+            else:
+                channel = channels.get(item["owned_by"])
+                wire = channel.models.get(name) if channel else None
+                test = tests.get(wire) if wire else None
+                free = channel is not None and (
+                    (channel.tiers.get(name) or channel.tier) == "free")
+                if test and not test.get("ok"):
+                    continue
+                if free and not (test and test.get("ok")):
+                    continue
+            entries.append({"id": name, "mode": item["mode"],
+                            "owned_by": item["owned_by"]})
+        return entries
+
     def start_dsh_web(self, port=None) -> dict:
         """Spawn DSH's planrouter-web profile and return its tokenised URL.
 
         The gateway key is handed over as ROUTER_API_KEY, which the profile's
         patch layer reads, so the spawned client can authenticate without the
-        operator copying a secret into its config.
+        operator copying a secret into its config. The profile's model list is
+        refreshed first: auto modes and real backend models stay selectable
+        together, and channels enabled since the last launch show up.
         """
+        dsh_mod.sync_models(self.dsh_models())
         return dsh_mod.start_web(api_key=self.config.listen.api_key, port=port)
 
     def _backup_config(self, tag: str) -> None:
