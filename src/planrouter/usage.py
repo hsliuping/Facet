@@ -91,6 +91,31 @@ class UsageRecorder:
         except OSError:
             pass
 
+    def model_usage(self, channel: str, model: str, period: str = "total",
+                    on: date | None = None) -> dict:
+        """Local consumption of one (channel, wire model) inside a quota window.
+
+        `period` is "total" (all recorded days), "month" or "day". `success`
+        excludes failed calls because vendors only bill answered requests.
+        """
+        on = on or date.today()
+        month = on.isoformat()[:7]
+        today = on.isoformat()
+        used = {"requests": 0, "success": 0, "failed": 0, "tokens": 0}
+        with self.lock:
+            for day, bucket in self.data["days"].items():
+                if period == "day" and day != today:
+                    continue
+                if period == "month" and not day.startswith(month):
+                    continue
+                entry = (bucket.get(channel) or {}).get("models") or {}
+                row = entry.get(model)
+                if not isinstance(row, dict):
+                    continue
+                for key in used:
+                    used[key] += int(row.get(key) or 0)
+        return used
+
     def series(self, days: int = 30, on: date | None = None) -> dict:
         on = on or date.today()
         days = max(1, min(days, 365))

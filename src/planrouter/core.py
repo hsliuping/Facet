@@ -222,6 +222,40 @@ class Rate:
 
 
 @dataclass(frozen=True)
+class FreeQuota:
+    """Vendor free-tier allowance applied per upstream model.
+
+    `period` decides the accounting window for the local usage counter:
+    "total" (grant lifetime), "month" or "day". Both caps are optional; the
+    router stops routing the model as soon as either one is used up, so a
+    free channel can never silently spill into per-call billing.
+    """
+    tokens: int | None = None
+    requests: int | None = None
+    period: str = "total"
+
+
+def parse_free_quota(raw) -> FreeQuota | None:
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("free_quota must be an object")
+    tokens = raw.get("tokens")
+    requests = raw.get("requests")
+    for label, value in (("tokens", tokens), ("requests", requests)):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"free_quota.{label} must be a non-negative integer")
+    period = str(raw.get("period") or "total").strip().lower()
+    if period not in ("total", "month", "day"):
+        raise ValueError('free_quota.period must be "total", "month" or "day"')
+    if tokens is None and requests is None:
+        raise ValueError("free_quota needs at least one of tokens / requests")
+    return FreeQuota(tokens=tokens, requests=requests, period=period)
+
+
+@dataclass(frozen=True)
 class Channel:
     name: str
     protocol: str
@@ -246,6 +280,9 @@ class Channel:
     # Optional outbound http(s) proxy for foreign upstreams that are not
     # reachable directly (e.g. "http://127.0.0.1:7890"); empty = direct.
     proxy: str = ""
+    # Free-tier allowance per upstream model. Explicit channel config wins;
+    # otherwise the vendor registry mode supplies the baseline.
+    free_quota: FreeQuota | None = None
 
 
 @dataclass(frozen=True)
@@ -556,6 +593,10 @@ def parse_config(raw: dict) -> Config:
             rpm=rate_raw.get("rpm"), rpd=rate_raw.get("rpd"),
             tpm=rate_raw.get("tpm"), tpd=rate_raw.get("tpd"),
         )
+        try:
+            free_quota = parse_free_quota(item.get("free_quota"))
+        except ValueError as exc:
+            raise ValueError(f"channel {name}: {exc}") from None
         channels.append(Channel(
             name=name,
             protocol=protocol,
@@ -573,6 +614,7 @@ def parse_config(raw: dict) -> Config:
             provider=str(item.get("provider") or "").strip(),
             mode=str(item.get("mode") or "").strip(),
             proxy=proxy,
+            free_quota=free_quota,
         ))
     if not channels:
         raise ValueError("at least one channel is required")

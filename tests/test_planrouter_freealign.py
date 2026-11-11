@@ -10,9 +10,11 @@ from pathlib import Path
 from unittest import mock
 
 from planrouter import freealign
+from planrouter import maintenance as maint
 from planrouter import providers as providers_mod
-from planrouter.core import load_config, parse_config
+from planrouter.core import load_config, parse_config, parse_free_quota
 from planrouter.server import App
+from planrouter.usage import UsageRecorder
 
 
 TODAY = date.today().isoformat()
@@ -133,6 +135,7 @@ def volc_registry() -> list[dict]:
             "label": "按量付费", "protocol": "openai",
             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
             "tier": "paid", "models": [], "free_quota_cmd": ["facet-ark-quota"],
+            "free_quota": {"tokens": 500000, "period": "total"},
         }},
     }]
 
@@ -398,6 +401,179 @@ class DefaultsTests(unittest.TestCase):
         raw = align_config()
         raw["defaults"] = {"free_align_hours": 0}
         self.assertEqual(parse_config(raw).defaults.free_align_hours, 0)
+
+
+WIRE = "doubao-seed-2-1-lite-260915"
+
+
+class FreeQuotaParseTests(unittest.TestCase):
+    def test_parser_accepts_tokens_requests_and_period(self):
+        self.assertIsNone(parse_free_quota(None))
+        self.assertEqual(parse_free_quota({"tokens": 500000}).tokens, 500000)
+        self.assertEqual(parse_free_quota({"tokens": 500000}).period, "total")
+        both = parse_free_quota({"tokens": 10, "requests": 5, "period": "month"})
+        self.assertEqual((both.tokens, both.requests, both.period),
+                         (10, 5, "month"))
+
+    def test_parser_rejects_invalid_values(self):
+        for bad in ({"tokens": -1}, {"tokens": True}, {"tokens": "500k"},
+                    {"tokens": 1, "period": "year"}, {}):
+            with self.assertRaises(ValueError):
+                parse_free_quota(bad)
+        with self.assertRaisesRegex(ValueError, "free_quota must be an object"):
+            parse_free_quota([1])
+
+    def test_channel_config_carries_free_quota(self):
+        raw = align_config()
+        raw["channels"][0]["free_quota"] = {"tokens": 1000, "requests": 10}
+        channel = parse_config(raw).channel("百炼免费")
+        self.assertEqual(channel.free_quota.tokens, 1000)
+        self.assertEqual(channel.free_quota.requests, 10)
+        raw["channels"][0]["free_quota"] = {"tokens": 1000, "period": "year"}
+        with self.assertRaisesRegex(ValueError, "百炼免费"):
+            parse_config(raw)
+
+    def test_builtin_baselines_per_vendor_model(self):
+        merged = providers_mod.load_providers(None)
+        volc = next(p for p in merged if p["id"] == "volcengine")
+        self.assertEqual(volc["modes"]["payg"]["free_quota"]["tokens"], 500000)
+        bailian = next(p for p in merged if p["id"] == "bailian")
+        self.assertEqual(bailian["modes"]["payg"]["free_quota"]["tokens"],
+                         1000000)
+
+
+class FreeQuotaUsageTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.usage = UsageRecorder(self.path)
+        self.addCleanup(self.path.unlink, missing_ok=True)
+
+    def record(self, when: date, tokens: int, success: bool = True):
+        self.usage.record("火山免费", success, tokens=tokens, on=when,
+                          model=WIRE)
+
+    def test_total_month_and_day_windows(self):
+        self.record(date(2026, 1, 31), 100)
+        self.record(date(2026, 2, 1), 200)
+        self.record(date(2026, 2, 1), 300, success=False)
+        self.assertEqual(self.usage.model_usage("火山免费", WIRE)["tokens"], 600)
+        self.assertEqual(
+            self.usage.model_usage("火山免费", WIRE, "month",
+                                   on=date(2026, 2, 15))["tokens"], 500)
+        self.assertEqual(
+            self.usage.model_usage("火山免费", WIRE, "day",
+                                   on=date(2026, 2, 1))["tokens"], 500)
+        self.assertEqual(
+            self.usage.model_usage("火山免费", WIRE, "day",
+                                   on=date(2026, 2, 1))["success"], 1)
+        # Unknown model / channel never counts.
+        self.assertEqual(self.usage.model_usage("火山免费", "nope")["tokens"], 0)
+
+
+class FreeQuotaRoutingTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.addCleanup(self.path.unlink, missing_ok=True)
+        raw = volc_config()
+        raw["channels"][0]["models"] = {"auto": "", WIRE: WIRE}
+        self.app = App(parse_config(raw), usage_file=self.path)
+        self.app.providers = volc_registry()
+        self.channel = self.app.config.channel("火山免费")
+
+    def test_baseline_quota_drives_exhaustion(self):
+        self.app.usage.record("火山免费", True, tokens=400000, model=WIRE)
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["source"], "provider_baseline")
+        self.assertEqual(status["limit_tokens"], 500000)
+        self.assertFalse(status["exhausted"])
+        self.assertTrue(status["warning"])  # 80% used
+        self.app.usage.record("火山免费", True, tokens=100000, model=WIRE)
+        self.assertTrue(self.app.free_quota_exhausted(self.channel, WIRE))
+        self.assertEqual(status["limit_tokens"], 500000)
+
+    def test_explicit_channel_quota_overrides_baseline(self):
+        raw = volc_config()
+        raw["channels"][0]["free_quota"] = {"requests": 2}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        app.usage.record("火山免费", True, tokens=900000, model=WIRE)
+        status = app.free_quota_status(channel, WIRE)
+        self.assertEqual(status["source"], "channel")
+        self.assertEqual(status["limit_requests"], 2)
+        self.assertFalse(status["exhausted"])  # tokens are uncapped here
+        app.usage.record("火山免费", True, tokens=1, model=WIRE)
+        self.assertTrue(app.free_quota_exhausted(channel, WIRE))
+
+    def test_paid_channels_share_no_free_cap(self):
+        raw = volc_config()
+        raw["channels"][0]["tier"] = "paid"
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        app.usage.record("火山免费", True, tokens=900000, model=WIRE)
+        self.assertIsNone(app.free_quota_status(channel, WIRE))
+
+    def test_model_tier_override_decides_eligibility(self):
+        # Paid model on a free channel: not capped. Free model on a paid
+        # channel: capped by the vendor baseline.
+        raw = volc_config()
+        raw["channels"][0]["tiers"] = {WIRE: "paid", "old-doubao": "free"}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        self.assertIsNone(app.free_quota_status(channel, WIRE))
+        self.assertEqual(app.free_quota_status(channel, "old-doubao")["limit_tokens"],
+                         500000)
+        raw["channels"][0]["tier"] = "paid"
+        raw["channels"][0]["tiers"] = {WIRE: "free"}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        app.usage.record("火山免费", True, tokens=600000, model=WIRE)
+        self.assertTrue(app.free_quota_exhausted(
+            app.config.channel("火山免费"), WIRE))
+
+    def test_filter_drops_exhausted_candidate_without_fallback(self):
+        self.app.usage.record("火山免费", True, tokens=600000, model=WIRE)
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+        self.assertEqual(skipped[0]["channel"], "火山免费")
+
+    def test_filter_keeps_healthy_candidate(self):
+        self.app.usage.record("火山免费", True, tokens=1000, model=WIRE)
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual([wire for _ch, wire in kept], [WIRE])
+        self.assertEqual(skipped, [])
+
+    def test_payload_reports_exhausted_and_sync_warning(self):
+        self.app.usage.record("火山免费", True, tokens=600000, model=WIRE)
+        payload = maint.free_models_payload(self.app)
+        entry = next(m for m in payload["channels"][0]["models"]
+                     if m["model"] == WIRE)
+        self.assertTrue(entry["quota"]["exhausted"])
+        self.assertFalse(entry["routable"])
+        self.assertIn("免费额度已用完", entry["skip_reason"])
+        self.assertEqual(payload["summary"]["quota_exhausted"], 1)
+        # Registry declares a free-quota command but no sweep has run yet.
+        self.assertEqual(payload["channels"][0]["quota_sync"],
+                         "尚未同步厂家免费额度：当前按基础额度 + 本地用量估算，"
+                         "可能与实际用量不一致")
+
+    def test_payload_marks_sync_failure(self):
+        self.app.free_align_reports = [{
+            "trigger": "scheduled",
+            "alerts": [{"channel": "火山免费", "kind": "free_quota_cmd",
+                        "message": "免费额度命令执行失败"}],
+        }]
+        payload = maint.free_models_payload(self.app)
+        self.assertIn("同步失败", payload["channels"][0]["quota_sync"])
 
 
 if __name__ == "__main__":

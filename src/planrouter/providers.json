@@ -30,6 +30,7 @@
           "docs_url": "https://www.volcengine.com/docs/82379",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
           "free_quota_cmd": ["facet-ark-quota", "--output", "json"],
+          "free_quota": {"tokens": 500000, "period": "total"},
           "credential_envs": [
             {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
             {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
@@ -165,6 +166,7 @@
           "keys_url": "https://bailian.console.aliyun.com",
           "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
           "free_quota_cmd": ["bl", "usage", "free", "--output", "json"],
+          "free_quota": {"tokens": 1000000, "period": "total"},
           "tier": "paid",
           "models": []
         },

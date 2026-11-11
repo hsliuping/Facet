@@ -28,8 +28,8 @@ from . import ark_quota
 from .audit import RequestLog
 from .core import (
     ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
-    open_with_proxy, parse_cooldown, parse_config, resolve_model,
-    resolve_secret, upstream_path_for,
+    open_with_proxy, parse_cooldown, parse_config, parse_free_quota,
+    resolve_model, resolve_secret, upstream_path_for,
 )
 from .notifier import ReminderService
 from .persistence import StatePersistence
@@ -573,6 +573,79 @@ class App:
                 else:
                     usable.add(name)
         return {name: reason for name, reason in expired.items() if name not in usable}
+
+    def provider_mode(self, provider: str, mode: str) -> dict:
+        """Registry mode metadata (free quota baseline, credential envs, ...)."""
+        for entry in self.providers:
+            if entry.get("id") == provider:
+                return (entry.get("modes") or {}).get(mode) or {}
+        return {}
+
+    def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
+        """Resolved free-tier allowance for one model on this channel.
+
+        Only models that actually count as free are capped: a paid channel
+        sharing the same vendor must never be throttled by the free baseline.
+        """
+        tiers = channel.tiers or {}
+        explicit = tiers.get(exposed) if exposed else None
+        explicit = explicit or (tiers.get(wire) if wire else None)
+        if explicit:
+            # A mixed channel may expose paid models next to free ones; the
+            # per-model override decides, not the channel-wide tier.
+            eligible = explicit == "free"
+        else:
+            eligible = channel.tier == "free"
+        if not eligible:
+            return None
+        if channel.free_quota is not None:
+            return channel.free_quota
+        raw = self.provider_mode(channel.provider, channel.mode).get("free_quota")
+        try:
+            return parse_free_quota(raw)
+        except ValueError:
+            return None
+
+    def free_quota_status(self, channel, wire: str, exposed: str = "") -> dict | None:
+        """Local usage vs the free allowance; exhausted means "never route it"."""
+        spec = self.free_quota_spec(channel, wire, exposed)
+        if spec is None or self.usage is None:
+            return None
+        used = self.usage.model_usage(channel.name, wire, spec.period)
+        tokens_used = int(used.get("tokens") or 0)
+        # Vendors bill answered requests only; failed calls stay out of the cap.
+        requests_used = int(used.get("success") or 0)
+        remaining_tokens = (None if spec.tokens is None
+                            else max(0, spec.tokens - tokens_used))
+        remaining_requests = (None if spec.requests is None
+                              else max(0, spec.requests - requests_used))
+        exhausted = (
+            (spec.tokens is not None and tokens_used >= spec.tokens)
+            or (spec.requests is not None and requests_used >= spec.requests)
+        )
+        ratios = []
+        if spec.tokens:
+            ratios.append(tokens_used / spec.tokens)
+        if spec.requests:
+            ratios.append(requests_used / spec.requests)
+        ratio = max(ratios) if ratios else 0.0
+        return {
+            "source": "channel" if channel.free_quota is not None else "provider_baseline",
+            "period": spec.period,
+            "limit_tokens": spec.tokens,
+            "limit_requests": spec.requests,
+            "used_tokens": tokens_used,
+            "used_requests": requests_used,
+            "remaining_tokens": remaining_tokens,
+            "remaining_requests": remaining_requests,
+            "ratio": round(ratio, 4),
+            "warning": bool(ratio >= 0.8 and not exhausted),
+            "exhausted": exhausted,
+        }
+
+    def free_quota_exhausted(self, channel, wire: str, exposed: str = "") -> bool:
+        status = self.free_quota_status(channel, wire, exposed)
+        return bool(status and status["exhausted"])
 
     def _read_raw(self) -> dict:
         if self.config_path and self.config_path.is_file():
@@ -1121,7 +1194,8 @@ class App:
         """First enabled channel whose own mapping exposes this upstream id,
         tier-free channels first, config order otherwise."""
         hits = [c for c in self.config.channels
-                if c.enabled and model in c.models.values()]
+                if c.enabled and model in c.models.values()
+                and not self.free_quota_exhausted(c, model)]
         hits.sort(key=lambda c: c.tier != "free")
         return hits[0] if hits else None
 
@@ -1155,6 +1229,10 @@ class App:
 
     def _maintenance_direct_call(self, channel, model: str, prompt: str) -> str:
         """One non-streaming chat turn straight against the owning channel."""
+        if self.free_quota_exhausted(channel, model):
+            raise RuntimeError(
+                f"free quota exhausted for {model} on {channel.name}; "
+                "maintenance call blocked to avoid billed usage")
         protocol = channel.protocol
         if protocol == ANTHROPIC:
             payload = {"model": model, "max_tokens": 6000,
@@ -1452,6 +1530,8 @@ class App:
             for wire in catalog.get("models") or []:
                 if (channel.name, wire) in dead:
                     continue
+                if self.free_quota_exhausted(channel, wire):
+                    continue
                 key = facts.resolve(wire) if facts.available else None
                 rec = facts.record(key) if key else {}
                 tier = model_tier(channel, self.subscriptions, wire)
@@ -1531,6 +1611,8 @@ class App:
             scores = self.store.scores_for(channel.name)
             for wire in (self.store.catalog_view(channel.name).get("models") or []):
                 if (channel.name, wire) in dead:
+                    continue
+                if self.free_quota_exhausted(channel, wire):
                     continue
                 key = facts.resolve(wire) if facts.available else None
                 rec = facts.record(key) if key else {}
@@ -1712,6 +1794,30 @@ class App:
             kept.append((channel, wire))
         if candidates and not kept:
             return candidates, []
+        return kept, skipped
+
+    def _apply_free_quota_filter(self, candidates, decision) -> tuple[list, list]:
+        """Hard stop once a free model has used its allowance.
+
+        Unlike the catalog/dead filters this never backs off: the whole point
+        is to prevent a free channel from silently switching to per-call
+        billing once the vendor's grant is gone.
+        """
+        if not candidates:
+            return candidates, []
+        kept, skipped = [], []
+        for channel, wire in candidates:
+            status = self.free_quota_status(
+                channel, wire, getattr(decision, "exposed", "") or "")
+            if status and status["exhausted"]:
+                skipped.append({
+                    "channel": channel.name,
+                    "wire_model": wire,
+                    "reason": "free_quota_exhausted",
+                    "quota": status,
+                })
+                continue
+            kept.append((channel, wire))
         return kept, skipped
 
     def ui_state(self) -> dict:
@@ -2068,6 +2174,7 @@ class App:
                       if channel.name not in blocked]
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
+        candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
         catalog_skipped = list(catalog_skipped) + dead_skipped
         if decision.mode == "fallback":
             log_base["model_unverified"] = not self.store.catalog_knows(decision.requested)
@@ -2102,6 +2209,9 @@ class App:
                     s in ("disabled", "missing") for s in status_map.values()):
                 message = ("no enabled channel for this route — enable a channel in "
                            "the console or add one that speaks this protocol")
+            if quota_skipped:
+                message = ("free quota exhausted for this model — routing stopped "
+                           "to avoid per-call billing")
             error = {
                 "message": message,
                 "route": f"{protocol}:{decision.hint}",
@@ -2111,6 +2221,8 @@ class App:
             }
             if catalog_skipped:
                 error["catalog_skipped"] = catalog_skipped
+            if quota_skipped:
+                error["free_quota_skipped"] = quota_skipped
             _json(h, 503, {
                 "error": error,
                 "channels": self.store.snapshot()["channels"],

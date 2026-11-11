@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-from .core import PROTOCOLS
+from .core import PROTOCOLS, parse_free_quota
 
 # Package copy of the registry; the config dir may hold a user overlay.
 BUILTIN_PATH = Path(__file__).parent / "providers.json"
@@ -47,7 +47,7 @@ INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 # and the credential-env declarations ship with the package registry (vendor
 # CLI knowledge), so an older overlay entry written before the field existed
 # must not erase it.
-INHERIT_LISTS = ("free_quota_cmd", "credential_envs")
+INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota")
 
 
 def _merge(builtin: list, overlay: list) -> list:
@@ -180,6 +180,12 @@ def normalize_vendor(entry) -> dict:
                     "env": env_name,
                     "label": str(item.get("label") or "").strip() or env_name,
                 })
+        try:
+            quota = parse_free_quota(mode.get("free_quota"))
+        except ValueError as exc:
+            raise ValueError(f"模式 {key} 的 {exc}") from None
+        free_quota = ({"tokens": quota.tokens, "requests": quota.requests,
+                       "period": quota.period} if quota else None)
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -189,6 +195,7 @@ def normalize_vendor(entry) -> dict:
             "docs_url": docs_url,
             "models_url": models_url,
             "free_quota_cmd": quota_cmd,
+            "free_quota": free_quota,
             "credential_envs": credential_envs,
             "models": models,
         }

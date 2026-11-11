@@ -1912,6 +1912,10 @@ $('btn-test-maintenance-models').onclick = async (e) => {
 
 function freeModelStateTag(ch) {
   if (!ch.enabled) return '<span class="tag expired">已停用</span>';
+  const models = ch.models || [];
+  if (models.length && models.every((m) => (m.quota || {}).exhausted)) {
+    return '<span class="tag expired">免费额度已用完</span>';
+  }
   if (ch.cooling) {
     return `<span class="tag expiring">冷却中${ch.cooldown_reason ? `：${esc(ch.cooldown_reason)}` : ''}</span>`;
   }
@@ -1934,9 +1938,10 @@ function renderFreeModels(free) {
   const summary = (free && free.summary) || {};
   const head = summary.models ? `<p class="sub-note">免费池 · 近 ${summary.days} 天：`
     + `可路由 ${summary.routable} 个模型（维护队列 ${summary.queue} 个）`
-    + ` · 失效标记 ${summary.dead} · 测验通过 ${summary.passed}/${summary.tested}`
+    + ` · 失效标记 ${summary.dead} · 额度用完 ${summary.quota_exhausted || 0}`
+    + ` · 测验通过 ${summary.passed}/${summary.tested}`
     + ` · 调用过 ${summary.used} 个 · 合计 ${Number(summary.tokens || 0).toLocaleString()} tokens。`
-    + `「可路由」= 已映射到渠道且渠道启用、未冷却、无失效标记；目录 :free 模型需先映射才会被真实请求调用。</p>`
+    + `「可路由」= 已映射到渠道且渠道启用、未冷却、无失效标记、免费额度未用完；目录 :free 模型需先映射才会被真实请求调用。</p>`
     : '';
   box.innerHTML = head + channels.map((ch) => {
     const cache = ch.cache || {};
@@ -1956,10 +1961,20 @@ function renderFreeModels(free) {
           + (use.input_tokens ? ` · 缓存 ${(use.cached_tokens / use.input_tokens * 100).toFixed(1)}%` : '')
           + (use.last_used ? ` · 最近 ${new Date(use.last_used * 1000).toLocaleString()}` : '')
         : `近 ${summary.days || 30} 天未调用`;
+      const q = m.quota || null;
+      let quotaText = '';
+      if (q && q.limit_tokens != null) {
+        const state = q.exhausted ? '（已用完）' : q.warning ? '（临近上限）' : '';
+        quotaText = ` · 免费额度 ${Number(q.used_tokens || 0).toLocaleString()}`
+          + `/${Number(q.limit_tokens || 0).toLocaleString()} tok${state}`;
+      } else if (q && q.limit_requests != null) {
+        const state = q.exhausted ? '（已用完）' : q.warning ? '（临近上限）' : '';
+        quotaText = ` · 免费额度 ${q.used_requests || 0}/${q.limit_requests} 次${state}`;
+      }
       return maintItem(tag, cls,
         `<code>${esc(m.model)}</code>${m.in_queue ? ' <span class="tag active">队列中</span>' : ''}${route}`
         + ` <span class="sub-note">${m.source === 'mapping' ? '渠道映射' : '目录 :free'}`
-        + ` · ${useText}${err}</span>`
+        + ` · ${useText}${quotaText}${err}</span>`
         + ` <button class="btn small ghost free-test" data-channel="${esc(ch.name)}"`
         + ` data-model="${esc(m.model)}">测试</button>`);
     }).join('');
@@ -1968,7 +1983,10 @@ function renderFreeModels(free) {
       + `<span class="sub-note">${(ch.models || []).length} 个模型 · ${routable} 个可路由`
       + cacheText
       + (ch.excluded ? ` · ${ch.excluded} 个非免费映射未列出` : '')
-      + (ch.skipped ? ` · ${ch.skipped} 个非对话模型未列出` : '') + `</span></div>`
+      + (ch.skipped ? ` · ${ch.skipped} 个非对话模型未列出` : '') + `</span>`
+      + (ch.quota_sync ? ` <span class="tag expiring">额度未同步</span>`
+        + ` <span class="sub-note">${esc(ch.quota_sync)}</span>` : '')
+      + '</div>'
       + (rows || '<p class="sub-note">无渠道映射，目录中也没有 :free 模型。</p>')
       + '</div>';
   }).join('');

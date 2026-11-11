@@ -951,12 +951,14 @@ def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
         if channel.tier != "free":
             continue
         free_own, _paid, _nonchat = _free_mapping_values(app, channel)
+        free_own = [m for m in free_own if not app.free_quota_exhausted(channel, m)]
         own_by_channel.append(free_own)
         catalog = app.store.catalogs.get(channel.name) or {}
         models = [str(m) for m in catalog.get("models") or []]
         marked = [m for m in models if m.endswith(":free")]
         pool = marked if marked else models
-        free.extend(m for m in pool if is_chat_model(m))
+        free.extend(m for m in pool if is_chat_model(m)
+                    and not app.free_quota_exhausted(channel, m))
     chosen = list(dict.fromkeys(queue))
     for round_index in range(max((len(own) for own in own_by_channel),
                                  default=0)):
@@ -1046,6 +1048,8 @@ def free_mapping_pairs(app) -> list[tuple[object, str]]:
         if not channel.enabled or channel.tier != "free":
             continue
         for wire in dict.fromkeys(_free_mapping_values(app, channel)[0]):
+            if app.free_quota_exhausted(channel, wire):
+                continue
             pairs.append((channel, wire))
     return pairs
 
@@ -1238,6 +1242,28 @@ def test_single_model(app, channel_name: str, model: str) -> dict:
 FREE_USAGE_DAYS = 30  # window for per-model request/token figures in the console
 
 
+def _free_quota_sync_note(app, channel) -> str:
+    """Warn when vendor quota sync is absent: the local baseline may drift.
+
+    Channels whose vendor has a free-quota command are expected to run the
+    scheduled sweep; without it the router still enforces the baseline quota
+    locally, but the numbers can differ from the vendor's dashboard.
+    """
+    mode = app.provider_mode(channel.provider, channel.mode) if hasattr(
+        app, "provider_mode") else {}
+    if not mode.get("free_quota_cmd"):
+        return ""
+    reports = getattr(app, "free_align_reports", None) or []
+    if not reports:
+        return "尚未同步厂家免费额度：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
+    latest = reports[-1]
+    for alert in latest.get("alerts") or []:
+        if (alert.get("channel") == channel.name
+                and alert.get("kind") == "free_quota_cmd"):
+            return "厂家免费额度同步失败：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
+    return ""
+
+
 def free_models_payload(app) -> dict:
     """Free-tier channels and every free model they could donate to the pool.
 
@@ -1277,9 +1303,11 @@ def free_models_payload(app) -> dict:
                 test = tests.get(model)
                 label = dead.get(_dead_key(channel.name, model))
                 usage = usage_by_model.get((channel.name, model))
+                quota = app.free_quota_status(channel, model)
                 routable = (source == "mapping" and channel.enabled
                             and not label and channel.name not in blocked
-                            and not state.get("cooling") and bool(channel.api_key))
+                            and not state.get("cooling") and bool(channel.api_key)
+                            and not (quota and quota.get("exhausted")))
                 if routable:
                     skip = ""
                 elif not channel.enabled:
@@ -1288,6 +1316,8 @@ def free_models_payload(app) -> dict:
                     skip = str(blocked[channel.name])
                 elif label:
                     skip = "测验失败已标记失效，待复验"
+                elif quota and quota.get("exhausted"):
+                    skip = "免费额度已用完，已停止路由（避免按量计费）"
                 elif state.get("cooling"):
                     skip = f"渠道冷却中：{state.get('reason') or ''}".rstrip("：")
                 elif not channel.api_key:
@@ -1302,6 +1332,7 @@ def free_models_payload(app) -> dict:
                     "routable": routable,
                     "skip_reason": skip,
                     "usage": dict(usage) if usage else None,
+                    "quota": quota,
                 })
         channels.append({
             "name": channel.name,
@@ -1310,6 +1341,7 @@ def free_models_payload(app) -> dict:
             "cooling": bool(state.get("cooling")),
             "cooldown_reason": str(state.get("reason") or ""),
             "has_key": bool(channel.api_key),
+            "quota_sync": _free_quota_sync_note(app, channel),
             "excluded": paid_hidden,
             "skipped": nonchat_hidden,
             "cache": cache_by_channel.get(channel.name),
@@ -1321,6 +1353,8 @@ def free_models_payload(app) -> dict:
         "models": len(everything),
         "routable": sum(1 for entry in everything if entry["routable"]),
         "dead": sum(1 for entry in everything if entry["dead"]),
+        "quota_exhausted": sum(1 for entry in everything
+                               if (entry["quota"] or {}).get("exhausted")),
         "queue": len(queue),
         "tested": sum(1 for entry in everything if entry["test"]),
         "passed": sum(1 for entry in everything if (entry["test"] or {}).get("ok")),
