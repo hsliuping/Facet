@@ -47,7 +47,8 @@ INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 # and the credential-env declarations ship with the package registry (vendor
 # CLI knowledge), so an older overlay entry written before the field existed
 # must not erase it.
-INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota", "free_limits")
+INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota", "free_limits",
+                 "free_limit_presets")
 
 FREE_LIMIT_KEYS = ("rpm", "rpd", "tpm", "tpd")
 
@@ -189,6 +190,7 @@ def normalize_vendor(entry) -> dict:
         free_quota = ({"tokens": quota.tokens, "requests": quota.requests,
                        "period": quota.period} if quota else None)
         limits = _optional_limits(mode, "free_limits", key)
+        presets = _limit_presets(mode, "free_limit_presets")
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -200,6 +202,7 @@ def normalize_vendor(entry) -> dict:
             "free_quota_cmd": quota_cmd,
             "free_quota": free_quota,
             "free_limits": limits,
+            "free_limit_presets": presets,
             "credential_envs": credential_envs,
             "models": models,
         }
@@ -235,6 +238,42 @@ def _optional_limits(mode: dict, key: str, mode_key: str) -> dict | None:
         if note:
             out["note"] = note
     return out or None
+
+
+def _limit_presets(mode: dict, key: str) -> list[dict]:
+    """Read the vendor's documented free-tier rate presets, [] when absent.
+
+    Some vendors gate their free tier behind account state the user controls
+    (OpenRouter: topping up $10 lifts the :free models cap from 50 to 1,000
+    requests/day). Presets turn that choice into console buttons instead of
+    asking the user to hand-edit rate numbers they have never heard of.
+    Each preset needs a label; its rate carries the same positive-integer
+    caps as ``free_limits`` and an optional explanatory note.
+    """
+    value = mode.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"模式 {key} 的 {key} 必须是非空对象数组")
+    out: list[dict] = []
+    for preset in value:
+        if not isinstance(preset, dict):
+            raise ValueError(f"模式 {key} 的 {key} 条目必须是 JSON 对象")
+        label = str(preset.get("label") or "").strip()
+        if not label:
+            raise ValueError(f"模式 {key} 的 {key} 条目必须包含 label")
+        rate = _optional_limits(preset, "rate", key) or {}
+        rate.pop("note", None)
+        item: dict = {"label": label, "rate": rate}
+        note = preset.get("note")
+        if note is not None:
+            if not isinstance(note, str):
+                raise ValueError(f"模式 {key} 的 {key}.note 必须是字符串")
+            note = note.strip()
+            if note:
+                item["note"] = note
+        out.append(item)
+    return out
 
 
 def _optional_url(mode: dict, key: str, mode_key: str) -> str:

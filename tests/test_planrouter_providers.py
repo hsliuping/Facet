@@ -60,6 +60,21 @@ class BuiltinRegistryTests(unittest.TestCase):
             got = tuple(e["env"] for e in mode.get("credential_envs") or [])
             self.assertEqual(got, envs, pid)
 
+    def test_openrouter_declares_topup_tier_presets(self):
+        """OpenRouter's daily :free cap depends on the account's balance.
+
+        Without a top-up it is 50 requests/day; a $10+ balance lifts it to
+        1,000. The presets turn that into editor buttons, so they must track
+        the vendor's real numbers.
+        """
+        mode = provider_by_id(self.providers, "openrouter")["modes"]["payg"]
+        presets = mode["free_limit_presets"]
+        self.assertEqual([p["label"] for p in presets],
+                         ["未充值（余额 < $10）", "已充值 ≥ $10"])
+        self.assertEqual(presets[0]["rate"], {"rpm": 20, "rpd": 50})
+        self.assertEqual(presets[1]["rate"], {"rpm": 20, "rpd": 1000})
+        self.assertTrue(all(p.get("note") for p in presets))
+
 
 class LoadProvidersTests(unittest.TestCase):
     def setUp(self):
@@ -291,6 +306,33 @@ class NormalizeVendorTests(unittest.TestCase):
                       {"rpm": True}, {"note": 7}):
             entry = valid_vendor()
             entry["modes"]["payg"]["free_limits"] = value
+            with self.assertRaises(ValueError):
+                pmod.normalize_vendor(entry)
+
+    def test_free_limit_presets_are_normalized(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["free_limit_presets"] = [
+            {"label": " 未充值 ", "rate": {"rpm": 20, "rpd": 50},
+             "note": " 50 次/天 "},
+            {"label": "已充值", "rate": {}},
+        ]
+        mode = pmod.normalize_vendor(entry)["modes"]["payg"]
+        self.assertEqual(mode["free_limit_presets"], [
+            {"label": "未充值", "rate": {"rpm": 20, "rpd": 50},
+             "note": "50 次/天"},
+            {"label": "已充值", "rate": {}},
+        ])
+
+    def test_missing_free_limit_presets_become_empty(self):
+        mode = pmod.normalize_vendor(valid_vendor())["modes"]["payg"]
+        self.assertEqual(mode["free_limit_presets"], [])
+
+    def test_bad_free_limit_presets_raise(self):
+        for value in ("nope", [], [{"rate": {"rpm": 20}}], [{"label": ""}],
+                      [{"label": "x", "rate": {"rpd": 0}}],
+                      [{"label": "x", "note": 5}]):
+            entry = valid_vendor()
+            entry["modes"]["payg"]["free_limit_presets"] = value
             with self.assertRaises(ValueError):
                 pmod.normalize_vendor(entry)
 

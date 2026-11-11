@@ -372,6 +372,10 @@
           "keys_url": "https://openrouter.ai/settings/keys",
           "models_url": "https://openrouter.ai/api/v1/models",
           "free_limits": {"rpm": 20, "rpd": 50, "note": "未充值 20 RPM / 50 次/天；充 $10 后 1,000 次/天"},
+          "free_limit_presets": [
+            {"label": "未充值（余额 < $10）", "rate": {"rpm": 20, "rpd": 50}, "note": ":free 模型 20 次/分、50 次/天"},
+            {"label": "已充值 ≥ $10", "rate": {"rpm": 20, "rpd": 1000}, "note": ":free 模型 20 次/分、1,000 次/天（网关按滚动 24h 计数）"}
+          ],
           "tier": "paid",
           "models": []
         }

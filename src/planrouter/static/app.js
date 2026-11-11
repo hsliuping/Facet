@@ -2891,6 +2891,43 @@ function renderVendorCredentials() {
     + '<small class="hint">厂家管理面凭据，仅用于免费额度查询命令（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值。</small>';
 }
 
+// --- Vendor free-tier rate presets ----------------------------------------
+// Some vendors gate their free tier behind account state the user controls
+// (OpenRouter: topping up $10 lifts the daily :free cap 50 -> 1000). Registry
+// presets render as buttons above the rate inputs so the user picks the tier
+// they actually paid for instead of hand-typing numbers from vendor docs.
+function renderRatePresets() {
+  const wrap = $('rate-presets');
+  if (!wrap) return;
+  const f = $('editor-form');
+  const mode = registryMode(f.elements.namedItem('provider').value,
+    f.elements.namedItem('mode').value);
+  const presets = (mode && mode.free_limit_presets) || [];
+  if (!presets.length) {
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.hidden = false;
+  wrap.innerHTML = '<label>厂家免费档位（点击按档位填入下方限流）</label>'
+    + '<div class="channel-picker">'
+    + presets.map((p, i) =>
+      `<button type="button" class="btn ghost small" data-preset="${i}">${esc(p.label)}</button>`).join('')
+    + '</div>'
+    + `<small class="hint">${esc(presets.map((p) => `${p.label}：${p.note || '无说明'}`).join('；'))}</small>`;
+  wrap.querySelectorAll('[data-preset]').forEach((btn) => {
+    btn.onclick = () => {
+      const preset = presets[Number(btn.dataset.preset)] || {};
+      const rate = preset.rate || {};
+      ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => {
+        f.elements.namedItem(k).value = rate[k] ?? '';
+      });
+      const hint = wrap.querySelector('small.hint');
+      if (hint && preset.note) hint.textContent = `${preset.label}：${preset.note}`;
+    };
+  });
+}
+
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
 // the pair in the draft; the vendor itself is mandatory (a channel without a
 // vendor is rejected on save), so the registry entry buttons in the key field
@@ -3237,6 +3274,7 @@ function openChannelEditor(index) {
         <div class="field wide" id="vendor-credentials" hidden></div>
         ${field('优先级（小者靠前）', 'priority', c.priority ?? 100, { type: 'number' })}
         ${field('额度冷却（分钟）', 'cooldown_minutes', c.cooldown_minutes ?? 300, { type: 'number' })}
+        <div class="field wide" id="rate-presets" hidden></div>
         ${field('RPM', 'rpm', rate.rpm ?? '', { type: 'number' })}
         ${field('RPD', 'rpd', rate.rpd ?? '', { type: 'number' })}
         ${field('TPM', 'tpm', rate.tpm ?? '', { type: 'number' })}
@@ -3276,11 +3314,13 @@ function openChannelEditor(index) {
     applyProviderPreset();
     renderProviderLinks();
     renderVendorCredentials();
+    renderRatePresets();
   };
-  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); };
+  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); renderRatePresets(); };
   renderModelTierRows();
   renderProviderLinks();
   renderVendorCredentials();
+  renderRatePresets();
 }
 
 function saveChannelEditor() {
