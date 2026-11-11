@@ -46,9 +46,54 @@ INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 # List-valued fields inherit the same way: the free-quota alignment command
 # and the credential-env declarations ship with the package registry (vendor
 # CLI knowledge), so an older overlay entry written before the field existed
-# must not erase it.
-INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota", "free_limits",
-                 "free_limit_presets")
+# must not erase it. credential_help is the vendor-level AK/SK walkthrough.
+INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "credential_help",
+                 "free_quota", "free_limits", "free_limit_presets")
+
+
+def _credential_help(value, where: str) -> dict | None:
+    """Validate one credential_help block (steps / permissions / note)."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} 的 credential_help 必须是 JSON 对象")
+    steps = value.get("steps")
+    if (not isinstance(steps, list) or not steps
+            or not all(isinstance(s, str) and s.strip() for s in steps)):
+        raise ValueError(f"{where} 的 credential_help.steps 必须是非空字符串数组")
+    out: dict = {"steps": [str(s).strip() for s in steps]}
+    for key in ("permissions", "note"):
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, str):
+            raise ValueError(f"{where} 的 credential_help.{key} 必须是字符串")
+        raw = raw.strip()
+        if raw:
+            out[key] = raw
+    return out
+
+
+def _expand_help(entries: list) -> list:
+    """Copy vendor-level credential_help into modes that lack their own.
+
+    The registry declares the AK/SK acquisition guide once per vendor; the
+    console editor reads it from the mode being configured, so after loading
+    every mode carries the block (unless it declares its own).
+    """
+    expanded = []
+    for entry in entries:
+        block = entry.get("credential_help") if isinstance(entry, dict) else None
+        if not isinstance(block, dict):
+            expanded.append(entry)
+            continue
+        entry = copy.deepcopy(entry)
+        for mode in (entry.get("modes") or {}).values():
+            if isinstance(mode, dict) and not mode.get("credential_help"):
+                mode["credential_help"] = copy.deepcopy(block)
+        expanded.append(entry)
+    return expanded
+
 
 FREE_LIMIT_KEYS = ("rpm", "rpd", "tpm", "tpd")
 
@@ -74,6 +119,12 @@ def _merge(builtin: list, overlay: list) -> list:
 def _fill_links(entry: dict, base: dict) -> dict:
     """Copy an overlay entry, backfilling empty link fields from builtin."""
     entry = copy.deepcopy(entry)
+    # Vendor-level credential help ships with the package registry; an
+    # overlay entry written before the field existed must not erase it.
+    if not entry.get("credential_help") and isinstance(base, dict):
+        inherited = base.get("credential_help")
+        if inherited:
+            entry["credential_help"] = copy.deepcopy(inherited)
     base_modes = base.get("modes") if isinstance(base, dict) else None
     for key, mode in (entry.get("modes") or {}).items():
         if not isinstance(mode, dict):
@@ -97,15 +148,16 @@ def load_providers(config_dir=None) -> list[dict]:
 
     The overlay file lives next to config.json and is optional; a missing
     file simply yields the builtin list while a broken one raises
-    ValueError (JSONDecodeError is a ValueError subclass).
+    ValueError (JSONDecodeError is a ValueError subclass). Vendor-level
+    credential_help blocks are expanded into the modes before returning.
     """
-    builtin = _read_entries(BUILTIN_PATH)
+    builtin = _expand_help(_read_entries(BUILTIN_PATH))
     if not config_dir:
         return [dict(entry) if isinstance(entry, dict) else entry for entry in builtin]
     overlay_path = Path(config_dir) / OVERLAY_NAME
     if not overlay_path.is_file():
         return [dict(entry) if isinstance(entry, dict) else entry for entry in builtin]
-    return _merge(builtin, _read_entries(overlay_path))
+    return _expand_help(_merge(builtin, _read_entries(overlay_path)))
 
 
 def normalize_vendor(entry) -> dict:
@@ -191,6 +243,7 @@ def normalize_vendor(entry) -> dict:
                        "period": quota.period} if quota else None)
         limits = _optional_limits(mode, "free_limits", key)
         presets = _limit_presets(mode, "free_limit_presets")
+        mode_help = _credential_help(mode.get("credential_help"), f"模式 {key}")
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -204,9 +257,22 @@ def normalize_vendor(entry) -> dict:
             "free_limits": limits,
             "free_limit_presets": presets,
             "credential_envs": credential_envs,
+            "credential_help": mode_help,
             "models": models,
         }
-    return {"id": vendor_id, "name": name.strip(), "modes": modes}
+    # Vendor-level walkthrough (declared once) expands into modes that lack
+    # their own, so overlay entries saved after a console edit stay
+    # self-contained.
+    vendor_help = _credential_help(entry.get("credential_help"),
+                                   f"厂家 {vendor_id}")
+    if vendor_help:
+        for mode in modes.values():
+            if not mode.get("credential_help"):
+                mode["credential_help"] = copy.deepcopy(vendor_help)
+    out = {"id": vendor_id, "name": name.strip(), "modes": modes}
+    if vendor_help:
+        out["credential_help"] = vendor_help
+    return out
 
 
 def _optional_limits(mode: dict, key: str, mode_key: str) -> dict | None:

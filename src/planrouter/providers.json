@@ -1,9 +1,20 @@
 {
-  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 或 models_url 后写入，手工勿改。models_url 需要密钥的（如百炼 /api/v1/models），会自动借用同厂家已配置渠道的 API Key。keys_url / docs_url 是厂家「获取 Key / 使用文档」入口，展示在控制台渠道编辑弹窗里。credential_envs 声明该模式免费额度命令所需的管理面凭据（如火山引擎 IAM AK/SK），控制台渠道编辑弹窗按此渲染输入框，值存 router.json 顶层 credentials 段。",
+  "_readme": "内置厂家注册表：主流大模型厂 × 计费模式。模式键 coding/agent/payg 只列该厂家实际提供的；models 由每日自动维护任务抓 docs_url 或 models_url 后写入，手工勿改。models_url 需要密钥的（如百炼 /api/v1/models），会自动借用同厂家已配置渠道的 API Key。keys_url / docs_url 是厂家「获取 Key / 使用文档」入口，展示在控制台渠道编辑弹窗里。credential_envs 声明该模式免费额度命令所需的管理面凭据（如火山引擎 IAM AK/SK），控制台渠道编辑弹窗按此渲染输入框。credential_help 是厂家级 AK/SK 获取指南（steps/permissions/note），加载时自动展开到各模式，凭据区渲染为可展开帮助块。",
   "providers": [
     {
       "id": "volcengine",
       "name": "火山引擎方舟",
+      "credential_help": {
+        "steps": [
+          "用主账号登录火山引擎控制台，打开「访问控制 → 用户」页 https://console.volcengine.com/iam/identitymanage/user（个人图省事也可跳过建子用户，直接以主账号身份在「API 访问密钥」页 https://console.volcengine.com/iam/keymanage 创建密钥）。",
+          "点「新建用户」创建 IAM 用户，填写用户名，访问方式选择编程访问 / API 调用（无需控制台登录密码）。",
+          "授权：回到用户列表，在该用户右侧操作列点「添加权限」，搜索并勾选系统策略 ArkFullAccess，提交；不限制项目资源即全局生效，若限制到项目需选择 default（默认项目）。",
+          "创建密钥：进入该用户详情页，切到「密钥」Tab，点「新建密钥」，得到 Access Key ID（AK）与 Secret Access Key（SK）。",
+          "把 AK、SK 分别填入本渠道凭据区并保存（保存后回显 ***）。"
+        ],
+        "permissions": "IAM 用户需挂方舟系统策略 ArkFullAccess——免费额度对齐与套餐余量查询都是用 IAM Access Key 签名调用火山云 API（GetPersonalPlan / GetAFPUsage / 模型额度接口）；纯查询场景也可用只读策略 ArkReadOnlyAccess。",
+        "note": "Secret Access Key（SK）只在创建时显示一次，关闭弹窗前立即复制保存。这里填的是 IAM Access Key（AK/SK），不是方舟控制台里 ark- 开头的 API Key——那是数据面推理 Key，无法查询套餐与额度。"
+      },
       "modes": {
         "coding": {
           "label": "Coding 套餐",
@@ -165,6 +176,17 @@
     {
       "id": "bailian",
       "name": "阿里云百炼",
+      "credential_help": {
+        "steps": [
+          "主账号登录 RAM 访问控制 https://ram.console.aliyun.com/users，点「创建用户」：填写登录名，勾选「OpenAPI 调用访问」；创建完成后在用户列表点「创建 AccessKey」，得到 AccessKey ID 与 AccessKey Secret。",
+          "RAM 授权：在该用户的「权限管理」→「新增授权」，搜索并勾选系统策略 AliyunBailianFullAccess（百炼管理员）后确认；缺这一步查询会报 NoPermission。",
+          "加入业务空间：主账号打开百炼控制台的全局管理菜单「业务空间管理」 https://bailian.console.aliyun.com/settings/workspace，进入目标业务空间的成员管理，新增成员并输入该 RAM 用户的登录名或 UID；缺这一步会报 Team.NotAuthorised。",
+          "模型授权：默认业务空间所有模型均可调用；若用自建业务空间，需由超级管理员在空间内「模型列表」为模型开通「模型调用」权限；缺这一步会报 Workspace.NotAuthorised。",
+          "把 AccessKey ID、AccessKey Secret 分别填入本渠道凭据区并保存（保存后回显 ***）。"
+        ],
+        "permissions": "RAM 用户需挂系统策略 AliyunBailianFullAccess——免费额度查询（bl usage free）走百炼 OpenAPI，需要它；仅调用模型时挂 AliyunBailianDataFullAccess 即可。注意：RAM 策略只解决「能访问百炼」，业务空间权限还要在百炼控制台把该用户加入空间成员并授权模型。",
+        "note": "AccessKey Secret 只在创建时显示一次，立即复制保存。这里填的是 RAM 用户的 AccessKey ID/Secret，不是 DashScope 的 sk- 开头 API Key——那是数据面推理 Key，免费额度对齐用不上。"
+      },
       "modes": {
         "payg": {
           "label": "按量付费",

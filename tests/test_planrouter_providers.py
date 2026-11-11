@@ -60,6 +60,33 @@ class BuiltinRegistryTests(unittest.TestCase):
             got = tuple(e["env"] for e in mode.get("credential_envs") or [])
             self.assertEqual(got, envs, pid)
 
+    def test_credential_help_declared_and_expanded(self):
+        """AK/SK acquisition walkthrough ships for the two hard vendors.
+
+        Volcengine needs an IAM user + the ArkFullAccess policy; Bailian
+        needs a RAM AccessKey + AliyunBailianFullAccess + workspace
+        membership. The registry declares the guide once per vendor and
+        load_providers expands it into every credential-collecting mode so
+        the channel editor can render it next to the inputs.
+        """
+        for pid, tokens in (
+            ("volcengine", ("ArkFullAccess", "访问控制", "显示一次")),
+            ("bailian", ("AliyunBailianFullAccess", "业务空间", "显示一次")),
+        ):
+            vendor = provider_by_id(self.providers, pid)
+            block = vendor.get("credential_help")
+            self.assertTrue(block and block.get("steps"), pid)
+            self.assertTrue(block.get("permissions"), pid)
+            self.assertTrue(block.get("note"), pid)
+            text = (" ".join(block["steps"]) + block.get("permissions", "")
+                    + block.get("note", ""))
+            for token in tokens:
+                self.assertIn(token, text, pid)
+            for key, mode in vendor["modes"].items():
+                if mode.get("credential_envs"):
+                    self.assertEqual(mode.get("credential_help"), block,
+                                     f"{pid}.{key}")
+
     def test_openrouter_declares_topup_tier_presets(self):
         """OpenRouter's daily :free cap depends on the account's balance.
 
@@ -102,6 +129,27 @@ class LoadProvidersTests(unittest.TestCase):
         self.assertEqual(by_id["zhipu"], provider_by_id(builtin, "zhipu"))
         self.assertEqual([p["id"] for p in merged],
                          [p["id"] for p in builtin])
+
+    def test_overlay_entry_inherits_credential_help(self):
+        """An overlay entry predating credential_help must not erase it.
+
+        The vendor-level block is backfilled from builtin and expanded into
+        the modes, exactly like the free-quota command and env declarations.
+        """
+        builtin = provider_by_id(pmod.load_providers(None), "volcengine")
+        overlay = {"id": "volcengine", "name": "火山引擎方舟",
+                   "modes": {"payg": {"label": "按量付费", "protocol": "openai",
+                                      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                                      "tier": "paid", "models": []}}}
+        (self.config_dir / "providers.json").write_text(
+            json.dumps({"providers": [overlay]}, ensure_ascii=False),
+            encoding="utf-8")
+        merged = provider_by_id(pmod.load_providers(self.config_dir),
+                                "volcengine")
+        self.assertEqual(merged.get("credential_help"),
+                         builtin.get("credential_help"))
+        self.assertEqual(merged["modes"]["payg"].get("credential_help"),
+                         builtin.get("credential_help"))
 
     def test_overlay_may_add_new_provider(self):
         extra = {"id": "custom-vendor", "name": "自建网关",
@@ -335,6 +383,40 @@ class NormalizeVendorTests(unittest.TestCase):
             entry["modes"]["payg"]["free_limit_presets"] = value
             with self.assertRaises(ValueError):
                 pmod.normalize_vendor(entry)
+
+    def test_credential_help_is_kept_and_expanded(self):
+        """A vendor-level walkthrough survives normalization and reaches modes."""
+        entry = valid_vendor(credential_help={
+            "steps": [" step one ", "step two"],
+            "permissions": " AcmeAdmin ",
+            "note": " secret shown once ",
+        })
+        norm = pmod.normalize_vendor(entry)
+        self.assertEqual(norm["credential_help"], {
+            "steps": ["step one", "step two"],
+            "permissions": "AcmeAdmin",
+            "note": "secret shown once"})
+        self.assertEqual(norm["modes"]["payg"]["credential_help"],
+                         norm["credential_help"])
+
+    def test_mode_level_credential_help_is_kept(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["credential_help"] = {
+            "steps": ["only this mode"], "permissions": "", "note": None}
+        mode = pmod.normalize_vendor(entry)["modes"]["payg"]
+        self.assertEqual(mode["credential_help"], {"steps": ["only this mode"]})
+
+    def test_bad_credential_help_raises(self):
+        for value in ("nope", {"steps": []}, {"steps": "x"},
+                      {"steps": [1]}, {"steps": ["ok"], "note": 7},
+                      {"steps": ["ok"], "permissions": ["x"]}):
+            with self.assertRaises(ValueError):
+                pmod.normalize_vendor(valid_vendor(credential_help=value))
+
+    def test_missing_credential_help_stays_absent(self):
+        norm = pmod.normalize_vendor(valid_vendor())
+        self.assertIsNone(norm["modes"]["payg"]["credential_help"])
+        self.assertNotIn("credential_help", norm)
 
 
 class DeleteOverlayEntryTests(unittest.TestCase):

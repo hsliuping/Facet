@@ -178,6 +178,17 @@ code { background: rgba(91,157,255,.12); color: #9cc4ff; padding: 1px 5px; borde
 .provider-link { text-decoration: none; color: var(--accent); }
 #provider-links .hint { margin: 0; }
 
+/* Channel editor: registry credential_help walkthrough (Volcengine IAM /
+   Bailian RAM). Expandable so the editor stays compact until needed. */
+.cred-help { margin: 10px 0 0; font-size: 12.5px; }
+.cred-help summary { cursor: pointer; color: var(--accent); user-select: none; }
+.cred-help[open] summary { margin-bottom: 4px; }
+.cred-help ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.cred-help li { line-height: 1.65; color: #b9cbe0; }
+.cred-help p { margin: 8px 0 0; line-height: 1.65; }
+.cred-help-perm { color: #b9cbe0; }
+.cred-help-note { color: var(--muted); }
+
 .chain { list-style: none; margin: 0 0 14px; padding: 0; }
 .chain li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 7px; background: rgba(255,255,255,.02); }
 .chain li.empty { color: var(--muted); justify-content: center; font-size: 12px; border-style: dashed; }

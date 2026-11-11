@@ -2949,13 +2949,29 @@ function renderProviderLinks() {
 // slot stays as the fallback for channels without their own and is NOT
 // echoed into these inputs. Round-trip is masked: saved plaintext reaches
 // the browser as "***" and an empty input keeps the stored value.
+// Registry `credential_help` (steps / permissions / note): the AK/SK
+// acquisition walkthrough for vendors whose management keys are genuinely
+// hard to obtain (Volcengine IAM + ArkFullAccess, Bailian RAM + workspace
+// membership). Rendered as an expandable block so the user gets the exact
+// console path right where they type the keys.
+function vendorCredHelp(help) {
+  if (!help || !Array.isArray(help.steps) || !help.steps.length) return '';
+  const items = help.steps.map((s) => `<li>${esc(s)}</li>`).join('');
+  const perm = help.permissions
+    ? `<p class="cred-help-perm"><strong>权限要求：</strong>${esc(help.permissions)}</p>` : '';
+  const note = help.note ? `<p class="cred-help-note">${esc(help.note)}</p>` : '';
+  return `<details class="cred-help"><summary>不会获取 AK/SK？点开看详细步骤与权限要求</summary>`
+    + `<ol>${items}</ol>${perm}${note}</details>`;
+}
+
 function renderVendorCredentials() {
   const box = $('vendor-credentials');
   if (!box) return;
   const f = $('editor-form');
   const pid = f?.elements.namedItem('provider')?.value || '';
   const modeKey = f?.elements.namedItem('mode')?.value || '';
-  const envs = registryMode(pid, modeKey)?.credential_envs || [];
+  const mode = registryMode(pid, modeKey) || {};
+  const envs = mode.credential_envs || [];
   if (!envs.length) {
     box.hidden = true;
     box.innerHTML = '';
@@ -2971,7 +2987,8 @@ function renderVendorCredentials() {
     return `<label>${esc(e.label || e.env)}（${esc(e.env)}）</label>
       <input data-cred-env="${esc(e.env)}" type="text" value="${esc(shown)}" placeholder="${esc(ph)}">`;
   }).join('')
-    + '<small class="hint">本渠道自己的管理面凭据（渠道即账号：同一厂家的第二个账号就建第二条渠道各填各的），仅用于余量与免费额度查询（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值；渠道未填时查询回退到厂家级配置。</small>';
+    + '<small class="hint">本渠道自己的管理面凭据（渠道即账号：同一厂家的第二个账号就建第二条渠道各填各的），仅用于余量与免费额度查询（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值；渠道未填时查询回退到厂家级配置。</small>'
+    + vendorCredHelp(mode.credential_help);
 }
 
 // --- Vendor free-tier rate presets ----------------------------------------
