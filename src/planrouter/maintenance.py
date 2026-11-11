@@ -1197,6 +1197,41 @@ def probe_maintenance_models(app, candidates=None) -> dict:
             "candidates": len(candidates), "verified_at": verified_at}
 
 
+def _quiz_row(app, channel, model: str) -> dict:
+    """Run the 11-id quiz once against (channel, model) and return its row."""
+    row = {"model": model, "channel": channel.name, "tested_at": time.time()}
+    try:
+        ok, parsed = check_maintenance_quiz(app._maintenance_direct_call(
+            channel, model, build_plan_models_prompt(MAINTENANCE_QUIZ_DOC)))
+        row.update({"ok": ok, "hit": len(parsed),
+                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                    "error": "" if ok else "提取结果与标准答案不一致"})
+    except Exception as exc:
+        row.update({"ok": False, "hit": 0,
+                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
+                    "error": str(exc)[:160]})
+    return row
+
+
+def _record_quiz_row(app, row: dict) -> None:
+    """Store one quiz outcome in the pool (tests map, dead labels, queue).
+
+    Caller must hold maintenance_pool_lock. A pass clears any dead label and
+    joins the verified queue; a failure labels the mapping dead only when it
+    is a definitive "this model id is gone" verdict (_failure_marks_dead).
+    """
+    tests = app.maintenance_pool.setdefault("tests", {})
+    tests[row["model"]] = row
+    _trim_tests(tests)
+    if row["ok"] or _failure_marks_dead(row.get("error") or ""):
+        _label_locked(app.maintenance_pool, row["channel"], row["model"],
+                      row["ok"], row.get("error") or "")
+    queue = app.maintenance_pool.setdefault("queue", [])
+    if row["ok"] and row["model"] not in queue:
+        queue.append(row["model"])
+        queue.sort()
+
+
 def test_single_model(app, channel_name: str, model: str) -> dict:
     """Manual quiz for one model on one named channel; a pass joins the queue.
 
@@ -1213,30 +1248,65 @@ def test_single_model(app, channel_name: str, model: str) -> dict:
                | set(str(m) for m in catalog.get("models") or []))
     if model not in offered:
         raise ValueError(f"渠道 {channel_name} 未提供模型 {model}")
-    row = {"model": model, "channel": channel.name, "tested_at": time.time()}
-    try:
-        ok, parsed = check_maintenance_quiz(app._maintenance_direct_call(
-            channel, model, build_plan_models_prompt(MAINTENANCE_QUIZ_DOC)))
-        row.update({"ok": ok, "hit": len(parsed),
-                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
-                    "error": "" if ok else "提取结果与标准答案不一致"})
-    except Exception as exc:
-        row.update({"ok": False, "hit": 0,
-                    "expected": len(MAINTENANCE_QUIZ_ANSWER),
-                    "error": str(exc)[:160]})
+    row = _quiz_row(app, channel, model)
     with app.maintenance_pool_lock:
-        tests = app.maintenance_pool.setdefault("tests", {})
-        tests[model] = row
-        _trim_tests(tests)
-        if row["ok"] or _failure_marks_dead(row.get("error") or ""):
-            _label_locked(app.maintenance_pool, channel.name, model,
-                          row["ok"], row.get("error") or "")
-        queue = app.maintenance_pool.setdefault("queue", [])
-        if row["ok"] and model not in queue:
-            queue.append(model)
-            queue.sort()
+        _record_quiz_row(app, row)
         save_maintenance_pool(app)
     return row
+
+
+def retest_failed_models(app) -> dict:
+    """Quiz every model whose last recorded quiz failed, in one click.
+
+    Pairs come from the pool's own test ledger, so this covers exactly what
+    the free-model page shows as 测验未通过 (manual tests and the maintenance
+    probe alike). Channels run concurrently but models inside one channel
+    strictly serially — a free key answers one request at a time and parallel
+    calls come back 429, which would read as the model failing again.
+    """
+    with app.maintenance_pool_lock:
+        failed = [(row.get("channel") or "", row["model"])
+                  for row in (app.maintenance_pool.get("tests") or {}).values()
+                  if row.get("ok") is False]
+    channels = {c.name: c for c in app.config.channels}
+    offered: dict[str, set[str]] = {}
+    pairs: list[tuple[object, str]] = []
+    for channel_name, model in failed:
+        channel = channels.get(channel_name)
+        if channel is None:
+            continue
+        if channel_name not in offered:
+            catalog = app.store.catalogs.get(channel_name) or {}
+            offered[channel_name] = (set(str(v) for v in channel.models.values())
+                                     | set(str(m) for m in catalog.get("models") or []))
+        if model in offered[channel_name]:
+            pairs.append((channel, model))
+
+    groups: dict[str, list[tuple[object, str]]] = {}
+    for channel, model in pairs:
+        groups.setdefault(channel.name, []).append((channel, model))
+
+    def run_group(entry: tuple[str, list[tuple[object, str]]]) -> list[dict]:
+        _name, items = entry
+        return [_quiz_row(app, channel, model) for channel, model in items]
+
+    results: list[dict] = []
+    if groups:
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as executor:
+            for rows in executor.map(run_group, groups.items()):
+                results.extend(rows)
+    results.sort(key=lambda r: (not r["ok"], r["channel"], r["model"]))
+    now = time.time()
+    with app.maintenance_pool_lock:
+        for row in results:
+            _record_quiz_row(app, row)
+        app.maintenance_pool["verified_at"] = now
+        save_maintenance_pool(app)
+    return {"retested": len(results),
+            "passed": sum(1 for r in results if r["ok"]),
+            "failed": sum(1 for r in results if not r["ok"]),
+            "results": results,
+            "dead_models": dead_models_payload(app)}
 
 
 FREE_USAGE_DAYS = 30  # window for per-model request/token figures in the console

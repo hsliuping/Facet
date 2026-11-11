@@ -2071,6 +2071,8 @@ function renderFreePage(free) {
   ];
   $('free-summary').innerHTML = metrics.map(([label, value, cls]) =>
     `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div></div>`).join('');
+  $('btn-retest-failed').hidden = !quizfail;
+  $('btn-retest-failed').textContent = `重测未通过（${quizfail}）`;
 
   const unsynced = (free.channels || []).filter((ch) => ch.quota_sync);
   $('free-alerts').innerHTML = unsynced.map((ch) =>
@@ -2151,6 +2153,31 @@ async function loadFreeModels() {
 }
 
 $('btn-refresh-free-models').onclick = () => loadFreeModels().catch((e) => toast(e.message, 'bad'));
+
+// One click re-quizzes every model the page shows as 测验未通过, instead of
+// tapping the per-row 测试 button dozens of times. Channels run in parallel,
+// models within a channel serially — the free keys answer one request at a
+// time, so parallel calls would 429 and look like another failure.
+$('btn-retest-failed').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '重测中…（免费键逐个发问，可能要几分钟）';
+  try {
+    const r = await api('/api/maintenance/retest-failed', { method: 'POST' });
+    const failed = (r.results || []).filter((x) => !x.ok);
+    let msg = `重测完成：${r.retested} 个，通过 ${r.passed}，仍失败 ${r.failed}`;
+    if (r.passed) msg += `；通过：${(r.results || []).filter((x) => x.ok).map((x) => x.model).join('、')}`;
+    if (failed.length) msg += `；未通过示例：${failed[0].model}（${failed[0].error || '答案不符'}）`;
+    toast(msg, r.failed ? 'warn' : 'ok');
+    await loadFreeModels();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
 
 $('free-filters').addEventListener('click', (e) => {
   const b = e.target.closest('[data-free-filter]');

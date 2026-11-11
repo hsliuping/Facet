@@ -1787,6 +1787,10 @@ class App:
             self, str(payload.get("channel") or ""),
             str(payload.get("model") or ""))
 
+    def retest_failed_models(self) -> dict:
+        """Quiz every model whose last quiz failed, in one batch."""
+        return maint.retest_failed_models(self)
+
     def apply_maintenance_suggestion(self, payload) -> dict:
         """One-click apply for `add_model` suggestions: map the model verbatim."""
         if not isinstance(payload, dict):

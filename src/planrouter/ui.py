@@ -563,6 +563,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": str(exc)}})
         return True
 
+    if path == "/api/maintenance/retest-failed" and method == "POST":
+        # Quiz every model whose last quiz failed, in one batch.
+        _json(h, 200, app.retest_failed_models())
+        return True
+
     if path == "/api/maintenance/apply" and method == "POST":
         try:
             incoming = json.loads(raw) if raw else {}

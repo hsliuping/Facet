@@ -1294,6 +1294,52 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             maint.test_single_model(self.app, "a", "not-offered")
 
+    def test_retest_failed_models_quizzes_only_failed_rows(self):
+        """One click re-quizzes exactly the ledger's failed (channel, model)."""
+        self.make_channel_free("a")
+        self.make_channel_free("b")
+        self.app.maintenance_pool["tests"] = {
+            "gpt-old": {"model": "gpt-old", "channel": "a", "ok": False,
+                        "hit": 0, "expected": 11, "error": "503",
+                        "tested_at": 1.0},
+            "gpt-keep": {"model": "gpt-keep", "channel": "b", "ok": True,
+                         "hit": 11, "expected": 11, "error": "",
+                         "tested_at": 1.0},
+        }
+        asked: list[tuple[str, str]] = []
+
+        def direct_call(channel, model, prompt):
+            asked.append((channel.name, model))
+            return self.quiz_reply()
+
+        self.app._maintenance_direct_call = direct_call
+        out = maint.retest_failed_models(self.app)
+        self.assertEqual(out["retested"], 1)
+        self.assertEqual(out["passed"], 1)
+        self.assertEqual(asked, [("a", "gpt-old")])
+        pool = maint.load_maintenance_pool(self.app)
+        self.assertTrue(pool["tests"]["gpt-old"]["ok"])
+        self.assertIn("gpt-old", pool["queue"])
+
+    def test_retest_failed_skips_unmapped_and_unknown_channels(self):
+        """Models since remapped away, or from deleted channels, are dropped."""
+        self.make_channel_free("a")
+        self.app.maintenance_pool["tests"] = {
+            "gone": {"model": "gone", "channel": "ghost", "ok": False,
+                     "hit": 0, "expected": 11, "error": "404",
+                     "tested_at": 1.0},
+            "not-offered": {"model": "not-offered", "channel": "a",
+                            "ok": False, "hit": 0, "expected": 11,
+                            "error": "x", "tested_at": 1.0},
+        }
+        self.app._maintenance_direct_call = (
+            lambda channel, model, prompt: self.quiz_reply())
+        out = maint.retest_failed_models(self.app)
+        self.assertEqual(out["retested"], 0)
+        # The stale ledger rows stay untouched: nothing re-recorded them.
+        pool = maint.load_maintenance_pool(self.app)
+        self.assertFalse(pool["tests"]["gone"]["ok"])
+
     def test_free_models_payload_lists_channels_and_last_quiz(self):
         self.make_channel_free("a")
         self.app.store.record_catalog("a", ["gpt-old"],
