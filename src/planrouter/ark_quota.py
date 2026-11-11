@@ -139,12 +139,15 @@ def extract_items(payload: dict) -> list:
 
 
 def rows_from_items(items: list, today: str | None = None) -> list[dict]:
-    """Map API items to freealign rows; only usable free chat quota survives.
+    """Map API items to freealign rows for every activated chat model.
 
     Available models only; remaining is the better of the initial free
     grant (Total − Consumed) and the sum of FreeInference resource packs
     (Total − Consumed − Reclaimed, never below zero). DataPermission packs
-    grant no tokens.
+    grant no tokens. Rows keep the grant they were measured against
+    (``total`` / ``consumed``) and are emitted even at zero remaining, so the
+    console can show "quota used up" instead of a model that silently
+    disappears; the sweep still filters zero rows out of the mapping.
     """
     horizon = (date.today() + timedelta(days=EXPIRE_DAYS)).isoformat() \
         if today is None else today
@@ -156,20 +159,26 @@ def rows_from_items(items: list, today: str | None = None) -> list[dict]:
         if not model or item.get("State") != "Available":
             continue
         remaining = 0
+        total = 0
         initial = item.get("InitialInferenceFreeUsage")
         if isinstance(initial, dict):
-            remaining = max(0, _int(initial.get("Total"))
-                            - _int(initial.get("Consumed")))
+            total = _int(initial.get("Total"))
+            remaining = max(0, total - _int(initial.get("Consumed")))
         for pack in item.get("FreeResourcePackItems") or []:
             if not isinstance(pack, dict) or pack.get("Type") != "FreeInference":
                 continue
-            pack_left = (_int(pack.get("Total")) - _int(pack.get("Consumed"))
-                         - _int(pack.get("Reclaimed")))
-            remaining = max(remaining, max(0, pack_left))
-        if remaining <= 0:
+            pack_total = _int(pack.get("Total"))
+            pack_consumed = _int(pack.get("Consumed")) + _int(pack.get("Reclaimed"))
+            pack_left = max(0, pack_total - pack_consumed)
+            if pack_left > remaining:
+                remaining, total = pack_left, pack_total
+        if total <= 0:
+            # No grant to report against: stay out of the sweep (no false
+            # "exhausted" verdict for a model whose quota is simply unknown).
             continue
         out.append({"model": model, "type": "Text",
-                    "remaining": remaining, "expires": horizon})
+                    "remaining": remaining, "total": total,
+                    "consumed": total - remaining, "expires": horizon})
     return out
 
 

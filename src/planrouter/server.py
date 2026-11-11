@@ -455,6 +455,12 @@ class App:
             lambda: self.subscriptions, lambda: self.subscription_settings,
         ) if notifications_file else None
         self.audit = RequestLog(audit_file) if audit_file else None
+        # Vendor-reported free quota from the last alignment sweep. Kept next
+        # to the config so a restart keeps showing real numbers, and so the
+        # free-quota gate can see consumption the gateway itself did not make.
+        self.vendor_quota: dict = {}
+        self.vendor_quota_at = ""
+        self._load_vendor_quota()
         self.catalog_refresher: CatalogRefresher | None = None
         self.maintenance_runner: "MaintenanceRunner | None" = None
         self.free_align_runner: "FreeAlignRunner | None" = None
@@ -581,6 +587,39 @@ class App:
                 return (entry.get("modes") or {}).get(mode) or {}
         return {}
 
+    def _vendor_quota_path(self):
+        return self.config_path.parent / "vendorquota.json" if self.config_path else None
+
+    def _load_vendor_quota(self) -> None:
+        path = self._vendor_quota_path()
+        if not path:
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        channels = data.get("channels")
+        if isinstance(channels, dict):
+            self.vendor_quota = {
+                str(name): entry for name, entry in channels.items()
+                if isinstance(entry, dict)}
+        self.vendor_quota_at = str(data.get("at") or "")
+
+    def _save_vendor_quota(self) -> None:
+        path = self._vendor_quota_path()
+        if not path:
+            return
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(
+                {"at": self.vendor_quota_at, "channels": self.vendor_quota},
+                ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass  # quota display must never break the sweep
+
     def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
         """Resolved free-tier allowance for one model on this channel.
 
@@ -607,33 +646,48 @@ class App:
             return None
 
     def free_quota_status(self, channel, wire: str, exposed: str = "") -> dict | None:
-        """Local usage vs the free allowance; exhausted means "never route it"."""
+        """Local usage vs the free allowance; exhausted means "never route it".
+
+        The vendor's own numbers (last alignment sweep) are carried alongside
+        the gateway counter: they are the only truth for account-level quotas
+        that other clients also draw from, so zero vendor remaining blocks the
+        model exactly like a locally reached cap does.
+        """
         spec = self.free_quota_spec(channel, wire, exposed)
-        if spec is None or self.usage is None:
+        vendor = (self.vendor_quota.get(channel.name) or {}).get(wire) or {}
+        if spec is None and not vendor:
             return None
-        used = self.usage.model_usage(channel.name, wire, spec.period)
+        used = (self.usage.model_usage(channel.name, wire, spec.period)
+                if spec is not None and self.usage is not None else {})
         tokens_used = int(used.get("tokens") or 0)
         # Vendors bill answered requests only; failed calls stay out of the cap.
         requests_used = int(used.get("success") or 0)
-        remaining_tokens = (None if spec.tokens is None
+        remaining_tokens = (None if spec is None or spec.tokens is None
                             else max(0, spec.tokens - tokens_used))
-        remaining_requests = (None if spec.requests is None
+        remaining_requests = (None if spec is None or spec.requests is None
                               else max(0, spec.requests - requests_used))
-        exhausted = (
-            (spec.tokens is not None and tokens_used >= spec.tokens)
-            or (spec.requests is not None and requests_used >= spec.requests)
+        exhausted = bool(
+            (spec is not None and spec.tokens is not None
+             and tokens_used >= spec.tokens)
+            or (spec is not None and spec.requests is not None
+                and requests_used >= spec.requests)
+            or (vendor and (vendor.get("remaining") or 0) <= 0)
         )
         ratios = []
-        if spec.tokens:
+        if spec is not None and spec.tokens:
             ratios.append(tokens_used / spec.tokens)
-        if spec.requests:
+        if spec is not None and spec.requests:
             ratios.append(requests_used / spec.requests)
+        if vendor and vendor.get("total"):
+            ratios.append(1 - (vendor.get("remaining") or 0) / vendor["total"])
         ratio = max(ratios) if ratios else 0.0
         return {
-            "source": "channel" if channel.free_quota is not None else "provider_baseline",
-            "period": spec.period,
-            "limit_tokens": spec.tokens,
-            "limit_requests": spec.requests,
+            "source": ("vendor" if spec is None else
+                       "channel" if channel.free_quota is not None
+                       else "provider_baseline"),
+            "period": spec.period if spec is not None else "total",
+            "limit_tokens": spec.tokens if spec is not None else None,
+            "limit_requests": spec.requests if spec is not None else None,
             "used_tokens": tokens_used,
             "used_requests": requests_used,
             "remaining_tokens": remaining_tokens,
@@ -641,6 +695,10 @@ class App:
             "ratio": round(ratio, 4),
             "warning": bool(ratio >= 0.8 and not exhausted),
             "exhausted": exhausted,
+            "vendor_remaining": vendor.get("remaining"),
+            "vendor_total": vendor.get("total"),
+            "vendor_consumed": vendor.get("consumed"),
+            "vendor_at": self.vendor_quota_at or None,
         }
 
     def free_quota_exhausted(self, channel, wire: str, exposed: str = "") -> bool:
@@ -1445,6 +1503,12 @@ class App:
                     "channel": "", "kind": "apply_failed",
                     "message": f"自动应用免费额度对齐失败，配置已回读未提交：{exc}",
                 })
+        if report.get("quota"):
+            # Merge: a channel whose vendor command failed keeps its last
+            # known numbers (and the alert above explains the staleness).
+            self.vendor_quota.update(report["quota"])
+            self.vendor_quota_at = report.get("quota_at") or self.vendor_quota_at
+            self._save_vendor_quota()
         report["finished_at"] = time.time()
         self._record_free_align(report)
         if self.free_align_runner:

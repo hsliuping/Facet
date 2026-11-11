@@ -1988,27 +1988,46 @@ function freeQuotaCell(q) {
   if (!q) return '<span class="sub-note">未设本地额度硬门禁<br>以厂家额度 / 限流为准</span>';
   const ratio = Math.min(1, Math.max(0, Number(q.ratio || 0)));
   const tone = q.exhausted ? 'bad' : q.warning ? 'warn' : '';
-  const left = (remain) => (remain == null ? ''
-    : ` · 剩 ${Number(remain).toLocaleString()}`);
+  const hasVendor = q.vendor_remaining != null || q.vendor_total != null;
   const lines = [];
+  if (hasVendor) {
+    const total = q.vendor_total == null ? null : Number(q.vendor_total);
+    const remain = q.vendor_remaining == null ? null : Number(q.vendor_remaining);
+    const used = q.vendor_consumed != null ? Number(q.vendor_consumed)
+      : (total != null && remain != null ? total - remain : null);
+    lines.push(`<span class="sub-note">厂家侧</span> `
+      + `${used == null ? '?' : used.toLocaleString()} / `
+      + `${total == null ? '?' : total.toLocaleString()} tok`
+      + (remain == null ? '' : ` · 剩 ${remain.toLocaleString()}`));
+  }
+  const local = [];
   if (q.limit_tokens != null) {
-    lines.push(`${Number(q.used_tokens || 0).toLocaleString()} / `
+    local.push(`${Number(q.used_tokens || 0).toLocaleString()} / `
       + `${Number(q.limit_tokens || 0).toLocaleString()} tok`
-      + left(q.remaining_tokens));
+      + (q.remaining_tokens == null ? ''
+        : ` · 剩 ${Number(q.remaining_tokens).toLocaleString()}`));
   }
   if (q.limit_requests != null) {
-    lines.push(`${Number(q.used_requests || 0).toLocaleString()} / `
+    local.push(`${Number(q.used_requests || 0).toLocaleString()} / `
       + `${Number(q.limit_requests).toLocaleString()} 次`
-      + left(q.remaining_requests));
+      + (q.remaining_requests == null ? ''
+        : ` · 剩 ${Number(q.remaining_requests).toLocaleString()}`));
+  }
+  if (local.length) {
+    lines.push(`<span class="sub-note">网关本地</span> ${local.join('；')}`);
   }
   const period = FREE_PERIOD[q.period] || q.period || '';
   const reset = FREE_RESET[q.period] || '';
   const badge = q.exhausted ? '<span class="tag expired">已用完</span>'
     : q.warning ? '<span class="tag expiring">临近上限</span>' : '';
+  const source = hasVendor
+    ? `厂家额度${q.vendor_at ? ` · 对齐 ${esc(q.vendor_at)}` : ' · 已对齐'}`
+    : `网关本地计数 · ${q.source === 'provider_baseline' ? '注册表基线' : '渠道配置'}`;
+  const periodNote = local.length
+    ? `${esc(period)}${reset ? ` · ${reset}` : ''} · ` : '';
   return `<div class="free-quota"><div>${lines.join('<br>')}</div>`
     + `<div class="bar"><i class="${tone}" style="width:${(ratio * 100).toFixed(1)}%"></i></div>`
-    + `<div class="sub-note">${esc(period)}${reset ? ` · ${reset}` : ''}`
-    + ` · ${q.source === 'provider_baseline' ? '厂家基础额度' : '渠道配置'} ${badge}</div></div>`;
+    + `<div class="sub-note">${periodNote}${source} ${badge}</div></div>`;
 }
 
 function freeRateCell(ch) {

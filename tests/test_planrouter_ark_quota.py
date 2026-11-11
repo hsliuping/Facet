@@ -47,7 +47,8 @@ def ark_items() -> list:
         # Deactivated model → dropped.
         {"FoundationModelName": "doubao-seed-evolving", "State": "Unavailable",
          "InitialInferenceFreeUsage": {"Total": 5_000_000, "Consumed": 0}},
-        # Everything consumed/reclaimed → dropped.
+        # Everything consumed/reclaimed → kept at zero so the console can say
+        # "quota used up" instead of letting the model silently disappear.
         {"FoundationModelName": "doubao-1.5-pro-32k", "State": "Available",
          "InitialInferenceFreeUsage": {"Total": 500_000, "Consumed": 500_000},
          "FreeResourcePackItems": [
@@ -59,9 +60,14 @@ def ark_items() -> list:
 def expected_rows() -> list[dict]:
     return [
         {"model": "kimi-k3-1-pro-261024", "type": "Text",
-         "remaining": 3_800_000, "expires": HORIZON},
+         "remaining": 3_800_000, "total": 5_000_000,
+         "consumed": 1_200_000, "expires": HORIZON},
         {"model": "deepseek-v4-1-flash-economy-261017", "type": "Text",
-         "remaining": 2_500_000, "expires": HORIZON},
+         "remaining": 2_500_000, "total": 5_000_000,
+         "consumed": 2_500_000, "expires": HORIZON},
+        {"model": "doubao-1.5-pro-32k", "type": "Text",
+         "remaining": 0, "total": 500_000,
+         "consumed": 500_000, "expires": HORIZON},
     ]
 
 

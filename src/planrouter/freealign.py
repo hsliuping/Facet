@@ -17,7 +17,7 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import date
+from datetime import date, datetime
 
 from .ark_quota import resolve_callable_names
 from .core import AUTO_MODEL
@@ -162,6 +162,36 @@ def _resolve_volcengine_callables(channel, families: list[str]) -> list[str]:
     return resolve_callable_names(families, dp.get("models") or [])
 
 
+def _quota_snapshot(rows: list[dict], models: list[str]) -> dict[str, dict]:
+    """Vendor-reported quota per routable model id.
+
+    The vendor command names models by family (``kimi-k3-1-pro``) while the
+    mapping holds callable ids (``kimi-k3-1-pro-261024``); the sweep resolved
+    one into the other, so match by the same prefix rule and keep the
+    numbers the vendor actually reported.
+    """
+    out: dict[str, dict] = {}
+    for wire in models:
+        for row in rows:
+            family = str(row.get("model") or "")
+            if not family:
+                continue
+            tail = wire[len(family):] if wire.startswith(family) else ""
+            if wire != family and not (tail.startswith("-") and tail[1:].isdigit()):
+                continue
+            total, remaining = row.get("total"), row.get("remaining")
+            consumed = row.get("consumed")
+            if consumed is None and isinstance(total, (int, float)) \
+                    and isinstance(remaining, (int, float)):
+                # Some CLIs report only total/remaining; keep all three in
+                # sync so the console never prints a blank "used" figure.
+                consumed = max(0, total - remaining)
+            out[wire] = {"remaining": remaining, "total": total,
+                         "consumed": consumed}
+            break
+    return out
+
+
 def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
     """One sweep over free-tier channels linked to a free_quota_cmd mode.
 
@@ -170,10 +200,14 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
     whose ``patch`` (channel -> new models mapping) the caller applies
     through the normal config pipeline. Never raises; failures become
     alerts and the channel keeps its current mapping until the next sweep.
+    ``quota`` carries the vendor's own remaining/total/consumed per model so
+    the console can show the real numbers instead of the gateway's counter.
     """
-    report: dict = {"trigger": trigger, "aligned": [], "alerts": [], "patch": {}}
+    report: dict = {"trigger": trigger, "aligned": [], "alerts": [],
+                    "patch": {}, "quota": {},
+                    "quota_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     runner = _run_cmd or run_vendor_cmd
-    results: dict[tuple, list[str] | None] = {}
+    results: dict[tuple, list[dict] | None] = {}
     for channel in list(app.config.channels):
         if not channel.enabled or channel.tier != "free":
             continue
@@ -184,8 +218,8 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
         key = (tuple(cmd), tuple(sorted(creds.items())))
         if key not in results:
             try:
-                rows = parse_free_quota_output(runner(list(cmd), extra_env=creds))
-                results[key] = free_models_from_rows(rows)
+                results[key] = parse_free_quota_output(
+                    runner(list(cmd), extra_env=creds))
             except Exception as exc:
                 results[key] = None
                 report["alerts"].append({
@@ -193,7 +227,8 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
                     "message": f"免费额度命令执行失败（{str(exc)[:160]}），保留原映射",
                 })
                 continue
-        families = results[key] or []
+        rows = results[key] or []
+        families = free_models_from_rows(rows)
         if getattr(channel, "provider", "") == "volcengine" and families:
             try:
                 models = _resolve_volcengine_callables(channel, families)
@@ -210,6 +245,7 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
         report["aligned"].append({
             "channel": channel.name, "models": list(models), "changed": changed,
         })
+        report["quota"][channel.name] = _quota_snapshot(rows, models)
         if changed:
             report["patch"][channel.name] = mapping
     return report

@@ -21,6 +21,7 @@ requests.jsonl
 maintenance.jsonl
 probe.jsonl
 freealign.jsonl
+vendorquota.json
 maintenance_models.json
 providers.json
 providers.json.bak

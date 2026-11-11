@@ -218,6 +218,19 @@ class SweepTests(unittest.TestCase):
         self.assertNotIn("魔搭免费", aligned)
         self.assertEqual(report["alerts"], [])
 
+    def test_report_carries_vendor_quota_numbers(self):
+        report = self.sweep()
+        snapshot = report["quota"]["百炼免费"]
+        # The console shows the vendor's own numbers, not the local counter.
+        self.assertEqual(snapshot["qwen3.8-flash"],
+                         {"remaining": 900000, "total": 1000000,
+                          "consumed": 100000})
+        self.assertEqual(snapshot["qwen3.8-27b"],
+                         {"remaining": 5, "total": 100, "consumed": 95})
+        # Exhausted rows never enter the mapping, so they are not reported.
+        self.assertNotIn("qwen3.8-max-0902", snapshot)
+        self.assertRegex(report["quota_at"], r"^\d{4}-\d{2}-\d{2}")
+
     def test_unchanged_mapping_reports_no_patch(self):
         first = self.sweep()  # discovers the change…
         self.assertEqual(first["patch"], {
@@ -291,8 +304,8 @@ class SweepTests(unittest.TestCase):
         app = App(parse_config(volc_config()))
         app.providers = volc_registry()
         rows = json.dumps([
-            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 100,
-             "expires": FUTURE},
+            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 480693,
+             "total": 500000, "consumed": 19307, "expires": FUTURE},
         ])
         with mock.patch("planrouter.freealign.probe_models",
                         return_value={"ok": True,
@@ -305,6 +318,10 @@ class SweepTests(unittest.TestCase):
                          "kimi-k3-1-pro-261024": "kimi-k3-1-pro-261024"},
         })
         self.assertEqual(report["alerts"], [])
+        # Family name → versioned callable id, numbers kept intact.
+        self.assertEqual(report["quota"]["火山免费"]["kimi-k3-1-pro-261024"],
+                         {"remaining": 480693, "total": 500000,
+                          "consumed": 19307})
 
     def test_volcengine_resolution_failure_keeps_mapping(self):
         app = App(parse_config(volc_config()))
@@ -334,6 +351,8 @@ class ApplyTests(unittest.TestCase):
 
     def tearDown(self):
         self.path.unlink(missing_ok=True)
+        for name in ("vendorquota.json", "vendorquota.tmp", "freealign.jsonl"):
+            (self.path.parent / name).unlink(missing_ok=True)
 
     def test_run_free_align_applies_and_persists(self):
         with mock.patch.object(freealign, "run_vendor_cmd",
@@ -360,6 +379,26 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(payload["free_align"]["hours"], 24)
         self.assertEqual(payload["free_align"]["reports"][0]["trigger"],
                          "scheduled")
+
+    def test_vendor_quota_persists_and_survives_restart(self):
+        with mock.patch.object(freealign, "run_vendor_cmd",
+                               fake_runner(json.dumps(bl_rows()))):
+            self.app.run_free_align("manual")
+        saved = json.loads(
+            (self.path.parent / "vendorquota.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["channels"]["百炼免费"]["qwen3.8-flash"],
+                         {"remaining": 900000, "total": 1000000,
+                          "consumed": 100000})
+        self.assertEqual(saved["at"], self.app.vendor_quota_at)
+        # A restarted process reloads the snapshot instead of showing zeros.
+        reloaded = App(load_config(self.path), config_path=self.path)
+        reloaded.providers = registry_fixture()
+        status = reloaded.free_quota_status(
+            reloaded.config.channel("百炼免费"), "qwen3.8-flash")
+        self.assertEqual(status["vendor_remaining"], 900000)
+        self.assertEqual(status["vendor_total"], 1000000)
+        self.assertEqual(status["vendor_consumed"], 100000)
+        self.assertEqual(status["vendor_at"], self.app.vendor_quota_at)
 
 
 class RegistryTests(unittest.TestCase):
@@ -607,6 +646,64 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         self.assertGreaterEqual(payload["summary"]["quota_warning"], 1)
         self.assertTrue(any((m["quota"] or {}).get("warning")
                             for m in payload["channels"][0]["models"]))
+
+    def test_vendor_quota_visible_when_local_counter_is_zero(self):
+        # The vendor dashboard says 19,307 tokens were consumed elsewhere;
+        # the gateway never billed a single token for this model.
+        self.app.vendor_quota = {"火山免费": {WIRE: {
+            "remaining": 480693, "total": 500000, "consumed": 19307}}}
+        self.app.vendor_quota_at = "2026-11-11 09:31:00"
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["used_tokens"], 0)
+        self.assertEqual(status["vendor_remaining"], 480693)
+        self.assertEqual(status["vendor_total"], 500000)
+        self.assertEqual(status["vendor_consumed"], 19307)
+        self.assertEqual(status["vendor_at"], "2026-11-11 09:31:00")
+        # Ratio follows the vendor (19307/500000), not the empty local counter.
+        self.assertEqual(status["ratio"], 0.0386)
+        self.assertFalse(status["exhausted"])
+        payload = maint.free_models_payload(self.app)
+        entry = next(m for m in payload["channels"][0]["models"]
+                     if m["model"] == WIRE)
+        self.assertEqual(entry["quota"]["vendor_remaining"], 480693)
+        self.assertEqual(entry["quota"]["vendor_consumed"], 19307)
+        self.assertTrue(entry["routable"])
+
+    def test_vendor_zero_remaining_blocks_routing(self):
+        # Quota drained outside the gateway: local usage is still zero, yet
+        # routing must stop instead of falling through to per-token billing.
+        self.app.vendor_quota = {"火山免费": {WIRE: {
+            "remaining": 0, "total": 500000, "consumed": 500000}}}
+        self.app.vendor_quota_at = "2026-11-11 09:31:00"
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["used_tokens"], 0)
+        self.assertTrue(status["exhausted"])
+        self.assertEqual(status["vendor_remaining"], 0)
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+        payload = maint.free_models_payload(self.app)
+        entry = next(m for m in payload["channels"][0]["models"]
+                     if m["model"] == WIRE)
+        self.assertFalse(entry["routable"])
+        self.assertEqual(payload["summary"]["quota_exhausted"], 1)
+
+    def test_vendor_only_quota_reports_vendor_source(self):
+        # A channel without registry baseline / channel cap still gets a
+        # status when the vendor supplied numbers.
+        raw = volc_config()
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = [{"id": "volcengine", "name": "火山引擎方舟",
+                          "modes": {"payg": {"label": "按量付费"}}}]
+        channel = app.config.channel("火山免费")
+        self.assertIsNone(app.free_quota_status(channel, WIRE))
+        app.vendor_quota = {"火山免费": {WIRE: {
+            "remaining": 480693, "total": 500000, "consumed": 19307}}}
+        status = app.free_quota_status(channel, WIRE)
+        self.assertEqual(status["source"], "vendor")
+        self.assertIsNone(status["limit_tokens"])
+        self.assertEqual(status["vendor_remaining"], 480693)
 
 
 if __name__ == "__main__":
