@@ -81,6 +81,30 @@ class ParseCredentialsTests(unittest.TestCase):
         self.assertEqual(parse_config(raw).credentials, {})
 
 
+class ChannelCredsParseTests(unittest.TestCase):
+    """Channel-bound creds (channel = account) parse onto Channel.creds."""
+
+    def test_parsed_stripped_and_stringified(self):
+        raw = base_config()
+        raw["channels"][0]["creds"] = {"VOLC_ACCESSKEY": "  ch-ak  ",
+                                       "VOLC_SECRETKEY": 12345}
+        config = parse_config(raw)
+        self.assertEqual(config.channel("ark-free").creds,
+                         {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "12345"})
+
+    def test_absent_or_empty(self):
+        raw = base_config()
+        self.assertEqual(parse_config(raw).channel("ark-free").creds, {})
+        raw["channels"][0]["creds"] = {}
+        self.assertEqual(parse_config(raw).channel("ark-free").creds, {})
+
+    def test_non_dict_rejected(self):
+        raw = base_config()
+        raw["channels"][0]["creds"] = "ak"
+        with self.assertRaisesRegex(ValueError, "creds must be an object"):
+            parse_config(raw)
+
+
 class MergeCredentialsTests(unittest.TestCase):
     def test_masked_and_empty_inherit_stored(self):
         old = base_config()
@@ -127,6 +151,57 @@ class MergeCredentialsTests(unittest.TestCase):
         })
 
 
+class MergeChannelCredsTests(unittest.TestCase):
+    """Channel creds follow the same masked-inheritance rules as api_key."""
+
+    @staticmethod
+    def _with_creds(config: dict, creds) -> dict:
+        if creds is None:
+            config["channels"][0].pop("creds", None)
+        else:
+            config["channels"][0]["creds"] = creds
+        return config
+
+    def test_masked_and_empty_inherit_stored(self):
+        old = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "ch-ak",
+                                               "VOLC_SECRETKEY": "ch-sk"})
+        new = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "***",
+                                               "VOLC_SECRETKEY": ""})
+        merged = merge_secrets(new, old)
+        self.assertEqual(merged["channels"][0]["creds"],
+                         {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "ch-sk"})
+
+    def test_explicit_value_wins(self):
+        old = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "ch-ak",
+                                               "VOLC_SECRETKEY": "ch-sk"})
+        new = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "***",
+                                               "VOLC_SECRETKEY": "ch-sk-new"})
+        merged = merge_secrets(new, old)
+        self.assertEqual(merged["channels"][0]["creds"],
+                         {"VOLC_ACCESSKEY": "ch-ak",
+                          "VOLC_SECRETKEY": "ch-sk-new"})
+
+    def test_absent_section_inherits_whole(self):
+        """A stale console tab omitting creds must not erase the stored pair."""
+        old = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "ch-ak"})
+        new = self._with_creds(base_config(), None)
+        merged = merge_secrets(new, old)
+        self.assertEqual(merged["channels"][0]["creds"],
+                         {"VOLC_ACCESSKEY": "ch-ak"})
+
+    def test_unconfigured_value_removed(self):
+        old = self._with_creds(base_config(), None)
+        new = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "***"})
+        merged = merge_secrets(new, old)
+        self.assertNotIn("creds", merged["channels"][0])
+
+    def test_other_channels_untouched(self):
+        old = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "ch-ak"})
+        new = self._with_creds(base_config(), {"VOLC_ACCESSKEY": "ch-ak"})
+        merged = merge_secrets(new, old)
+        self.assertNotIn("creds", merged["channels"][1])
+
+
 class AppCredentialsTests(unittest.TestCase):
     """public_config masking + apply_config persistence over a real file."""
 
@@ -144,6 +219,27 @@ class AppCredentialsTests(unittest.TestCase):
         self.assertEqual(visible["credentials"]["volcengine"],
                          {"VOLC_ACCESSKEY": "***", "VOLC_SECRETKEY": "***"})
         self.assertEqual(visible["channels"][0]["api_key"], "***")
+
+    def test_public_config_masks_channel_creds(self):
+        raw = dict(self.app.raw)
+        raw["channels"][0]["creds"] = {"VOLC_ACCESSKEY": "ch-ak",
+                                       "VOLC_SECRETKEY": "env:VOLC_SK"}
+        self.app.apply_config(raw)
+        visible = self.app.public_config()
+        self.assertEqual(visible["channels"][0]["creds"],
+                         {"VOLC_ACCESSKEY": "***",
+                          "VOLC_SECRETKEY": "env:VOLC_SK"})
+
+    def test_apply_config_persists_channel_creds(self):
+        raw = dict(self.app.raw)
+        raw["channels"][0]["creds"] = {"VOLC_ACCESSKEY": "ch-ak",
+                                       "VOLC_SECRETKEY": "ch-sk"}
+        self.app.apply_config(raw)
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["channels"][0]["creds"],
+                         {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "ch-sk"})
+        self.assertEqual(self.app.config.channel("ark-free").creds,
+                         {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "ch-sk"})
 
     def test_apply_config_masks_and_inherits_then_persists(self):
         raw = dict(self.app.raw)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import hmac
 import json
 import os
@@ -49,6 +50,9 @@ DEFAULT_ADMIN_KEY = "admin"
 # management plane; the subscriptions page reloads often enough that a live
 # fetch per view would be wasteful and slow.
 PLAN_TTL = 300.0
+# A failed fetch is retried sooner than a successful one: the vendor call
+# is cheap and the user is staring at the error text waiting to fix auth.
+PLAN_ERROR_TTL = 60.0
 
 
 def _header_safe(value) -> str:
@@ -210,6 +214,22 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
         for field in ("provider", "mode"):
             if not channel.get(field) and prev.get(field):
                 channel[field] = prev[field]
+        # Channel-bound management creds (channel = account) follow the same
+        # masked-inheritance rules as the vendor-level slot.
+        creds = channel.get("creds")
+        if creds is None and prev.get("creds"):
+            channel["creds"] = copy.deepcopy(prev["creds"])
+        if isinstance(creds, dict):
+            prev_creds = prev.get("creds") or {}
+            for env_name, value in list(creds.items()):
+                if value in (None, "", "***"):
+                    inherited = prev_creds.get(env_name)
+                    if inherited:
+                        creds[env_name] = inherited
+                    else:
+                        creds.pop(env_name, None)
+            if not creds:
+                channel.pop("creds", None)
     listen = merged.setdefault("listen", {})
     for field in ("api_key", "admin_key"):
         if listen.get(field) in (None, "", "***"):
@@ -466,11 +486,12 @@ class App:
         self.vendor_quota: dict = {}
         self.vendor_quota_at = ""
         # Vendor-side plan usage for the subscriptions page (Volcengine
-        # Coding Plan via GetPersonalPlan + GetCodingPlanUsage). Cached with
-        # a TTL and persisted like vendor_quota; None until first fetched.
-        self.plan_quota: dict | None = None
-        self._plan_fetch_ts = 0.0
-        self._plan_fetch_error = ""
+        # Coding/Agent Plan via GetPersonalPlan + per-plan usage APIs).
+        # Cached per credential pair with a TTL and persisted like
+        # vendor_quota: a restart shows the snapshot and refreshes on the
+        # first page load. A channel-bound AK/SK and the vendor-level
+        # fallback therefore each get their own cache slot.
+        self.plan_entries: dict[str, dict] = {}
         self._plan_lock = threading.Lock()
         self._load_vendor_quota()
         self.catalog_refresher: CatalogRefresher | None = None
@@ -618,61 +639,108 @@ class App:
                 str(name): entry for name, entry in channels.items()
                 if isinstance(entry, dict)}
         self.vendor_quota_at = str(data.get("at") or "")
-        plan = data.get("plan")
-        if isinstance(plan, dict):
-            # Show the persisted snapshot right after a restart; the first
+        plans = data.get("plans")
+        if isinstance(plans, dict):
+            # Show the persisted snapshots right after a restart; the first
             # page load still re-fetches (freshness beats availability).
-            self.plan_quota = plan
+            self.plan_entries = {
+                str(key): {"snapshot": snap, "error": "", "ts": 0.0}
+                for key, snap in plans.items() if isinstance(snap, dict)}
+        elif isinstance(data.get("plan"), dict):
+            # Pre-cred-binding single snapshot from the first rollout.
+            self.plan_entries = {"coding:legacy": {
+                "snapshot": data["plan"], "error": "", "ts": 0.0}}
 
     def _save_vendor_quota(self) -> None:
         path = self._vendor_quota_path()
         if not path:
             return
+        plans = {key: entry.get("snapshot") for key, entry in
+                 self.plan_entries.items() if entry.get("snapshot")}
         try:
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(
                 {"at": self.vendor_quota_at, "channels": self.vendor_quota,
-                 "plan": self.plan_quota},
+                 "plans": plans},
                 ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
         except OSError:
             pass  # quota display must never break the sweep
 
     # -------------------------------------------------- vendor plan usage
-    def vendor_plan(self) -> dict | None:
-        """Coding Plan usage for the subscriptions page, TTL-cached.
+    def _plan_creds_for(self, record: dict) -> tuple[str, str, str]:
+        """(kind, ak, sk) for a subscription row: bound channel first.
 
-        Returns None when no Volcengine AK/SK is configured; a fetch failure
-        returns ``{"error": ...}`` (plus the last good snapshot marked stale
-        when one exists). Successful results persist through vendorquota.json.
+        The first channel linked to the row supplies the account: its own
+        creds when present, else the vendor-level config.credentials for
+        that channel's provider. Kind follows the vendor text — rows named
+        agentplan query AgentPlan, everything else CodingPlan.
         """
-        creds = (getattr(self.config, "credentials", None) or {}).get(
-            "volcengine") or {}
-        ak = str(creds.get("VOLC_ACCESSKEY") or "")
-        sk = str(creds.get("VOLC_SECRETKEY") or "")
+        vendor = str(record.get("vendor") or "").lower()
+        # Plan endpoints are Volcengine-only: a Bailian/OpenRouter row must
+        # not get decorated with (or fail on) an Ark management-plane call.
+        if not any(hint in vendor for hint in
+                   ("volc", "火山", "方舟", "codingplan", "agentplan")):
+            return "", "", ""
+        kind = "agent" if "agentplan" in vendor else "coding"
+        channel = None
+        for name in (record.get("channels") or []):
+            channel = self.config.channel(str(name))
+            if channel:
+                break
+        creds: dict = dict(getattr(channel, "creds", None) or {}) \
+            if channel else {}
+        if not creds:
+            provider = str(getattr(channel, "provider", "") or "") \
+                if channel else ""
+            if not provider:
+                # No bound channel: fall back to the volcengine vendor slot.
+                provider = "volcengine"
+            creds = (getattr(self.config, "credentials", None) or {}).get(
+                provider) or {}
+        ak = str(creds.get(ark_quota.AK_ENV) or "")
+        sk = str(creds.get(ark_quota.SK_ENV) or "")
+        return kind, ak, sk
+
+    def plan_for(self, record: dict) -> dict | None:
+        """Vendor plan usage for one subscription row, TTL-cached per creds.
+
+        Returns None when the row has no usable AK/SK; a fetch failure
+        returns ``{"error": ...}`` (plus the last good snapshot marked
+        stale when one exists). Snapshots persist through vendorquota.json.
+        """
+        kind, ak, sk = self._plan_creds_for(record)
         if not ak or not sk:
             return None
+        key = f"{kind}:{hashlib.sha1(f'{ak}:{sk}'.encode()).hexdigest()[:12]}"
         with self._plan_lock:
             now = time.time()
-            if now - self._plan_fetch_ts < PLAN_TTL:
-                if self._plan_fetch_error and self.plan_quota is None:
-                    return {"error": self._plan_fetch_error}
-                return self.plan_quota
+            entry = self.plan_entries.get(key) or {}
+            snapshot, error, ts = (entry.get("snapshot"), entry.get("error", ""),
+                                   entry.get("ts", 0.0))
+            if now - ts < (PLAN_TTL if snapshot else PLAN_ERROR_TTL):
+                if error and not snapshot:
+                    return {"error": error}
+                if error and snapshot:
+                    return {**snapshot, "stale": True, "error": error}
+                return snapshot
+            fetch = ark_quota.fetch_agent_plan if kind == "agent" \
+                else ark_quota.fetch_coding_plan
             try:
-                plan = ark_quota.fetch_coding_plan(ak, sk)
+                plan = fetch(ak, sk)
             except Exception as exc:
-                self._plan_fetch_error = str(exc)[:160]
-                self._plan_fetch_ts = now
-                if self.plan_quota is not None:
-                    return {**self.plan_quota, "stale": True,
-                            "error": self._plan_fetch_error}
-                return {"error": self._plan_fetch_error}
-            self.plan_quota = {**plan, "fetched_at": datetime.now().strftime(
+                error = str(exc)[:160]
+                self.plan_entries[key] = {"snapshot": snapshot, "error": error,
+                                          "ts": now}
+                if snapshot:
+                    return {**snapshot, "stale": True, "error": error}
+                return {"error": error}
+            snapshot = {**plan, "fetched_at": datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S")}
-            self._plan_fetch_error = ""
-            self._plan_fetch_ts = now
+            self.plan_entries[key] = {"snapshot": snapshot, "error": "",
+                                      "ts": now}
             self._save_vendor_quota()
-            return self.plan_quota
+            return snapshot
 
     def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
         """Resolved free-tier allowance for one model on this channel.
@@ -772,11 +840,11 @@ class App:
         return subs.summarize(self.subscriptions)
 
     def subscriptions_payload(self) -> dict:
-        plan = self.vendor_plan()
         rows = []
         for record in self.subscriptions:
             row = subs.enrich(record)
-            if plan and "codingplan" in str(record.get("vendor") or "").lower():
+            plan = self.plan_for(record)
+            if plan:
                 row["vendor_plan"] = plan
             rows.append(row)
         return {
@@ -870,6 +938,13 @@ class App:
             key = channel.get("api_key")
             if key and not str(key).startswith("env:"):
                 channel["api_key"] = "***"
+            # Channel-bound management creds mask like the vendor-level slot:
+            # the console may echo them back but never needs the plaintext.
+            own_creds = channel.get("creds")
+            if isinstance(own_creds, dict):
+                for env_name, value in own_creds.items():
+                    if value and not str(value).startswith("env:"):
+                        own_creds[env_name] = "***"
         listen = visible.get("listen") or {}
         for field in ("api_key", "admin_key"):
             if listen.get(field) and not str(listen[field]).startswith("env:"):
@@ -1099,19 +1174,30 @@ class App:
         """IAM AK/SK for the volcengine management plane.
 
         Precedence mirrors the free-align injection: unsaved editor draft
-        (plain value or env:VAR) beats configured credentials (already
-        resolved), which beat the process environment.
+        (plain value or env:VAR) beats the channel's own bound creds
+        (channel = account), which beat the vendor-level config.credentials
+        slot, which beat the process environment.
         """
-        saved = (getattr(self.config, "credentials", None) or {}).get(
+        saved_vendor = (getattr(self.config, "credentials", None) or {}).get(
             "volcengine") or {}
         draft = (channel.get("credentials") or {}).get("volcengine") or {}
+        own = (channel.get("creds") or {}) if isinstance(
+            channel.get("creds"), dict) else {}
+        if not own:
+            saved_ch = next((c for c in self.raw.get("channels") or []
+                             if isinstance(c, dict)
+                             and c.get("name") == channel.get("name")), {})
+            own = (saved_ch.get("creds") or {}) if isinstance(
+                saved_ch.get("creds"), dict) else {}
         out: dict[str, str] = {}
         for key in (ark_quota.AK_ENV, ark_quota.SK_ENV):
             value = str(draft.get(key) or "").strip()
             if value and value != "***":
                 value = resolve_secret(value) or ""
+            elif str(own.get(key) or "").strip() and str(own.get(key)) != "***":
+                value = resolve_secret(str(own.get(key)).strip()) or ""
             else:
-                value = str(saved.get(key) or "").strip()
+                value = str(saved_vendor.get(key) or "").strip()
             if not value:
                 value = os.environ.get(key, "").strip()
             if value:

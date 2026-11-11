@@ -133,7 +133,16 @@ def _mode_for(app, channel) -> list[str] | None:
 
 
 def _creds_for(app, channel) -> dict[str, str]:
-    """Resolved management credentials for the channel's provider."""
+    """Management credentials for the channel: its own first, vendor fallback.
+
+    The channel is the account — a second Volcengine account is a second
+    channel carrying its own AK/SK — so per-channel creds win, and the
+    vendor-level config.credentials stays as the shared default for
+    channels that don't carry their own.
+    """
+    own = dict(getattr(channel, "creds", None) or {})
+    if own:
+        return own
     creds = getattr(app.config, "credentials", None) or {}
     return dict(creds.get(str(getattr(channel, "provider", "") or "")) or {})
 

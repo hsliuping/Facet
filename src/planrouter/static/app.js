@@ -55,6 +55,10 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
+// Compact number for vendor quota cells: 1234567.5 -> "1,234,567.5".
+const fmtNum = (v) => (v === null || v === undefined || isNaN(Number(v)))
+  ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+
 // Embedded/IDE webviews have no native dialogs (calling one throws
 // "prompt() is not supported."). Use an in-page overlay instead, and never
 // reuse #modal so an open channel/subscription editor keeps its unsaved draft.
@@ -868,12 +872,22 @@ function renderSubscriptions() {
     if (vp && vp.error && !vp.windows) {
       planQuota = `<span class="sub-note">厂家余量获取失败：${esc(vp.error)}${vp.stale ? '（显示上次快照）' : ''}</span>`;
     } else if (vp && Array.isArray(vp.windows) && vp.windows.length) {
-      const levels = { session: '会话', weekly: '周', monthly: '月' };
-      const win = vp.windows
-        .filter((w) => w.percent !== null && w.percent !== undefined)
-        .map((w) => `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%`)
-        .join(' · ');
-      const meta = [vp.plan_type ? `CodingPlan ${esc(vp.plan_type)}` : '', vp.end_time ? `到期 ${esc(vp.end_time.slice(0, 10))}` : '']
+      const levels = { session: '会话', weekly: '周', monthly: '月',
+        five_hour: '5小时', daily: '日' };
+      // Coding Plan windows report Percent only; Agent Plan (AFP) reports the
+      // absolute Quota/Used, which reads better so it wins when present.
+      const absolute = vp.windows.some((w) => w.quota !== undefined && w.quota !== null);
+      const win = absolute
+        ? vp.windows.map((w) =>
+            `${levels[w.level] || esc(w.level)} 已用 ${fmtNum(w.used)} / ${fmtNum(w.quota)}`)
+            .join(' · ')
+        : vp.windows
+            .filter((w) => w.percent !== null && w.percent !== undefined)
+            .map((w) => `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%`)
+            .join(' · ');
+      const meta = [vp.plan
+          ? `${esc(vp.plan)}${vp.plan_type ? ` ${esc(vp.plan_type)}` : ''}` : '',
+        vp.end_time ? `到期 ${esc(vp.end_time.slice(0, 10))}` : '']
         .filter(Boolean).join(' · ');
       planQuota = `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
     } else if (vp && vp.windows && !vp.windows.length) {
@@ -2929,9 +2943,12 @@ function renderProviderLinks() {
 }
 
 // Vendor management credentials (registry `credential_envs`, e.g. Volcengine
-// IAM AK/SK for the free-quota CLI). Values live in config.credentials
-// [provider][ENV]; the editor round-trips masked plaintext as "***", so an
-// empty input keeps the stored value instead of clearing it.
+// IAM AK/SK for the free-quota CLI). Channel = account: the values belong to
+// the edited channel's own `creds`, so a second vendor account is simply a
+// second channel carrying its own pair; the vendor-level config.credentials
+// slot stays as the fallback for channels without their own and is NOT
+// echoed into these inputs. Round-trip is masked: saved plaintext reaches
+// the browser as "***" and an empty input keeps the stored value.
 function renderVendorCredentials() {
   const box = $('vendor-credentials');
   if (!box) return;
@@ -2944,16 +2961,17 @@ function renderVendorCredentials() {
     box.innerHTML = '';
     return;
   }
-  const saved = (state.config.credentials || {})[pid] || {};
+  const saved = (state.editing >= 0
+    ? state.config.channels[state.editing]?.creds : null) || {};
   box.hidden = false;
   box.innerHTML = envs.map((e) => {
     const cur = saved[e.env] || '';
     const shown = cur === '***' ? '' : cur;
-    const ph = cur === '***' ? '已配置，留空保持不变' : (cur ? `当前引用 ${cur}` : '未配置');
+    const ph = cur === '***' ? '已配置，留空保持不变' : (cur ? `当前引用 ${cur}` : '未配置（留空则回退厂家级配置）');
     return `<label>${esc(e.label || e.env)}（${esc(e.env)}）</label>
       <input data-cred-env="${esc(e.env)}" type="text" value="${esc(shown)}" placeholder="${esc(ph)}">`;
   }).join('')
-    + '<small class="hint">厂家管理面凭据，仅用于免费额度查询命令（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值。</small>';
+    + '<small class="hint">本渠道自己的管理面凭据（渠道即账号：同一厂家的第二个账号就建第二条渠道各填各的），仅用于余量与免费额度查询（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值；渠道未填时查询回退到厂家级配置。</small>';
 }
 
 // --- Vendor free-tier rate presets ----------------------------------------
@@ -3407,21 +3425,20 @@ function saveChannelEditor() {
     });
     const provider = val('provider');
     if (!provider) throw new Error('必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
-    // Vendor management credentials for the edited channel's provider:
-    // typed values are written into config.credentials[provider][ENV];
-    // empty inputs keep whatever is stored (masked "***" or env: reference).
+    // Channel-bound management credentials (channel = account): typed values
+    // land on the channel's own creds; untouched fields round-trip the stored
+    // masked/env value ("***" or env:REF) so the backend inherits instead of
+    // clearing — typing only one of AK/SK must not lose the other.
     const credInputs = f.querySelectorAll('[data-cred-env]');
-    if (credInputs.length) {
-      const allCreds = { ...(state.config.credentials || {}) };
-      const vendorCreds = { ...(allCreds[provider] || {}) };
-      credInputs.forEach((inp) => {
-        const v = inp.value.trim();
-        if (v) vendorCreds[inp.dataset.credEnv] = v;
-      });
-      if (Object.keys(vendorCreds).length) allCreds[provider] = vendorCreds;
-      else delete allCreds[provider];
-      state.config.credentials = allCreds;
-    }
+    const prevCreds = (state.editing >= 0
+      ? state.config.channels[state.editing]?.creds : null) || {};
+    const ownCreds = {};
+    credInputs.forEach((inp) => {
+      const env = inp.dataset.credEnv;
+      const v = inp.value.trim();
+      if (v) ownCreds[env] = v;
+      else if (prevCreds[env]) ownCreds[env] = prevCreds[env];
+    });
     const channel = {
       name,
       protocol: val('protocol'),
@@ -3436,6 +3453,7 @@ function saveChannelEditor() {
       tiers,
       provider,
       mode: provider ? val('mode') : '',
+      ...(Object.keys(ownCreds).length ? { creds: ownCreds } : {}),
       ...(val('editor-test-model') ? { test_model: val('editor-test-model') } : {}),
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
       ...(val('proxy') ? { proxy: val('proxy') } : {}),

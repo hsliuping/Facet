@@ -145,6 +145,68 @@ class FetchCodingPlanTests(unittest.TestCase):
             ark_quota.fetch_coding_plan(AK, SK, _urlopen=fake_urlopen)
 
 
+class FetchAgentPlanTests(unittest.TestCase):
+    """GetPersonalPlan(AgentPlan) + GetAFPUsage join: absolute AFP windows."""
+
+    def test_joins_subscription_info_with_absolute_windows(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append(urllib.parse.parse_qs(
+                urllib.parse.urlsplit(req.full_url).query)["Action"][0])
+            if len(calls) == 1:
+                return _FakeResp({"Result": {
+                    "PlanType": "Pro", "Status": "Running",
+                    "StartTime": "2026-06-09T00:00:00+08:00",
+                    "EndTime": "2026-12-09T00:00:00+08:00",
+                    "AutoRenew": True}})
+            return _FakeResp({"Result": {
+                "AFPFiveHour": {"Quota": 100, "Used": 2.5,
+                                "ResetTime": 1794387681000},
+                "AFPDaily": {"Quota": 400, "Used": 10,
+                             "ResetTime": 1794435200000},
+                # Malformed windows must be skipped, not crash the row.
+                "AFPWeekly": {"Quota": "x", "Used": 1},
+                "AFPMonthly": "junk",
+            }})
+
+        plan = ark_quota.fetch_agent_plan(AK, SK, _urlopen=fake_urlopen)
+        self.assertEqual(calls, ["GetPersonalPlan", "GetAFPUsage"])
+        self.assertEqual(plan["plan"], "AgentPlan")
+        self.assertEqual(plan["plan_type"], "Pro")
+        self.assertEqual(plan["status"], "Running")
+        self.assertTrue(plan["auto_renew"])
+        self.assertEqual(plan["windows"], [
+            {"level": "five_hour", "quota": 100.0, "used": 2.5,
+             "reset_ts": 1794387681},
+            {"level": "daily", "quota": 400.0, "used": 10.0,
+             "reset_ts": 1794435200},
+        ])
+
+    def test_epoch_seconds_reset_passes_through(self):
+        def fake_urlopen(req, timeout):
+            if not hasattr(fake_urlopen, "called"):
+                fake_urlopen.called = True
+                return _FakeResp({"Result": {"PlanType": "Pro"}})
+            return _FakeResp({"Result": {
+                "AFPDaily": {"Quota": 10, "Used": 1,
+                             "ResetTime": 1794435200},
+                "AFPWeekly": {"Quota": 10, "Used": 1, "ResetTime": -1}}})
+
+        plan = ark_quota.fetch_agent_plan(AK, SK, _urlopen=fake_urlopen)
+        self.assertEqual(plan["windows"][0]["reset_ts"], 1794435200)
+        self.assertIsNone(plan["windows"][1]["reset_ts"])
+
+    def test_api_error_raises_runtimeerror(self):
+        def fake_urlopen(req, timeout):
+            return _FakeResp({"ResponseMetadata": {"Error": {
+                "Code": "ResourceNotFound.Plan",
+                "Message": "plan not purchased"}}})
+
+        with self.assertRaisesRegex(RuntimeError, "ResourceNotFound.Plan"):
+            ark_quota.fetch_agent_plan(AK, SK, _urlopen=fake_urlopen)
+
+
 class SignTests(unittest.TestCase):
     def test_authorization_header_shape(self):
         auth = ark_quota.sign_request(AK, SK, BODY, "20240710T042925Z", QUERY)

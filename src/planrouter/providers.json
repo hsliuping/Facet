@@ -12,6 +12,10 @@
           "docs_url": "https://console.volcengine.com/ark/region:cn-beijing/docs/coding-plan-personal-get-started",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
           "tier": "paid",
+          "credential_envs": [
+            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
+            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+          ],
           "models": []
         },
         "agent": {
@@ -21,6 +25,10 @@
           "docs_url": "https://console.volcengine.com/ark/region:cn-beijing/docs/agent-plan-personal-plan-overview",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan",
           "tier": "paid",
+          "credential_envs": [
+            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
+            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+          ],
           "models": []
         },
         "payg": {

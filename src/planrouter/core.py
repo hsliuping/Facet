@@ -277,6 +277,11 @@ class Channel:
     # builtin providers.json registry; empty means a custom/unknown channel.
     provider: str = ""
     mode: str = ""
+    # Management-plane credentials bound to THIS channel (the channel is the
+    # account: two Volcengine accounts = two channels, each with its own
+    # IAM AK/SK). Vendor-level config.credentials stays as the shared
+    # fallback for channels that don't carry their own.
+    creds: dict[str, str] = field(default_factory=dict)
     # Optional outbound http(s) proxy for foreign upstreams that are not
     # reachable directly (e.g. "http://127.0.0.1:7890"); empty = direct.
     proxy: str = ""
@@ -567,6 +572,11 @@ def parse_config(raw: dict) -> Config:
         proxy = resolve_secret(str(item.get("proxy") or "").strip()) or ""
         if proxy and not proxy.lower().startswith(("http://", "https://")):
             raise ValueError(f"channel {name}: proxy must be an http(s):// URL")
+        creds_raw = item.get("creds") or {}
+        if not isinstance(creds_raw, dict):
+            raise ValueError(f"channel {name}: creds must be an object")
+        creds = {str(k): str(v).strip() for k, v in creds_raw.items()
+                 if isinstance(v, (str, int, float)) and str(v).strip()}
         tier = str(item.get("tier") or "").strip().lower()
         if tier not in ("", "free", "paid"):
             raise ValueError(f'channel {name}: tier must be "", "free" or "paid"')
@@ -613,6 +623,7 @@ def parse_config(raw: dict) -> Config:
             tiers=tiers,
             provider=str(item.get("provider") or "").strip(),
             mode=str(item.get("mode") or "").strip(),
+            creds=creds,
             proxy=proxy,
             free_quota=free_quota,
         ))

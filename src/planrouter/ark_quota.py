@@ -39,6 +39,10 @@ REGION = "cn-beijing"
 SERVICE = "ark"
 ACTION = "ListModelActivations"
 VERSION = "2024-01-01"
+# Credential env names shared by every plan/free-quota call in this module;
+# channel-bound creds and the vendor-level slot both key by these names.
+AK_ENV = "VOLC_ACCESSKEY"
+SK_ENV = "VOLC_SECRETKEY"
 PAGE_SIZE = 100
 # Guard against a server that keeps returning full pages forever.
 MAX_PAGES = 50
@@ -46,9 +50,6 @@ MAX_PAGES = 50
 # refreshes daily, so a synthesized horizon is only cosmetic.
 EXPIRE_DAYS = 30
 SIGNED_HEADERS = "host;x-content-sha256;x-date"
-
-AK_ENV = "VOLC_ACCESSKEY"
-SK_ENV = "VOLC_SECRETKEY"
 
 
 def canonical_query(params: dict) -> str:
@@ -164,6 +165,56 @@ def fetch_coding_plan(ak: str, sk: str, timeout: float = 30.0,
         })
     return {
         "plan": "CodingPlan",
+        "plan_type": str(info.get("PlanType") or ""),
+        "status": str(info.get("Status") or ""),
+        "start_time": str(info.get("StartTime") or ""),
+        "end_time": str(info.get("EndTime") or ""),
+        "auto_renew": bool(info.get("AutoRenew")),
+        "windows": windows,
+    }
+
+
+AFP_WINDOWS = (
+    ("AFPFiveHour", "five_hour"), ("AFPDaily", "daily"),
+    ("AFPWeekly", "weekly"), ("AFPMonthly", "monthly"),
+)
+
+
+def fetch_agent_plan(ak: str, sk: str, timeout: float = 30.0,
+                     _urlopen=None) -> dict:
+    """Agent Plan subscription + absolute AFP window usage.
+
+    Unlike the Coding Plan windows (percent-only), GetAFPUsage reports the
+    real Quota/Used per rolling window (5 hours / day / week / month) in
+    AFP units with epoch-millisecond timestamps — strictly better for the
+    console. Raises RuntimeError when either call fails.
+    """
+    info = (_post(ak, sk, "GetPersonalPlan", {"Plan": "AgentPlan"},
+                  timeout, _urlopen).get("Result") or {})
+    result = (_post(ak, sk, "GetAFPUsage", {}, timeout, _urlopen)
+              .get("Result") or {})
+    windows = []
+    for key, level in AFP_WINDOWS:
+        row = result.get(key)
+        if not isinstance(row, dict):
+            continue
+        try:
+            quota = float(row.get("Quota"))
+            used = float(row.get("Used"))
+        except (TypeError, ValueError):
+            continue
+        reset = row.get("ResetTime")
+        if isinstance(reset, (int, float)) and reset > 0:
+            reset = int(reset // 1000 if reset > 1_000_000_000_000
+                        else reset)  # epoch ms -> seconds, seconds pass through
+        else:
+            reset = None  # absent or a sentinel like -1 (no reset scheduled)
+        windows.append({
+            "level": level, "quota": quota, "used": used,
+            "reset_ts": reset,
+        })
+    return {
+        "plan": "AgentPlan",
         "plan_type": str(info.get("PlanType") or ""),
         "status": str(info.get("Status") or ""),
         "start_time": str(info.get("StartTime") or ""),

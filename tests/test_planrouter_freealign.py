@@ -403,7 +403,12 @@ class ApplyTests(unittest.TestCase):
 
 
 class PlanQuotaTests(unittest.TestCase):
-    """Vendor Coding Plan usage on the subscriptions page rows."""
+    """Vendor plan usage on the subscriptions page rows.
+
+    plan_for() is per-row and per-credential: the first channel bound to the
+    row supplies the account (its own creds first, vendor-level fallback),
+    and snapshots are cached per `kind:sha1(ak:sk)`.
+    """
 
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
@@ -437,6 +442,10 @@ class PlanQuotaTests(unittest.TestCase):
                 "windows": [{"level": "monthly", "percent": 3.64,
                              "reset_ts": 1796831999}]}
 
+    def record(self, record_id: str) -> dict:
+        return next(r for r in self.app.subscriptions
+                    if r["id"] == record_id)
+
     def test_plan_attaches_only_to_codingplan_rows_and_caches(self):
         with mock.patch.object(ark_quota, "fetch_coding_plan",
                                return_value=self.plan_payload()) as fetch:
@@ -445,7 +454,7 @@ class PlanQuotaTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)  # second view hits the TTL cache
         rows = {r["id"]: r for r in payload["subscriptions"]}
         self.assertIn("vendor_plan", rows["s1"])
-        self.assertNotIn("vendor_plan", rows["s2"])
+        self.assertNotIn("vendor_plan", rows["s2"])  # 百炼: not a plan vendor
         plan = rows["s1"]["vendor_plan"]
         self.assertEqual(plan["plan_type"], "Pro")
         self.assertTrue(plan["fetched_at"])
@@ -455,12 +464,13 @@ class PlanQuotaTests(unittest.TestCase):
     def test_fetch_failure_reports_error_and_keeps_stale_snapshot(self):
         with mock.patch.object(ark_quota, "fetch_coding_plan",
                                return_value=self.plan_payload()):
-            self.app.vendor_plan()
+            self.app.subscriptions_payload()
         with mock.patch.object(
                 ark_quota, "fetch_coding_plan",
                 side_effect=RuntimeError("API 错误 ResourceNotFound.Plan")):
-            self.app._plan_fetch_ts = 0.0  # force a live retry
-            plan = self.app.vendor_plan()
+            for entry in self.app.plan_entries.values():
+                entry["ts"] = 0.0  # force a live retry, keep the snapshot
+            plan = self.app.plan_for(self.record("s1"))
         self.assertTrue(plan["stale"])
         self.assertIn("ResourceNotFound", plan["error"])
         self.assertEqual(plan["plan_type"], "Pro")
@@ -472,14 +482,39 @@ class PlanQuotaTests(unittest.TestCase):
         with mock.patch.object(
                 ark_quota, "fetch_coding_plan",
                 side_effect=RuntimeError("down")):
-            plan = reloaded.vendor_plan()
+            plan = reloaded.plan_for(self.record("s1"))
         self.assertEqual(plan["plan_type"], "Pro")
         self.assertEqual(plan["error"], "down")
 
     def test_no_credentials_returns_none(self):
         cfg = self.app.config
         object.__setattr__(cfg, "credentials", {})
-        self.assertIsNone(self.app.vendor_plan())
+        self.assertIsNone(self.app.plan_for(self.record("s1")))
+
+    def test_agentplan_row_uses_channel_bound_creds(self):
+        """渠道即账号：第二条火山渠道自带 AK/SK，agentplan 行绑它查 AgentPlan."""
+        raw = json.loads(json.dumps(self.app.raw))
+        raw["channels"].append({
+            "name": "火山Agent", "protocol": "openai",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "api_key": "sk-x", "models": {"kimi": "kimi"},
+            "provider": "volcengine", "mode": "payg",
+            "creds": {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "ch-sk"}})
+        self.app.apply_config(raw)
+        record = {"id": "s3", "vendor": "火山引擎_agentplan",
+                  "account": "other", "plan": "agent plan",
+                  "channels": ["火山Agent"]}
+        payload = {"plan": "AgentPlan", "plan_type": "Pro",
+                   "status": "Running",
+                   "windows": [{"level": "daily", "quota": 400.0,
+                                "used": 10.0, "reset_ts": 1794435200}]}
+        with mock.patch.object(ark_quota, "fetch_agent_plan",
+                               return_value=payload) as fetch:
+            plan = self.app.plan_for(record)
+        # Channel-bound creds win over the vendor-level slot (ak/sk).
+        fetch.assert_called_once_with("ch-ak", "ch-sk")
+        self.assertEqual(plan["plan"], "AgentPlan")
+        self.assertEqual(plan["windows"][0]["used"], 10.0)
 
 
 class RegistryTests(unittest.TestCase):
