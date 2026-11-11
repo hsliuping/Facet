@@ -1279,7 +1279,7 @@ def free_models_payload(app) -> dict:
                 usage = usage_by_model.get((channel.name, model))
                 routable = (source == "mapping" and channel.enabled
                             and not label and channel.name not in blocked
-                            and not state.get("cooling"))
+                            and not state.get("cooling") and bool(channel.api_key))
                 if routable:
                     skip = ""
                 elif not channel.enabled:
@@ -1290,6 +1290,8 @@ def free_models_payload(app) -> dict:
                     skip = "测验失败已标记失效，待复验"
                 elif state.get("cooling"):
                     skip = f"渠道冷却中：{state.get('reason') or ''}".rstrip("：")
+                elif not channel.api_key:
+                    skip = "未配置密钥"
                 else:
                     skip = "仅目录候选，未映射到渠道"
                 entries.append({
@@ -1307,6 +1309,7 @@ def free_models_payload(app) -> dict:
             "enabled": channel.enabled,
             "cooling": bool(state.get("cooling")),
             "cooldown_reason": str(state.get("reason") or ""),
+            "has_key": bool(channel.api_key),
             "excluded": paid_hidden,
             "skipped": nonchat_hidden,
             "cache": cache_by_channel.get(channel.name),

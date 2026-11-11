@@ -272,9 +272,20 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         except ValueError:
             days = 30
         if app.usage:
-            _json(h, 200, app.usage.series(days))
+            payload = app.usage.series(days)
+            stats = app.usage.model_stats(days)
+            by_name = {c.name: c for c in app.config.channels}
+            for row in stats.get("models") or []:
+                channel = by_name.get(row.get("channel"))
+                tier = ""
+                if channel is not None:
+                    tier = ((channel.tiers or {}).get(row.get("model"))
+                            or channel.tier or "")
+                row["tier"] = tier
+            payload["models"] = stats.get("models") or []
+            _json(h, 200, payload)
         else:
-            _json(h, 200, {"range": days, "days": [], "channels": [],
+            _json(h, 200, {"range": days, "days": [], "channels": [], "models": [],
                            "note": "usage recorder not enabled"})
         return True
 

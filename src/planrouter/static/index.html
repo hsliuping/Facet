@@ -472,6 +472,29 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>模型用量</h3>
+                <p class="sub-note" id="usage-models-note">按「渠道 × 模型」统计全部模型，含免费与收费</p>
+              </div>
+              <div class="actions">
+                <input id="usage-model-search" type="search" placeholder="筛选模型 / 渠道">
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>模型</th><th>渠道</th><th>类型</th><th>请求 / 失败</th>
+                    <th>Tokens</th><th>缓存命中</th><th>最近调用</th>
+                  </tr>
+                </thead>
+                <tbody id="usage-models-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>月度报表</h3>
                 <p class="sub-note" id="report-note">按订阅汇总本月成本与关联渠道用量</p>
               </div>

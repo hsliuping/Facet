@@ -37,6 +37,7 @@ const state = {
   editingSub: -1,
   providers: null,
   usage: null,
+  usageFilter: '',
   usageRange: 30,
   notify: null,
   report: null,
@@ -1414,6 +1415,53 @@ function renderUsage() {
       }).join('') : '<div class="chart-empty">上游未上报缓存字段（prompt_tokens_details.cached_tokens / cache_read_input_tokens），暂无数据</div>'}
     </div>
     <p class="hint">${esc(usage.note || '')}</p>`;
+  renderUsageModels(usage);
+}
+
+// Every (channel, model) pair seen in the usage window, free and paid alike.
+// Tier comes from the backend: a manual per-model marking wins over the
+// channel default, so a free channel can still host a paid model.
+function renderUsageModels(usage) {
+  const body = $('usage-models-body');
+  const rows = (usage && usage.models) || [];
+  const note = $('usage-models-note');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" class="sub-note">暂无模型调用记录，产生请求后自动累计。</td></tr>';
+    if (note) note.textContent = '按「渠道 × 模型」统计全部模型，含免费与收费';
+    return;
+  }
+  const free = rows.filter((r) => r.tier === 'free').length;
+  const paid = rows.filter((r) => r.tier === 'paid').length;
+  if (note) {
+    note.textContent = `近 ${usage.range} 天共 ${rows.length} 个「渠道 × 模型」组合`
+      + `（免费 ${free} · 收费 ${paid}`
+      + (rows.length - free - paid > 0 ? ` · 未标注 ${rows.length - free - paid}` : '') + '）';
+  }
+  const query = (state.usageFilter || '').trim().toLowerCase();
+  const filtered = query
+    ? rows.filter((r) => (r.model + ' ' + r.channel).toLowerCase().includes(query))
+    : rows;
+  if (!filtered.length) {
+    body.innerHTML = '<tr><td colspan="7" class="sub-note">没有匹配的模型。</td></tr>';
+    return;
+  }
+  body.innerHTML = filtered.map((r) => {
+    const cacheRate = r.input_tokens
+      ? `${(r.cached_tokens / r.input_tokens * 100).toFixed(1)}%`
+        + ` <span class="sub-note">(${Number(r.cached_tokens).toLocaleString()} / ${Number(r.input_tokens).toLocaleString()})</span>`
+      : '<span class="sub-note">上游未上报</span>';
+    const last = r.last_used
+      ? new Date(r.last_used * 1000).toLocaleString() : '—';
+    return `<tr>
+      <td><code>${esc(r.model)}</code></td>
+      <td>${esc(r.channel)}</td>
+      <td>${tierBadge(r.tier) || '<span class="sub-note">未标注</span>'}</td>
+      <td>${r.requests} / ${r.failed}</td>
+      <td>${Number(r.tokens || 0).toLocaleString()}</td>
+      <td>${cacheRate}</td>
+      <td>${last}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function loadNotifications() {
@@ -1866,6 +1914,9 @@ function freeModelStateTag(ch) {
   if (!ch.enabled) return '<span class="tag expired">已停用</span>';
   if (ch.cooling) {
     return `<span class="tag expiring">冷却中${ch.cooldown_reason ? `：${esc(ch.cooldown_reason)}` : ''}</span>`;
+  }
+  if (ch.has_key === false) {
+    return '<span class="tag unknown">未配置密钥</span>';
   }
   return '<span class="tag active">可用</span>';
 }
@@ -3340,6 +3391,11 @@ function bindEvents() {
   });
 
   $('btn-refresh-usage').onclick = () => loadUsage().catch((e) => toast(e.message, 'bad'));
+
+  $('usage-model-search').oninput = (e) => {
+    state.usageFilter = e.target.value;
+    if (state.usage) renderUsageModels(state.usage);
+  };
 
   document.querySelectorAll('.range-switch .btn').forEach((button) => {
     button.onclick = () => loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
