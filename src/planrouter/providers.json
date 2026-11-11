@@ -193,6 +193,7 @@
           "docs_url": "https://modelscope.cn/docs",
           "keys_url": "https://modelscope.cn/my/myaccesstoken",
           "models_url": "https://api-inference.modelscope.cn/v1/models",
+          "free_limits": {"rpd": 250, "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效；按魔粒额度而非 RPM 限速"},
           "tier": "free",
           "models": []
         }
@@ -299,6 +300,7 @@
           "docs_url": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
           "keys_url": "https://enter.pollinations.ai/keys",
           "models_url": "https://gen.pollinations.ai/v1/models",
+          "free_limits": {"rpm": 12, "note": "免费 Seed 档约 12 次/分钟；匿名只能拉模型清单，对话需注册 Key"},
           "tier": "free",
           "models": []
         }
@@ -315,6 +317,7 @@
           "docs_url": "https://docs.llm7.io",
           "keys_url": "https://dash.llm7.io",
           "models_url": "https://api.llm7.io/v1/models",
+          "free_limits": {"rpm": 60, "note": "注册后 60 RPM / 250 次/小时 / 10 万 tokens/24h；匿名档未公布"},
           "tier": "free",
           "models": []
         }
@@ -330,6 +333,7 @@
           "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
           "docs_url": "https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started",
           "models_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models",
+          "free_limits": {"rpm": 2, "note": "匿名 2 RPM/IP/模型，超限 429"},
           "tier": "free",
           "models": []
         }
@@ -346,6 +350,7 @@
           "docs_url": "https://docs.api.nvidia.com/nim/",
           "keys_url": "https://build.nvidia.com/settings/api-keys",
           "models_url": "https://integrate.api.nvidia.com/v1/models",
+          "free_limits": {"rpm": 40, "note": "免费层约 40 RPM"},
           "tier": "free",
           "models": []
         }
@@ -362,6 +367,7 @@
           "docs_url": "https://openrouter.ai/docs",
           "keys_url": "https://openrouter.ai/settings/keys",
           "models_url": "https://openrouter.ai/api/v1/models",
+          "free_limits": {"rpm": 20, "rpd": 50, "note": "未充值 20 RPM / 50 次/天；充 $10 后 1,000 次/天"},
           "tier": "paid",
           "models": []
         }
@@ -378,6 +384,7 @@
           "docs_url": "https://ai.google.dev/gemini-api/docs",
           "keys_url": "https://aistudio.google.com/apikey",
           "models_url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
+          "free_limits": {"note": "免费层 5–15 RPM、20–1,500 次/天，随模型不同"},
           "tier": "free",
           "models": []
         }

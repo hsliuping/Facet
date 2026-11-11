@@ -1290,6 +1290,10 @@ def free_models_payload(app) -> dict:
     for channel in app.config.channels:
         if channel.tier != "free":
             continue
+        vendor = next((p for p in getattr(app, "providers", None) or []
+                       if isinstance(p, dict) and p.get("id") == channel.provider),
+                      {})
+        mode_meta = ((vendor.get("modes") or {}).get(channel.mode) or {})
         state = snapshot.get(channel.name) or {}
         mapped, paid_hidden, nonchat_hidden = _free_mapping_values(app, channel)
         catalog = app.store.catalogs.get(channel.name) or {}
@@ -1337,6 +1341,12 @@ def free_models_payload(app) -> dict:
         channels.append({
             "name": channel.name,
             "provider": channel.provider,
+            "provider_name": str(vendor.get("name") or channel.provider),
+            "mode": channel.mode,
+            "docs_url": str(mode_meta.get("docs_url") or ""),
+            "rate": {"rpm": channel.rate.rpm, "rpd": channel.rate.rpd,
+                     "tpm": channel.rate.tpm, "tpd": channel.rate.tpd},
+            "free_limits": mode_meta.get("free_limits") or None,
             "enabled": channel.enabled,
             "cooling": bool(state.get("cooling")),
             "cooldown_reason": str(state.get("reason") or ""),
@@ -1355,6 +1365,15 @@ def free_models_payload(app) -> dict:
         "dead": sum(1 for entry in everything if entry["dead"]),
         "quota_exhausted": sum(1 for entry in everything
                                if (entry["quota"] or {}).get("exhausted")),
+        "quota_warning": sum(1 for entry in everything
+                             if (entry["quota"] or {}).get("warning")),
+        "quota_unsynced": sum(1 for channel in channels
+                              if channel["quota_sync"]),
+        "rate_limited": sum(
+            1 for channel in channels
+            if channel["free_limits"] or any(
+                (channel["rate"] or {}).get(k) for k in ("rpm", "rpd", "tpm", "tpd"))
+            for entry in channel["models"] if entry["routable"]),
         "queue": len(queue),
         "tested": sum(1 for entry in everything if entry["test"]),
         "passed": sum(1 for entry in everything if (entry["test"] or {}).get("ok")),

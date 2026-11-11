@@ -575,6 +575,39 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         payload = maint.free_models_payload(self.app)
         self.assertIn("同步失败", payload["channels"][0]["quota_sync"])
 
+    def test_payload_carries_vendor_free_limits_and_counts(self):
+        self.app.providers = [{
+            "id": "volcengine", "name": "火山引擎方舟",
+            "modes": {"payg": {
+                "label": "按量付费", "protocol": "openai",
+                "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                "tier": "paid", "models": [],
+                "docs_url": "https://www.volcengine.com/docs/82379",
+                "free_quota_cmd": ["facet-ark-quota"],
+                "free_limits": {"rpm": 40, "note": "免费层约 40 RPM"},
+            }},
+        }]
+        payload = maint.free_models_payload(self.app)
+        channel = payload["channels"][0]
+        self.assertEqual(channel["provider_name"], "火山引擎方舟")
+        self.assertEqual(channel["mode"], "payg")
+        self.assertEqual(channel["docs_url"],
+                         "https://www.volcengine.com/docs/82379")
+        self.assertEqual(channel["free_limits"],
+                         {"rpm": 40, "note": "免费层约 40 RPM"})
+        # Gateway-side throttling stays distinct from the vendor's own caps.
+        self.assertIsNone(channel["rate"]["rpm"])
+        self.assertEqual(payload["summary"]["quota_unsynced"], 1)
+        routable = [m for m in channel["models"] if m["routable"]]
+        self.assertEqual(payload["summary"]["rate_limited"], len(routable))
+
+    def test_payload_counts_quota_warning(self):
+        self.app.usage.record("火山免费", True, tokens=400000, model=WIRE)
+        payload = maint.free_models_payload(self.app)
+        self.assertGreaterEqual(payload["summary"]["quota_warning"], 1)
+        self.assertTrue(any((m["quota"] or {}).get("warning")
+                            for m in payload["channels"][0]["models"]))
+
 
 if __name__ == "__main__":
     unittest.main()

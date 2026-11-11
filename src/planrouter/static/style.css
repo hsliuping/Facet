@@ -118,6 +118,7 @@ body {
 .metric .value { font-size: 24px; font-weight: 650; margin-top: 4px; letter-spacing: .5px; }
 .metric .value.ok { color: var(--ok); }
 .metric .value.warn { color: var(--warn); }
+.metric .value.bad { color: var(--bad); }
 
 .panel { display: none; }
 .panel.active { display: block; animation: fade .22s ease; }
@@ -423,6 +424,19 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .vendor-mode-fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 12px; margin: 0 0 12px; }
 .vendor-mode-fieldset legend { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 0 4px; }
 .vendor-mode-foot { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; flex-wrap: wrap; }
+
+/* 免费模型页：一个平铺表，按「现在能不能用」排序 */
+.free-toolbar { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.free-toolbar .filter-row { margin: 0; flex: 1; }
+.free-toolbar .filter-input { max-width: 300px; margin: 0; margin-left: auto; }
+.free-quota { min-width: 178px; line-height: 1.6; }
+.free-quota .bar { width: 100%; height: 6px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 5px; }
+.free-quota .bar > i { display: block; height: 100%; background: var(--ok); }
+.free-quota .bar > i.warn { background: var(--warn); }
+.free-quota .bar > i.bad { background: var(--bad); }
+.free-table td { vertical-align: top; white-space: normal; }
+.free-rate-note { max-width: 320px; line-height: 1.6; margin-top: 2px; }
+.days-left.active { color: var(--ok); }
 
 /* Narrow screens: the sidebar docks to the top as a horizontal scroll strip.
    Group captions drop out; the menu stays scannable by its items alone. */

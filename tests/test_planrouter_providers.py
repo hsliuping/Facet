@@ -254,6 +254,29 @@ class NormalizeVendorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pmod.normalize_vendor(entry)
 
+    def test_free_limits_are_normalized(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["free_limits"] = {
+            "rpm": 40, "rpd": 250, "note": " 免费层约 40 RPM ",
+        }
+        mode = pmod.normalize_vendor(entry)["modes"]["payg"]
+        self.assertEqual(mode["free_limits"],
+                         {"rpm": 40, "rpd": 250, "note": "免费层约 40 RPM"})
+
+    def test_empty_free_limits_become_none(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["free_limits"] = {"note": "   "}
+        self.assertIsNone(
+            pmod.normalize_vendor(entry)["modes"]["payg"]["free_limits"])
+
+    def test_bad_free_limits_raise(self):
+        for value in ("nope", {"rpm": 0}, {"rpm": -5}, {"rpm": "40"},
+                      {"rpm": True}, {"note": 7}):
+            entry = valid_vendor()
+            entry["modes"]["payg"]["free_limits"] = value
+            with self.assertRaises(ValueError):
+                pmod.normalize_vendor(entry)
+
 
 class DeleteOverlayEntryTests(unittest.TestCase):
     def setUp(self):

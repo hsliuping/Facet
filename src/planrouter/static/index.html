@@ -19,6 +19,7 @@
       <span class="badge" id="conn-badge">连接中</span>
       <nav class="menu">
         <button class="menu-item active" data-tab="dashboard">仪表板</button>
+        <button class="menu-item" data-tab="free">免费模型</button>
         <div class="menu-group">渠道与路由</div>
         <button class="menu-item" data-tab="channels">渠道配置</button>
         <button class="menu-item" data-tab="routes">路由链</button>
@@ -62,6 +63,18 @@
           </div>
           <section class="summary" id="dash-summary"></section>
           <div class="dash-grid">
+            <div class="card">
+              <div class="card-top">
+                <div>
+                  <h3>免费模型</h3>
+                  <p class="sub-note">现在能用哪些、额度剩多少、限速多少</p>
+                </div>
+                <div class="actions">
+                  <button class="btn small" id="btn-dash-free">查看全部</button>
+                </div>
+              </div>
+              <div class="dash-kv" id="dash-free"></div>
+            </div>
             <div class="card">
               <div class="card-top">
                 <div>
@@ -114,6 +127,40 @@
             </div>
             <div id="dash-trend" style="margin-top:14px"></div>
           </div>
+        </section>
+
+        <section class="panel" id="panel-free">
+          <div class="panel-head">
+            <div>
+              <h2>免费模型</h2>
+              <p>所有免费渠道的模型集中在这里：能不能用、额度还剩多少、厂家限速多少、最近用了多少。额度达到上限的模型会被网关立即停止路由，不会悄悄转成按量计费。</p>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="btn-refresh-free-models">刷新</button>
+              <button class="btn" id="btn-free-align">立即对齐厂家额度</button>
+            </div>
+          </div>
+          <section class="summary" id="free-summary"></section>
+          <div id="free-alerts"></div>
+          <div class="free-toolbar">
+            <div class="filter-row" id="free-filters"></div>
+            <input type="search" id="free-filter" class="filter-input"
+              placeholder="搜索模型 / 厂家 / 渠道…" aria-label="搜索免费模型">
+          </div>
+          <div class="table-wrap">
+            <table class="status-table free-table">
+              <thead>
+                <tr>
+                  <th>模型</th><th>免费来源</th><th>状态</th><th>免费额度</th>
+                  <th>限速（厂家免费档 / 本渠道）</th><th>近 30 天</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="free-body">
+                <tr><td colspan="7" class="sub-note">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="hint">怎么用：把工具的 <code>model</code> 填成下表的模型名即可直连；或填 <code>facet-cheap</code>，让网关在可用免费模型里自动挑一个。只有状态为「可用 / 额度紧张」的模型才会进入候选。「厂家额度未同步」时按本地用量估算，可能滞后于厂家真实余额，建议点「立即对齐厂家额度」。</p>
         </section>
 
         <section class="panel" id="panel-channels">
@@ -379,19 +426,6 @@
               </div>
             </div>
             <div id="maintenance-body"></div>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>免费模型</h3>
-                <p class="sub-note" id="free-models-note">所有 tier=free 渠道可捐入维护队列的免费模型；每个模型标注是否「参与路由」（已映射、渠道启用未冷却、无失效标记）、最近考题结果、近 30 天调用次数 / token 消耗 / 缓存命中率。混合目录（如 OpenRouter）只认 :free 条目，非免费映射不进候选也不列出。点「测试」单独实测一个模型，通过者自动进入维护队列</p>
-              </div>
-              <div class="actions">
-                <button class="btn small ghost" id="btn-refresh-free-models">刷新</button>
-              </div>
-            </div>
-            <div id="maintenance-free"></div>
           </div>
 
           <div class="card settings-card">

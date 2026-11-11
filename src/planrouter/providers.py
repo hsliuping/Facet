@@ -47,7 +47,9 @@ INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 # and the credential-env declarations ship with the package registry (vendor
 # CLI knowledge), so an older overlay entry written before the field existed
 # must not erase it.
-INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota")
+INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "free_quota", "free_limits")
+
+FREE_LIMIT_KEYS = ("rpm", "rpd", "tpm", "tpd")
 
 
 def _merge(builtin: list, overlay: list) -> list:
@@ -186,6 +188,7 @@ def normalize_vendor(entry) -> dict:
             raise ValueError(f"模式 {key} 的 {exc}") from None
         free_quota = ({"tokens": quota.tokens, "requests": quota.requests,
                        "period": quota.period} if quota else None)
+        limits = _optional_limits(mode, "free_limits", key)
         modes[key] = {
             "label": label.strip(),
             "protocol": protocol,
@@ -196,10 +199,42 @@ def normalize_vendor(entry) -> dict:
             "models_url": models_url,
             "free_quota_cmd": quota_cmd,
             "free_quota": free_quota,
+            "free_limits": limits,
             "credential_envs": credential_envs,
             "models": models,
         }
     return {"id": vendor_id, "name": name.strip(), "modes": modes}
+
+
+def _optional_limits(mode: dict, key: str, mode_key: str) -> dict | None:
+    """Read the vendor's free-tier rate limits (rpm / rpd / tpm / tpd + note).
+
+    These are reference numbers documented by the vendor, not enforcement
+    settings — the channel's own ``rate`` object is what the gateway enforces.
+    Each cap must be a positive integer; a mode without any cap and without
+    a note yields None so the console can say "未收录".
+    """
+    value = mode.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"模式 {mode_key} 的 {key} 必须是 JSON 对象")
+    out: dict = {}
+    for cap in FREE_LIMIT_KEYS:
+        raw = value.get(cap)
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+            raise ValueError(f"模式 {mode_key} 的 {key}.{cap} 必须是正整数")
+        out[cap] = raw
+    note = value.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise ValueError(f"模式 {mode_key} 的 {key}.note 必须是字符串")
+        note = note.strip()
+        if note:
+            out["note"] = note
+    return out or None
 
 
 def _optional_url(mode: dict, key: str, mode_key: str) -> str:

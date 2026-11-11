@@ -42,6 +42,8 @@ const state = {
   notify: null,
   report: null,
   maintenance: null,
+  freeFilter: 'all',
+  freeQuery: '',
   maintlog: null,
   freealignLogs: null,
   backups: null,
@@ -556,7 +558,7 @@ function renderBanner() {
 
 // One sidebar entry per page; the menu and every panel share this key space.
 const PAGE_TITLES = {
-  dashboard: '仪表板',
+  dashboard: '仪表板', free: '免费模型',
   channels: '渠道配置', routes: '路由链', models: '模型接入',
   subscriptions: '套餐订阅', vendors: '厂家管理',
   status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
@@ -571,6 +573,7 @@ function switchPage(name) {
   $('page-title').textContent = PAGE_TITLES[name] || name;
   // Each page loads its own data on entry, so opening the console stays cheap.
   if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
+  if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
   if (name === 'models') renderModels();
   if (name === 'status') loadState().catch(() => {});
   if (name === 'maintenance') {
@@ -635,9 +638,14 @@ function renderDashboard() {
   const cost = Object.entries(subs.monthly_cost || {})
     .map(([code, amount]) => `${amount} ${code}`).join(' / ') || '—';
   const quotaAlerts = (subs.quota_alerts || []).length;
+  const free = (state.maintenance && state.maintenance.free_models) || {};
+  const freeSummary = free.summary || {};
+  const freeUsable = Math.max(0, (freeSummary.routable || 0) - (freeSummary.quota_warning || 0));
 
   const kpis = [
     ['可用渠道', channels.length ? `${ok} / ${channels.length}` : '0', ok ? 'ok' : ''],
+    ['可用免费模型', `${freeUsable} / ${freeSummary.models || 0}`,
+      freeUsable ? 'ok' : (freeSummary.models ? 'warn' : '')],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests.toLocaleString(), ''],
     ['累计 Tokens', tokens.toLocaleString(), ''],
@@ -646,6 +654,20 @@ function renderDashboard() {
   ];
   $('dash-summary').innerHTML = kpis.map(([label, value, cls]) =>
     `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div></div>`).join('');
+
+  // 免费模型速览：直接回答「现在能用哪些免费模型」。
+  const freeWarn = freeSummary.quota_warning || 0;
+  const freeDead = freeSummary.quota_exhausted || 0;
+  $('dash-free').innerHTML = [
+    dashRow('现在能用', `<span class="days-left ${freeUsable ? 'active' : 'expired'}">`
+      + `${freeUsable} 个模型</span>`),
+    dashRow('额度紧张', freeWarn
+      ? `<span class="days-left expiring">${freeWarn} 个（≥80%）</span>` : '0 个'),
+    dashRow('额度用完', freeDead
+      ? `<span class="days-left expired">${freeDead} 个（已停止路由）</span>` : '0 个'),
+    dashRow('厂家额度', freeSummary.quota_unsynced
+      ? `<span class="days-left expiring">${freeSummary.quota_unsynced} 个渠道未同步</span>` : '已同步'),
+  ].join('');
 
   // 运行健康（稳定）：failover 面板。
   $('dash-health').innerHTML = [
@@ -1805,7 +1827,6 @@ function renderMaintenance() {
         + (r.marked_at ? ` · 标记于 ${new Date(r.marked_at * 1000).toLocaleString()}` : ''))).join(''));
   }
   $('maintenance-probe').innerHTML = probeHtml.join('');
-  renderFreeModels(data.free_models);
   const reports = data.reports || [];
   const body = $('maintenance-body');
   if (!reports.length) {
@@ -1910,91 +1931,238 @@ $('btn-test-maintenance-models').onclick = async (e) => {
   }
 };
 
-function freeModelStateTag(ch) {
-  if (!ch.enabled) return '<span class="tag expired">已停用</span>';
-  const models = ch.models || [];
-  if (models.length && models.every((m) => (m.quota || {}).exhausted)) {
-    return '<span class="tag expired">免费额度已用完</span>';
-  }
-  if (ch.cooling) {
-    return `<span class="tag expiring">冷却中${ch.cooldown_reason ? `：${esc(ch.cooldown_reason)}` : ''}</span>`;
-  }
-  if (ch.has_key === false) {
-    return '<span class="tag unknown">未配置密钥</span>';
-  }
-  return '<span class="tag active">可用</span>';
+// ---- 免费模型页 -----------------------------------------------------------
+// One flat table over every free channel: the previous per-channel cards hid
+// quota and rate limits inside maintenance noise. Rows are sorted by "can I use
+// it right now", so the answer to "哪些免费模型现在能用" is the first screen.
+const FREE_STATUS = {
+  ok: ['可用', 'active'], warn: ['额度紧张', 'warn'],
+  exhausted: ['额度用完', 'expired'], cooling: ['冷却中', 'expiring'],
+  nokey: ['未配密钥', 'unknown'], dead: ['已失效', 'expired'],
+  disabled: ['已停用', 'off'], catalog: ['仅目录未映射', 'unknown'],
+  other: ['不可用', 'unknown'],
+};
+const FREE_RANK = { ok: 0, warn: 1, exhausted: 2, cooling: 3, nokey: 4,
+  dead: 5, disabled: 6, catalog: 7, other: 8 };
+const FREE_PERIOD = { total: '总计', month: '每月', day: '每日' };
+const FREE_RESET = {
+  total: '额度用完不重置',
+  month: '每月 1 日重置',
+  day: '次日 0 点重置',
+};
+
+function freeModelState(m, ch) {
+  const q = m.quota || null;
+  if (m.routable) return q && q.warning ? 'warn' : 'ok';
+  if (q && q.exhausted) return 'exhausted';
+  if (!ch.enabled) return 'disabled';
+  if (ch.cooling) return 'cooling';
+  if (!ch.has_key) return 'nokey';
+  if (m.dead) return 'dead';
+  if (m.source === 'catalog') return 'catalog';
+  return 'other';
 }
 
-// Free-model overview: every tier=free channel with the models it could
-// donate to the maintenance pool, plus a per-model manual quiz button.
-function renderFreeModels(free) {
-  const box = $('maintenance-free');
-  const channels = (free && free.channels) || [];
-  if (!channels.length) {
-    box.innerHTML = '<p class="sub-note">没有 tier=free 的渠道。在「渠道」页把渠道的套餐设为免费后，'
-      + '它的模型才能进入维护模型候选。</p>';
+function freeRateCaps(limits) {
+  if (!limits) return '';
+  const bits = [];
+  if (limits.rpm) bits.push(`${limits.rpm} RPM`);
+  if (limits.rpd) bits.push(`${limits.rpd} 次/天`);
+  if (limits.tpm) bits.push(`${Number(limits.tpm).toLocaleString()} tok/分`);
+  if (limits.tpd) bits.push(`${Number(limits.tpd).toLocaleString()} tok/天`);
+  return bits.join(' · ');
+}
+
+function freeRows(free) {
+  const rows = [];
+  (free.channels || []).forEach((ch) => {
+    (ch.models || []).forEach((m) => {
+      rows.push({ ch, m, status: freeModelState(m, ch) });
+    });
+  });
+  return rows.sort((a, b) => FREE_RANK[a.status] - FREE_RANK[b.status]
+    || a.ch.name.localeCompare(b.ch.name) || a.m.model.localeCompare(b.m.model));
+}
+
+function freeQuotaCell(q) {
+  if (!q) return '<span class="sub-note">未设本地额度硬门禁<br>以厂家额度 / 限流为准</span>';
+  const ratio = Math.min(1, Math.max(0, Number(q.ratio || 0)));
+  const tone = q.exhausted ? 'bad' : q.warning ? 'warn' : '';
+  const left = (remain) => (remain == null ? ''
+    : ` · 剩 ${Number(remain).toLocaleString()}`);
+  const lines = [];
+  if (q.limit_tokens != null) {
+    lines.push(`${Number(q.used_tokens || 0).toLocaleString()} / `
+      + `${Number(q.limit_tokens || 0).toLocaleString()} tok`
+      + left(q.remaining_tokens));
+  }
+  if (q.limit_requests != null) {
+    lines.push(`${Number(q.used_requests || 0).toLocaleString()} / `
+      + `${Number(q.limit_requests).toLocaleString()} 次`
+      + left(q.remaining_requests));
+  }
+  const period = FREE_PERIOD[q.period] || q.period || '';
+  const reset = FREE_RESET[q.period] || '';
+  const badge = q.exhausted ? '<span class="tag expired">已用完</span>'
+    : q.warning ? '<span class="tag expiring">临近上限</span>' : '';
+  return `<div class="free-quota"><div>${lines.join('<br>')}</div>`
+    + `<div class="bar"><i class="${tone}" style="width:${(ratio * 100).toFixed(1)}%"></i></div>`
+    + `<div class="sub-note">${esc(period)}${reset ? ` · ${reset}` : ''}`
+    + ` · ${q.source === 'provider_baseline' ? '厂家基础额度' : '渠道配置'} ${badge}</div></div>`;
+}
+
+function freeRateCell(ch) {
+  const vendor = freeRateCaps(ch.free_limits);
+  const own = freeRateCaps(ch.rate);
+  const note = (ch.free_limits || {}).note || '';
+  const doc = ch.docs_url
+    ? ` <a class="provider-link" href="${esc(ch.docs_url)}" target="_blank" rel="noopener">文档</a>` : '';
+  return `<div title="${esc(note)}"><span class="sub-note">厂家</span> `
+    + (vendor ? esc(vendor) : '<span class="sub-note">未收录</span>') + `</div>`
+    + `<div class="sub-note">网关 ${own ? esc(own) : '未配置限流'}${doc}</div>`
+    + (note ? `<div class="sub-note free-rate-note">${esc(note)}</div>` : '');
+}
+
+function renderFreePage(free) {
+  const rows = freeRows(free);
+  const summary = free.summary || {};
+  const count = (keys) => rows.filter((r) => keys.includes(r.status)).length;
+  const ok = count(['ok']);
+  const warn = count(['warn']);
+  const exhausted = count(['exhausted']);
+  const other = rows.length - ok - warn - exhausted;
+
+  const metrics = [
+    ['免费模型', rows.length, ''],
+    ['现在能用', ok, ok ? 'ok' : 'warn'],
+    ['额度紧张', warn, warn ? 'warn' : ''],
+    ['额度用完', exhausted, exhausted ? 'bad' : ''],
+    ['其他不可用', other, ''],
+    ['厂家额度未同步', summary.quota_unsynced || 0, summary.quota_unsynced ? 'warn' : ''],
+  ];
+  $('free-summary').innerHTML = metrics.map(([label, value, cls]) =>
+    `<div class="metric"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div></div>`).join('');
+
+  const unsynced = (free.channels || []).filter((ch) => ch.quota_sync);
+  $('free-alerts').innerHTML = unsynced.map((ch) =>
+    `<div class="banner"><span class="banner-title">${esc(ch.name)} 额度未同步</span>`
+    + `<span class="banner-items">${esc(ch.quota_sync)}</span>`
+    + '<button class="btn small banner-align">对齐</button></div>').join('');
+
+  const filters = [
+    ['all', '全部', rows.length],
+    ['ok', '可用', ok],
+    ['warn', '额度紧张', warn],
+    ['exhausted', '额度用完', exhausted],
+    ['other', '其他不可用', other],
+  ];
+  $('free-filters').innerHTML = filters.map(([key, label, n]) =>
+    `<button class="btn small ${state.freeFilter === key ? 'active' : ''}" data-free-filter="${key}">`
+    + `${label} ${n}</button>`).join('');
+
+  const q = (state.freeQuery || '').trim().toLowerCase();
+  const visible = rows.filter((r) => {
+    if (state.freeFilter === 'ok' && r.status !== 'ok') return false;
+    if (state.freeFilter === 'warn' && r.status !== 'warn') return false;
+    if (state.freeFilter === 'exhausted' && r.status !== 'exhausted') return false;
+    if (state.freeFilter === 'other' && (r.status === 'ok' || r.status === 'warn'
+      || r.status === 'exhausted')) return false;
+    if (!q) return true;
+    return (r.m.model + ' ' + r.ch.name + ' ' + (r.ch.provider_name || '') + ' '
+      + (r.ch.provider || '')).toLowerCase().includes(q);
+  });
+
+  const box = $('free-body');
+  if (!rows.length) {
+    box.innerHTML = '<tr><td colspan="7" class="sub-note">还没有免费渠道。到「渠道配置」把渠道的套餐设为「免费」，'
+      + '它的模型就会出现在这里。</td></tr>';
     return;
   }
-  const summary = (free && free.summary) || {};
-  const head = summary.models ? `<p class="sub-note">免费池 · 近 ${summary.days} 天：`
-    + `可路由 ${summary.routable} 个模型（维护队列 ${summary.queue} 个）`
-    + ` · 失效标记 ${summary.dead} · 额度用完 ${summary.quota_exhausted || 0}`
-    + ` · 测验通过 ${summary.passed}/${summary.tested}`
-    + ` · 调用过 ${summary.used} 个 · 合计 ${Number(summary.tokens || 0).toLocaleString()} tokens。`
-    + `「可路由」= 已映射到渠道且渠道启用、未冷却、无失效标记、免费额度未用完；目录 :free 模型需先映射才会被真实请求调用。</p>`
-    : '';
-  box.innerHTML = head + channels.map((ch) => {
-    const cache = ch.cache || {};
-    const cacheText = cache.input_tokens
-      ? ` · 缓存命中 ${(cache.cached_tokens / cache.input_tokens * 100).toFixed(1)}%` : '';
-    const routable = (ch.models || []).filter((m) => m.routable).length;
-    const rows = (ch.models || []).map((m) => {
-      const tag = m.test ? (m.test.ok ? '通过' : '未通过') : '未测';
-      const cls = m.test ? (m.test.ok ? 'active' : 'expired') : 'unknown';
-      const err = m.test && !m.test.ok ? ` · ${esc(m.test.error || '答案不符')}` : '';
-      const route = m.routable
-        ? ' <span class="tag active">参与路由</span>'
-        : ` <span class="tag expired">不参与路由</span> <span class="sub-note">${esc(m.skip_reason || '')}</span>`;
-      const use = m.usage || {};
-      const useText = use.requests
-        ? `调用 ${use.requests} 次 · ${Number(use.tokens || 0).toLocaleString()} tok`
-          + (use.input_tokens ? ` · 缓存 ${(use.cached_tokens / use.input_tokens * 100).toFixed(1)}%` : '')
-          + (use.last_used ? ` · 最近 ${new Date(use.last_used * 1000).toLocaleString()}` : '')
-        : `近 ${summary.days || 30} 天未调用`;
-      const q = m.quota || null;
-      let quotaText = '';
-      if (q && q.limit_tokens != null) {
-        const state = q.exhausted ? '（已用完）' : q.warning ? '（临近上限）' : '';
-        quotaText = ` · 免费额度 ${Number(q.used_tokens || 0).toLocaleString()}`
-          + `/${Number(q.limit_tokens || 0).toLocaleString()} tok${state}`;
-      } else if (q && q.limit_requests != null) {
-        const state = q.exhausted ? '（已用完）' : q.warning ? '（临近上限）' : '';
-        quotaText = ` · 免费额度 ${q.used_requests || 0}/${q.limit_requests} 次${state}`;
-      }
-      return maintItem(tag, cls,
-        `<code>${esc(m.model)}</code>${m.in_queue ? ' <span class="tag active">队列中</span>' : ''}${route}`
-        + ` <span class="sub-note">${m.source === 'mapping' ? '渠道映射' : '目录 :free'}`
-        + ` · ${useText}${quotaText}${err}</span>`
-        + ` <button class="btn small ghost free-test" data-channel="${esc(ch.name)}"`
-        + ` data-model="${esc(m.model)}">测试</button>`);
-    }).join('');
-    return `<div class="maint-report"><div class="maint-head"><strong>${esc(ch.name)}</strong>`
-      + `${channelTierBadge(ch.name)} ${freeModelStateTag(ch)}`
-      + `<span class="sub-note">${(ch.models || []).length} 个模型 · ${routable} 个可路由`
-      + cacheText
-      + (ch.excluded ? ` · ${ch.excluded} 个非免费映射未列出` : '')
-      + (ch.skipped ? ` · ${ch.skipped} 个非对话模型未列出` : '') + `</span>`
-      + (ch.quota_sync ? ` <span class="tag expiring">额度未同步</span>`
-        + ` <span class="sub-note">${esc(ch.quota_sync)}</span>` : '')
-      + '</div>'
-      + (rows || '<p class="sub-note">无渠道映射，目录中也没有 :free 模型。</p>')
-      + '</div>';
+  if (!visible.length) {
+    box.innerHTML = '<tr><td colspan="7" class="sub-note">没有符合筛选条件的模型。</td></tr>';
+    return;
+  }
+
+  box.innerHTML = visible.map(({ ch, m, status }) => {
+    const [label, cls] = FREE_STATUS[status] || FREE_STATUS.other;
+    const use = m.usage || {};
+    const useText = use.requests
+      ? `${Number(use.requests).toLocaleString()} 次 · ${Number(use.tokens || 0).toLocaleString()} tok`
+        + (use.cached_tokens && use.input_tokens
+          ? ` · 缓存 ${(use.cached_tokens / use.input_tokens * 100).toFixed(1)}%` : '')
+      : '<span class="sub-note">未调用</span>';
+    const reason = status === 'ok' ? '' : `<div class="sub-note">${esc(m.skip_reason || '')}</div>`;
+    return '<tr>'
+      + `<td><code>${esc(m.model)}</code> <button class="btn small ghost free-copy" `
+      + `title="复制模型名" data-model="${esc(m.model)}">复制</button>`
+      + (m.in_queue ? ' <span class="tag active">队列中</span>' : '') + '</td>'
+      + `<td><strong>${esc(ch.provider_name || ch.provider)}</strong>`
+      + `<div class="sub-note">${esc(ch.name)}${ch.mode ? ` · ${esc(ch.mode)}` : ''}</div></td>`
+      + `<td><span class="tag ${cls}">${label}</span>${reason}</td>`
+      + `<td>${freeQuotaCell(m.quota)}</td>`
+      + `<td>${freeRateCell(ch)}</td>`
+      + `<td>${useText}</td>`
+      + `<td><button class="btn small ghost free-test" data-channel="${esc(ch.name)}" `
+      + `data-model="${esc(m.model)}">测试</button></td>`
+      + '</tr>';
   }).join('');
 }
 
-$('btn-refresh-free-models').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
+async function loadFreeModels() {
+  const data = await api('/api/maintenance');
+  state.maintenance = data;
+  renderFreePage((data && data.free_models) || {});
+}
 
-$('maintenance-free').addEventListener('click', async (e) => {
+$('btn-refresh-free-models').onclick = () => loadFreeModels().catch((e) => toast(e.message, 'bad'));
+
+$('free-filters').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-free-filter]');
+  if (!b) return;
+  state.freeFilter = b.dataset.freeFilter;
+  renderFreePage((state.maintenance && state.maintenance.free_models) || {});
+});
+
+$('free-filter').addEventListener('input', (e) => {
+  state.freeQuery = e.target.value;
+  renderFreePage((state.maintenance && state.maintenance.free_models) || {});
+});
+
+$('free-alerts').addEventListener('click', (e) => {
+  if (!e.target.closest('.banner-align')) return;
+  $('btn-free-align').click();
+});
+
+$('btn-free-align').onclick = async (e) => {
+  const b = e.target;
+  b.disabled = true;
+  b.textContent = '对齐中…';
+  try {
+    const r = await api('/api/freealign/run', { method: 'POST' });
+    const changed = Object.keys(r.patch || {}).length;
+    const alerts = (r.alerts || []).length;
+    toast(`额度对齐完成：${changed} 个渠道映射更新${alerts ? ` · ${alerts} 条告警` : ''}`,
+      alerts ? 'warn' : 'ok');
+    await loadFreeModels();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = '立即对齐厂家额度';
+  }
+};
+
+$('free-body').addEventListener('click', async (e) => {
+  const copy = e.target.closest('.free-copy');
+  if (copy) {
+    try {
+      await navigator.clipboard.writeText(copy.dataset.model);
+      toast(`已复制 ${copy.dataset.model}`, 'ok');
+    } catch (_) {
+      toast('复制失败，请手动选中模型名', 'warn');
+    }
+    return;
+  }
   const b = e.target.closest('.free-test');
   if (!b) return;
   b.disabled = true;
@@ -2006,13 +2174,15 @@ $('maintenance-free').addEventListener('click', async (e) => {
     });
     toast(r.ok ? `通过：${r.model} 提取命中 ${r.hit}/${r.expected}，已进入维护队列`
       : `未通过：${r.model} · ${r.error || '答案不符'}`, r.ok ? 'ok' : 'warn');
-    await loadMaintenance();
+    await loadFreeModels();
   } catch (err) {
     toast(err.message, 'bad');
     b.disabled = false;
     b.textContent = '测试';
   }
 });
+
+$('btn-dash-free').onclick = () => switchPage('free');
 
 $('btn-run-maintenance').onclick = async (e) => {
   const b = e.target;
