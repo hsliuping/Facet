@@ -54,6 +54,9 @@ services:
       # headless deploys — UI-configured credentials win when both exist.
       VOLC_ACCESSKEY: "${VOLC_ACCESSKEY:-}"
       VOLC_SECRETKEY: "${VOLC_SECRETKEY:-}"
+      # `bl` keeps its console-login token here; /data is the bind mount, so a
+      # login inside the container survives image rebuilds.
+      BAILIAN_CONFIG_DIR: "/data/.bailian"
       # Published DSH port, so the entrypoint advertises a matching URL.
       DSH_PORT: "${DSH_PORT:-3081}"
     volumes:

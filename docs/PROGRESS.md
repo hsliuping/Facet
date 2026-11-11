@@ -109,6 +109,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-11 | 镜像内置百炼 CLI（`bl 2.8.3`）：免费额度对齐依赖 `bl usage free`，此前镜像只有 Node/DSH、没装 `bailian-cli`，定时任务恒报「命令不存在（bl）」。Dockerfile 在 Node 阶段 `npm install --prefix /opt/bailian` 后只拷运行目录并软链 `/usr/local/bin/bl`（`BAILIAN_CLI_VERSION` 可覆盖）；compose 增加 `BAILIAN_CONFIG_DIR=/data/.bailian`，让一次性 `bl auth login --console` 的令牌落在持久卷里、重建镜像不丢。火山侧失败不是打包问题——`facet-ark-quota` 本就在 wheel 内，缺的是 IAM AK/SK；已在控制台 credentials 填入后对齐成功，`doubao-seed-2-1-lite-260915` 已按厂家真实额度摘除，百炼待控制台授权后即可恢复 |
 | 2026-11-11 | 免费额度硬限额（`7a5881c`）：火山 `doubao-seed-2-1-lite-260915` 免费额度早已耗尽（本地 82 次 / 12,406,394 tokens）却仍被路由并静默转按量计费。现按「厂家基础额度（火山 500k / 百炼 1M tokens，渠道 `free_quota` 可覆盖 tokens·requests·total·month·day）+ 本地按 (渠道, 模型) 用量」判定，任一上限达到即从候选剔除、不回退（503 带 `free_quota_skipped`），免费池 / 维护巡检 / 直达测验同样跳过；用量达 80% 预警、面板展示「免费额度已用完」与「额度未同步」告警（厂家额度命令未跑或失败时提示本地估算可能偏差）。线上实测：该模型 503 `free quota exhausted`，上游零调用 |
 | 2026-11-11 | 厂家模型清单 LLM 提取降噪：`build_plan_models_prompt` 加「禁止改写分隔符」规则与示例（不得把 `doubao-seed-2.0-mini` 写成 `doubao-seed-2-0-mini`）；`_refresh_provider_mode` 采纳前对已有清单做归一化（`.`/`-`/`_` 等价）比对，LLM 提取的拼写变体自动映射回已有原始拼写，避免变体覆盖正确写法；tab 跳回观察项与「接下来」中对应条目移除（用户确认 tab 不再使用） |
 | 2026-11-11 | 控制台渠道行新增「复制」按钮（`210e2c5`）：一键整体克隆渠道（端点、真实密钥或 `env:` 引用、模型映射、限流、计费标注），新名自动 `-copy` 去重并紧跟源渠道落盘热生效；克隆不继承冷却状态、不自动加入路由链；端到端验证通过后清理 |

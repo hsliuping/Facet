@@ -10,6 +10,10 @@ ARG BASE_IMAGE=python:3.12-slim
 # builds can point NODE_IMAGE at a locally cached node:22-slim.
 ARG NODE_IMAGE=docker.m.daocloud.io/library/node:22-slim
 ARG DSH_VERSION=0.2.2-rc.1
+# Bailian CLI (`bl`) that the free-align sweep shells out to for
+# `bl usage free`. Auth is an interactive console login, so the state lives
+# in ~/.bailian (= /data/.bailian, inside the persisted data volume).
+ARG BAILIAN_CLI_VERSION=2.8.3
 
 FROM ${BASE_IMAGE} AS builder
 USER root
@@ -28,8 +32,11 @@ RUN python tools/build_package.py --skip-build \
 # own tooling is not needed at run time.
 FROM ${NODE_IMAGE} AS dsh
 ARG DSH_VERSION
+ARG BAILIAN_CLI_VERSION
 USER root
 RUN npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" \
+    && npm install --ignore-scripts --prefix /opt/bailian \
+       "bailian-cli@${BAILIAN_CLI_VERSION}" \
     && npm cache clean --force
 
 FROM ${BASE_IMAGE}
@@ -72,6 +79,14 @@ COPY --from=dsh /usr/local/lib/node_modules/@deepseek-ai /usr/local/lib/node_mod
 RUN ln -s ../lib/node_modules/@deepseek-ai/dsh/lib/bin.js /usr/local/bin/dsh \
     && chmod +x /usr/local/bin/dsh \
     && node --version
+
+# Bailian CLI for the free-quota sweep. Installed under /opt so npm's bundled
+# tree stays out of the image; it only needs node (copied above) and keeps its
+# console-login state in BAILIAN_CONFIG_DIR (/data/.bailian by compose).
+COPY --from=dsh /opt/bailian /opt/bailian
+RUN ln -s /opt/bailian/node_modules/bailian-cli/dist/bailian.mjs /usr/local/bin/bl \
+    && chmod +x /opt/bailian/node_modules/bailian-cli/dist/bailian.mjs \
+    && bl --version
 
 WORKDIR /data
 USER planrouter

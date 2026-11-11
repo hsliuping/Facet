@@ -467,9 +467,15 @@ OVHcloud 公共 AI 端点，匿名档 2 次/分钟/IP/模型——很慢，但�
 
 **查哪些模型还有免费额度（官方 CLI）**
 
-百炼没有公开的免费额度查询 REST API；官方 CLI（npm 包 `bailian-cli`，命令 `bl`）的 `usage free` 可以查：
+百炼没有公开的免费额度查询 REST API；官方 CLI（npm 包 `bailian-cli`，命令 `bl`）的 `usage free` 可以查。Facet 镜像已内置 `bl 2.8.3`（`BAILIAN_CLI_VERSION` 可覆盖），容器内无需再装 Node 或 npm：
 
 ```powershell
+# 容器部署（推荐）：镜像已内置 bl，直接在容器里完成一次授权；
+# 令牌落在 /data/.bailian（compose 已把 ./data 挂成持久卷），重建镜像不丢。
+docker exec -it facet-planrouter-router-1 bl auth login --console
+docker exec facet-planrouter-router-1 bl usage free --output json --sort expires
+
+# 非容器 / 本机排查时才需要自己装：
 npm install -g bailian-cli                  # 无 Node.js 时：irm https://bailian.aliyun.com/cli/install.ps1 | iex
                                             # 若报 notarget（npm 发布缺陷），改用 npm install -g bailian-cli@2.8.3
 bl auth login --console                     # 拉起浏览器完成阿里云控制台授权
@@ -479,7 +485,7 @@ bl usage free --expiring 7                  # 只看 7 天内到期的额度
 
 **渠道映射必须以 `usage free` 的输出为准**——不要用控制台「拉取模型」目录来填百炼的映射：目录不区分免费/计费，拉进来的可能都是按量计费模型，路由打过去就变成后付费扣费。
 
-这套对齐已经内置为 Facet 的**每日定时任务**（与目录刷新、每日自维护同一批后台任务，`defaults.free_align_hours` 控制间隔，0 关闭）：网关会自动执行 `bl usage free --output json`，只保留**type 为 Text、剩余额度 > 0、未过期**的模型作为渠道映射（恒等映射），额度耗尽/过期的自动摘掉，命令失败则保留原映射等下一轮。因此**日常无需手动管理**——你只需要在首次使用时装一次 CLI 并完成一次控制台授权（`usage free` 属于控制台类命令，**只配 API Key 不够**，必须 `--console` 浏览器授权；授权过期后重新登录一次即可，定时任务下一轮自动恢复对齐）。想立即对齐（不等定时）可在管理台手动触发；`bl usage free` 命令本身也适合人工核对额度状态。
+这套对齐已经内置为 Facet 的**每日定时任务**（与目录刷新、每日自维护同一批后台任务，`defaults.free_align_hours` 控制间隔，0 关闭）：网关会自动执行 `bl usage free --output json`，只保留**type 为 Text、剩余额度 > 0、未过期**的模型作为渠道映射（恒等映射），额度耗尽/过期的自动摘掉，命令失败则保留原映射等下一轮。因此**日常无需手动管理**——你只需要在首次使用时完成一次控制台授权（`usage free` 属于控制台类命令，**只配 API Key 不够**，必须 `--console` 浏览器授权；授权过期后重新登录一次即可，定时任务下一轮自动恢复对齐）。想立即对齐（不等定时）可在管理台手动触发；`bl usage free` 命令本身也适合人工核对额度状态。
 
 **渠道参数**：
 
