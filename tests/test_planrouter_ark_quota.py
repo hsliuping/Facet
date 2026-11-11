@@ -95,6 +95,56 @@ class CanonicalQueryTests(unittest.TestCase):
                          "a=1&b=a%20b")
 
 
+class FetchCodingPlanTests(unittest.TestCase):
+    """GetPersonalPlan + GetCodingPlanUsage join for the subscriptions page."""
+
+    def test_joins_subscription_info_with_windows(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append(urllib.parse.parse_qs(
+                urllib.parse.urlsplit(req.full_url).query)["Action"][0])
+            if len(calls) == 1:
+                return _FakeResp({"Result": {
+                    "PlanType": "Pro", "Status": "Running",
+                    "StartTime": "2026-06-09T00:00:00+08:00",
+                    "EndTime": "2026-12-09T00:00:00+08:00",
+                    "AutoRenew": False}})
+            return _FakeResp({"Result": {"QuotaUsage": [
+                {"Level": "session", "Percent": 0.126876,
+                 "ResetTimestamp": 1794387681, "Cap": 100},
+                {"Level": "weekly", "Percent": 7.2799092,
+                 "ResetTimestamp": 1794758400, "Cap": 100},
+                # A malformed row must not break the whole window list.
+                {"Level": "monthly", "Percent": "3.6399546",
+                 "ResetTimestamp": "not-a-number"},
+                "junk",
+            ]}})
+
+        plan = ark_quota.fetch_coding_plan(AK, SK, _urlopen=fake_urlopen)
+        self.assertEqual(calls, ["GetPersonalPlan", "GetCodingPlanUsage"])
+        self.assertEqual(plan["plan"], "CodingPlan")
+        self.assertEqual(plan["plan_type"], "Pro")
+        self.assertEqual(plan["status"], "Running")
+        self.assertEqual(plan["end_time"], "2026-12-09T00:00:00+08:00")
+        self.assertFalse(plan["auto_renew"])
+        self.assertEqual(len(plan["windows"]), 3)
+        self.assertEqual(plan["windows"][0],
+                         {"level": "session", "percent": 0.13,
+                          "reset_ts": 1794387681})
+        self.assertEqual(plan["windows"][2]["percent"], 3.64)
+        self.assertIsNone(plan["windows"][2]["reset_ts"])
+
+    def test_api_error_raises_runtimeerror(self):
+        def fake_urlopen(req, timeout):
+            return _FakeResp({"ResponseMetadata": {"Error": {
+                "Code": "ResourceNotFound.Plan",
+                "Message": "plan not purchased"}}})
+
+        with self.assertRaisesRegex(RuntimeError, "ResourceNotFound.Plan"):
+            ark_quota.fetch_coding_plan(AK, SK, _urlopen=fake_urlopen)
+
+
 class SignTests(unittest.TestCase):
     def test_authorization_header_shape(self):
         auth = ark_quota.sign_request(AK, SK, BODY, "20240710T042925Z", QUERY)

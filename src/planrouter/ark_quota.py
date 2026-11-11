@@ -93,13 +93,11 @@ def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def fetch_page(ak: str, sk: str, page: int, timeout: float = 30.0,
-               _urlopen=None) -> dict:
-    """One ListModelActivations call with free-usage fields attached."""
-    body_obj = {"WithFreeUsage": True, "PageNumber": page,
-                "PageSize": PAGE_SIZE}
+def _post(ak: str, sk: str, action: str, body_obj: dict,
+          timeout: float = 30.0, _urlopen=None) -> dict:
+    """One signed management-plane call; raises RuntimeError on any failure."""
     body = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False)
-    query = canonical_query({"Action": ACTION, "Version": VERSION})
+    query = canonical_query({"Action": action, "Version": VERSION})
     x_date = utc_stamp()
     headers = {
         "Host": HOST,
@@ -126,6 +124,53 @@ def fetch_page(ak: str, sk: str, page: int, timeout: float = 30.0,
         raise RuntimeError(
             f"API 错误 {error.get('Code')}: {error.get('Message')}")
     return payload
+
+
+def fetch_page(ak: str, sk: str, page: int, timeout: float = 30.0,
+               _urlopen=None) -> dict:
+    """One ListModelActivations call with free-usage fields attached."""
+    return _post(ak, sk, ACTION,
+                 {"WithFreeUsage": True, "PageNumber": page,
+                  "PageSize": PAGE_SIZE}, timeout, _urlopen)
+
+
+def fetch_coding_plan(ak: str, sk: str, timeout: float = 30.0,
+                      _urlopen=None) -> dict:
+    """Coding Plan subscription info + per-window usage for the subscriptions page.
+
+    GetPersonalPlan(Plan=CodingPlan) carries the tier/status/dates; the
+    windows come from GetCodingPlanUsage, which reports Percent-only
+    (session/weekly/monthly, cap 100) plus an epoch-seconds ResetTimestamp
+    (-1 = no reset scheduled). Raises RuntimeError when either call fails —
+    the caller shows the message instead of inventing numbers.
+    """
+    info = (_post(ak, sk, "GetPersonalPlan", {"Plan": "CodingPlan"},
+                  timeout, _urlopen).get("Result") or {})
+    usage = (_post(ak, sk, "GetCodingPlanUsage", {}, timeout,
+                   _urlopen).get("Result") or {})
+    windows = []
+    for row in usage.get("QuotaUsage") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            percent = round(float(row.get("Percent") or 0), 2)
+        except (TypeError, ValueError):
+            percent = None
+        windows.append({
+            "level": str(row.get("Level") or row.get("level") or ""),
+            "percent": percent,
+            "reset_ts": row.get("ResetTimestamp") if isinstance(
+                row.get("ResetTimestamp"), int) else None,
+        })
+    return {
+        "plan": "CodingPlan",
+        "plan_type": str(info.get("PlanType") or ""),
+        "status": str(info.get("Status") or ""),
+        "start_time": str(info.get("StartTime") or ""),
+        "end_time": str(info.get("EndTime") or ""),
+        "auto_renew": bool(info.get("AutoRenew")),
+        "windows": windows,
+    }
 
 
 def extract_items(payload: dict) -> list:

@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
+from planrouter import ark_quota
 from planrouter import freealign
 from planrouter import maintenance as maint
 from planrouter import providers as providers_mod
@@ -399,6 +400,86 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(status["vendor_total"], 1000000)
         self.assertEqual(status["vendor_consumed"], 100000)
         self.assertEqual(status["vendor_at"], self.app.vendor_quota_at)
+
+
+class PlanQuotaTests(unittest.TestCase):
+    """Vendor Coding Plan usage on the subscriptions page rows."""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        json.dump(align_config(), tmp)
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.subscriptions = [
+            {"id": "s1", "vendor": "火山引擎_6198_codingplan",
+             "account": "6198", "plan": "coding plan", "tier": "Pro",
+             "expires_at": "2026-12-09"},
+            {"id": "s2", "vendor": "百炼", "account": "main",
+             "plan": "free tier", "tier": "free",
+             "expires_at": "2026-12-31"},
+        ]
+        # Config is a frozen dataclass; swap in management credentials.
+        cfg = self.app.config
+        object.__setattr__(cfg, "credentials", {
+            "volcengine": {"VOLC_ACCESSKEY": "ak", "VOLC_SECRETKEY": "sk"}})
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        for name in ("vendorquota.json", "vendorquota.tmp"):
+            (self.path.parent / name).unlink(missing_ok=True)
+
+    @staticmethod
+    def plan_payload():
+        return {"plan": "CodingPlan", "plan_type": "Pro", "status": "Running",
+                "end_time": "2026-12-09T00:00:00+08:00",
+                "windows": [{"level": "monthly", "percent": 3.64,
+                             "reset_ts": 1796831999}]}
+
+    def test_plan_attaches_only_to_codingplan_rows_and_caches(self):
+        with mock.patch.object(ark_quota, "fetch_coding_plan",
+                               return_value=self.plan_payload()) as fetch:
+            payload = self.app.subscriptions_payload()
+            again = self.app.subscriptions_payload()
+        self.assertEqual(fetch.call_count, 1)  # second view hits the TTL cache
+        rows = {r["id"]: r for r in payload["subscriptions"]}
+        self.assertIn("vendor_plan", rows["s1"])
+        self.assertNotIn("vendor_plan", rows["s2"])
+        plan = rows["s1"]["vendor_plan"]
+        self.assertEqual(plan["plan_type"], "Pro")
+        self.assertTrue(plan["fetched_at"])
+        self.assertEqual(again["subscriptions"][0]["vendor_plan"],
+                         rows["s1"]["vendor_plan"])
+
+    def test_fetch_failure_reports_error_and_keeps_stale_snapshot(self):
+        with mock.patch.object(ark_quota, "fetch_coding_plan",
+                               return_value=self.plan_payload()):
+            self.app.vendor_plan()
+        with mock.patch.object(
+                ark_quota, "fetch_coding_plan",
+                side_effect=RuntimeError("API 错误 ResourceNotFound.Plan")):
+            self.app._plan_fetch_ts = 0.0  # force a live retry
+            plan = self.app.vendor_plan()
+        self.assertTrue(plan["stale"])
+        self.assertIn("ResourceNotFound", plan["error"])
+        self.assertEqual(plan["plan_type"], "Pro")
+        # Snapshot survives a restart and is served (marked stale) even when
+        # the vendor API keeps failing.
+        reloaded = App(load_config(self.path), config_path=self.path)
+        object.__setattr__(reloaded.config, "credentials", {
+            "volcengine": {"VOLC_ACCESSKEY": "ak", "VOLC_SECRETKEY": "sk"}})
+        with mock.patch.object(
+                ark_quota, "fetch_coding_plan",
+                side_effect=RuntimeError("down")):
+            plan = reloaded.vendor_plan()
+        self.assertEqual(plan["plan_type"], "Pro")
+        self.assertEqual(plan["error"], "down")
+
+    def test_no_credentials_returns_none(self):
+        cfg = self.app.config
+        object.__setattr__(cfg, "credentials", {})
+        self.assertIsNone(self.app.vendor_plan())
 
 
 class RegistryTests(unittest.TestCase):

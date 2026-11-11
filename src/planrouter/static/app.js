@@ -860,6 +860,27 @@ function renderSubscriptions() {
     const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
       ? '—'
       : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
+    // Vendor-reported plan usage (Volcengine Coding Plan) replaces the
+    // hand-typed remainder when available; the local number stays in the
+    // editor and the banner logic, it just loses the display slot.
+    const vp = r.vendor_plan;
+    let planQuota;
+    if (vp && vp.error && !vp.windows) {
+      planQuota = `<span class="sub-note">厂家余量获取失败：${esc(vp.error)}${vp.stale ? '（显示上次快照）' : ''}</span>`;
+    } else if (vp && Array.isArray(vp.windows) && vp.windows.length) {
+      const levels = { session: '会话', weekly: '周', monthly: '月' };
+      const win = vp.windows
+        .filter((w) => w.percent !== null && w.percent !== undefined)
+        .map((w) => `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%`)
+        .join(' · ');
+      const meta = [vp.plan_type ? `CodingPlan ${esc(vp.plan_type)}` : '', vp.end_time ? `到期 ${esc(vp.end_time.slice(0, 10))}` : '']
+        .filter(Boolean).join(' · ');
+      planQuota = `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
+    } else if (vp && vp.windows && !vp.windows.length) {
+      planQuota = '<span class="sub-note">厂家无用量窗口（可能未订阅）</span>';
+    } else {
+      planQuota = esc(quota);
+    }
     return `<tr>
       <td><strong>${esc(r.vendor)}</strong><br><span class="sub-note">${esc(r.account) || '未填账号'}</span></td>
       <td>${esc(r.plan)}<br><span class="sub-note">${esc(r.tier) || '未填档位'}</span></td>
@@ -870,7 +891,7 @@ function renderSubscriptions() {
       <td class="days-left ${esc(r.status)}">${days}</td>
       <td><span class="tag ${esc(r.status)}">${labels[r.status] || r.status}</span></td>
       <td>${r.auto_renew ? '是' : '否'}</td>
-      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${esc(quota)}</td>
+      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${planQuota}</td>
       <td class="sub-note">${esc((r.channels || []).join(', ')) || '—'}</td>
       <td>
         <button class="btn small" data-action="renew" data-id="${esc(r.id)}">续费</button>

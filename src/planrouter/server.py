@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from datetime import datetime
 
 from . import subscriptions as subs
 from . import ui
@@ -44,6 +45,10 @@ UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
 # First-run management credential: simple to type, replaced by the console's
 # rotate action (or by listen.admin_key) as soon as the deployment is set up.
 DEFAULT_ADMIN_KEY = "admin"
+# How long a vendor plan snapshot is served without re-hitting the Ark
+# management plane; the subscriptions page reloads often enough that a live
+# fetch per view would be wasteful and slow.
+PLAN_TTL = 300.0
 
 
 def _header_safe(value) -> str:
@@ -460,6 +465,13 @@ class App:
         # free-quota gate can see consumption the gateway itself did not make.
         self.vendor_quota: dict = {}
         self.vendor_quota_at = ""
+        # Vendor-side plan usage for the subscriptions page (Volcengine
+        # Coding Plan via GetPersonalPlan + GetCodingPlanUsage). Cached with
+        # a TTL and persisted like vendor_quota; None until first fetched.
+        self.plan_quota: dict | None = None
+        self._plan_fetch_ts = 0.0
+        self._plan_fetch_error = ""
+        self._plan_lock = threading.Lock()
         self._load_vendor_quota()
         self.catalog_refresher: CatalogRefresher | None = None
         self.maintenance_runner: "MaintenanceRunner | None" = None
@@ -606,6 +618,11 @@ class App:
                 str(name): entry for name, entry in channels.items()
                 if isinstance(entry, dict)}
         self.vendor_quota_at = str(data.get("at") or "")
+        plan = data.get("plan")
+        if isinstance(plan, dict):
+            # Show the persisted snapshot right after a restart; the first
+            # page load still re-fetches (freshness beats availability).
+            self.plan_quota = plan
 
     def _save_vendor_quota(self) -> None:
         path = self._vendor_quota_path()
@@ -614,11 +631,48 @@ class App:
         try:
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(
-                {"at": self.vendor_quota_at, "channels": self.vendor_quota},
+                {"at": self.vendor_quota_at, "channels": self.vendor_quota,
+                 "plan": self.plan_quota},
                 ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
         except OSError:
             pass  # quota display must never break the sweep
+
+    # -------------------------------------------------- vendor plan usage
+    def vendor_plan(self) -> dict | None:
+        """Coding Plan usage for the subscriptions page, TTL-cached.
+
+        Returns None when no Volcengine AK/SK is configured; a fetch failure
+        returns ``{"error": ...}`` (plus the last good snapshot marked stale
+        when one exists). Successful results persist through vendorquota.json.
+        """
+        creds = (getattr(self.config, "credentials", None) or {}).get(
+            "volcengine") or {}
+        ak = str(creds.get("VOLC_ACCESSKEY") or "")
+        sk = str(creds.get("VOLC_SECRETKEY") or "")
+        if not ak or not sk:
+            return None
+        with self._plan_lock:
+            now = time.time()
+            if now - self._plan_fetch_ts < PLAN_TTL:
+                if self._plan_fetch_error and self.plan_quota is None:
+                    return {"error": self._plan_fetch_error}
+                return self.plan_quota
+            try:
+                plan = ark_quota.fetch_coding_plan(ak, sk)
+            except Exception as exc:
+                self._plan_fetch_error = str(exc)[:160]
+                self._plan_fetch_ts = now
+                if self.plan_quota is not None:
+                    return {**self.plan_quota, "stale": True,
+                            "error": self._plan_fetch_error}
+                return {"error": self._plan_fetch_error}
+            self.plan_quota = {**plan, "fetched_at": datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")}
+            self._plan_fetch_error = ""
+            self._plan_fetch_ts = now
+            self._save_vendor_quota()
+            return self.plan_quota
 
     def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
         """Resolved free-tier allowance for one model on this channel.
@@ -718,8 +772,15 @@ class App:
         return subs.summarize(self.subscriptions)
 
     def subscriptions_payload(self) -> dict:
+        plan = self.vendor_plan()
+        rows = []
+        for record in self.subscriptions:
+            row = subs.enrich(record)
+            if plan and "codingplan" in str(record.get("vendor") or "").lower():
+                row["vendor_plan"] = plan
+            rows.append(row)
         return {
-            "subscriptions": [subs.enrich(record) for record in self.subscriptions],
+            "subscriptions": rows,
             "summary": self.subscription_summary(),
             "settings": self.subscription_settings,
             "path": str(self.subscriptions_path) if self.subscriptions_path else None,
