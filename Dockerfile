@@ -11,8 +11,10 @@ ARG BASE_IMAGE=python:3.12-slim
 ARG NODE_IMAGE=docker.m.daocloud.io/library/node:22-slim
 ARG DSH_VERSION=0.2.2-rc.1
 # Bailian CLI (`bl`) that the free-align sweep shells out to for
-# `bl usage free`. Auth is an interactive console login, so the state lives
-# in ~/.bailian (= /data/.bailian, inside the persisted data volume).
+# `bl usage free`. Its console endpoints accept a token exchanged from the
+# RAM AccessKey pair (BAILIAN_ACCESS_KEY_ID/SECRET), so no browser login is
+# needed; an optional `bl auth login` state lives in ~/.bailian
+# (= /data/.bailian, inside the persisted data volume).
 ARG BAILIAN_CLI_VERSION=2.8.3
 
 FROM ${BASE_IMAGE} AS builder

@@ -167,6 +167,10 @@
           "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
           "free_quota_cmd": ["bl", "usage", "free", "--output", "json"],
           "free_quota": {"tokens": 1000000, "period": "total"},
+          "credential_envs": [
+            {"env": "BAILIAN_ACCESS_KEY_ID", "label": "AccessKey ID（AK）"},
+            {"env": "BAILIAN_ACCESS_KEY_SECRET", "label": "AccessKey Secret（SK）"}
+          ],
           "tier": "paid",
           "models": []
         },

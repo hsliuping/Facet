@@ -43,6 +43,23 @@ class BuiltinRegistryTests(unittest.TestCase):
                 self.assertTrue(docs == "" or docs.startswith("http"))
                 self.assertIsInstance(mode.get("models") or [], list)
 
+    def test_free_quota_clis_declare_management_credentials(self):
+        """Every free-quota CLI needs management AK/SK the console can collect.
+
+        Both `facet-ark-quota` and `bl` read the vendor's IAM/RAM key pair
+        from these env vars, so the registry must declare them for the
+        channel editor to render the inputs and for the sweep to inject.
+        """
+        expected = {
+            "volcengine": ("VOLC_ACCESSKEY", "VOLC_SECRETKEY"),
+            "bailian": ("BAILIAN_ACCESS_KEY_ID", "BAILIAN_ACCESS_KEY_SECRET"),
+        }
+        for pid, envs in expected.items():
+            mode = provider_by_id(self.providers, pid)["modes"]["payg"]
+            self.assertTrue(mode.get("free_quota_cmd"), pid)
+            got = tuple(e["env"] for e in mode.get("credential_envs") or [])
+            self.assertEqual(got, envs, pid)
+
 
 class LoadProvidersTests(unittest.TestCase):
     def setUp(self):

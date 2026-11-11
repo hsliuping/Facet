@@ -2888,7 +2888,7 @@ function renderVendorCredentials() {
     return `<label>${esc(e.label || e.env)}（${esc(e.env)}）</label>
       <input data-cred-env="${esc(e.env)}" type="text" value="${esc(shown)}" placeholder="${esc(ph)}">`;
   }).join('')
-    + '<small class="hint">厂家管理面凭据，仅用于免费额度查询命令（火山引擎填 IAM AK/SK，不是 ark- 开头的数据面 Key）；提交后回显为 ***，留空保持已配值。</small>';
+    + '<small class="hint">厂家管理面凭据，仅用于免费额度查询命令（火山引擎填 IAM AK/SK，阿里云百炼填 RAM 用户的 AccessKey ID/Secret，都不是数据面 Key）；提交后回显为 ***，留空保持已配值。</small>';
 }
 
 // Selecting a vendor + mode auto-fills base_url / protocol / tier and keeps
