@@ -1937,13 +1937,14 @@ $('btn-test-maintenance-models').onclick = async (e) => {
 // it right now", so the answer to "哪些免费模型现在能用" is the first screen.
 const FREE_STATUS = {
   ok: ['可用', 'active'], warn: ['额度紧张', 'warn'],
+  quizfail: ['测验未通过', 'warn'],
   exhausted: ['额度用完', 'expired'], cooling: ['冷却中', 'expiring'],
   nokey: ['未配密钥', 'unknown'], dead: ['已失效', 'expired'],
   disabled: ['已停用', 'off'], catalog: ['仅目录未映射', 'unknown'],
   other: ['不可用', 'unknown'],
 };
-const FREE_RANK = { ok: 0, warn: 1, exhausted: 2, cooling: 3, nokey: 4,
-  dead: 5, disabled: 6, catalog: 7, other: 8 };
+const FREE_RANK = { ok: 0, warn: 1, quizfail: 2, exhausted: 3, cooling: 4,
+  nokey: 5, dead: 6, disabled: 7, catalog: 8, other: 9 };
 const FREE_PERIOD = { total: '总计', month: '每月', day: '每日' };
 const FREE_RESET = {
   total: '额度用完不重置',
@@ -1953,12 +1954,19 @@ const FREE_RESET = {
 
 function freeModelState(m, ch) {
   const q = m.quota || null;
-  if (m.routable) return q && q.warning ? 'warn' : 'ok';
+  const quizFailed = !!(m.test && m.test.ok === false);
+  if (m.routable) {
+    // Still routable (a quiz miss is not proof the model is gone), but the
+    // user just watched it fail — the status column must not say 可用.
+    if (quizFailed) return 'quizfail';
+    return q && q.warning ? 'warn' : 'ok';
+  }
   if (q && q.exhausted) return 'exhausted';
   if (!ch.enabled) return 'disabled';
   if (ch.cooling) return 'cooling';
   if (!ch.has_key) return 'nokey';
   if (m.dead) return 'dead';
+  if (quizFailed) return 'quizfail';
   if (m.source === 'catalog') return 'catalog';
   return 'other';
 }
@@ -2048,13 +2056,15 @@ function renderFreePage(free) {
   const count = (keys) => rows.filter((r) => keys.includes(r.status)).length;
   const ok = count(['ok']);
   const warn = count(['warn']);
+  const quizfail = count(['quizfail']);
   const exhausted = count(['exhausted']);
-  const other = rows.length - ok - warn - exhausted;
+  const other = rows.length - ok - warn - quizfail - exhausted;
 
   const metrics = [
     ['免费模型', rows.length, ''],
     ['现在能用', ok, ok ? 'ok' : 'warn'],
     ['额度紧张', warn, warn ? 'warn' : ''],
+    ['测验未通过', quizfail, quizfail ? 'warn' : ''],
     ['额度用完', exhausted, exhausted ? 'bad' : ''],
     ['其他不可用', other, ''],
     ['厂家额度未同步', summary.quota_unsynced || 0, summary.quota_unsynced ? 'warn' : ''],
@@ -2072,6 +2082,7 @@ function renderFreePage(free) {
     ['all', '全部', rows.length],
     ['ok', '可用', ok],
     ['warn', '额度紧张', warn],
+    ['quizfail', '测验未通过', quizfail],
     ['exhausted', '额度用完', exhausted],
     ['other', '其他不可用', other],
   ];
@@ -2083,9 +2094,10 @@ function renderFreePage(free) {
   const visible = rows.filter((r) => {
     if (state.freeFilter === 'ok' && r.status !== 'ok') return false;
     if (state.freeFilter === 'warn' && r.status !== 'warn') return false;
+    if (state.freeFilter === 'quizfail' && r.status !== 'quizfail') return false;
     if (state.freeFilter === 'exhausted' && r.status !== 'exhausted') return false;
     if (state.freeFilter === 'other' && (r.status === 'ok' || r.status === 'warn'
-      || r.status === 'exhausted')) return false;
+      || r.status === 'quizfail' || r.status === 'exhausted')) return false;
     if (!q) return true;
     return (r.m.model + ' ' + r.ch.name + ' ' + (r.ch.provider_name || '') + ' '
       + (r.ch.provider || '')).toLowerCase().includes(q);
@@ -2111,13 +2123,18 @@ function renderFreePage(free) {
           ? ` · 缓存 ${(use.cached_tokens / use.input_tokens * 100).toFixed(1)}%` : '')
       : '<span class="sub-note">未调用</span>';
     const reason = status === 'ok' ? '' : `<div class="sub-note">${esc(m.skip_reason || '')}</div>`;
+    const testNote = status === 'quizfail' && m.test
+      ? `<div class="sub-note">最近测验 `
+        + `${new Date((m.test.tested_at || 0) * 1000).toLocaleString()}：`
+        + `${esc(m.test.error || '未通过')}（仍可路由，测验失败不等于模型失效）</div>`
+      : '';
     return '<tr>'
       + `<td><code>${esc(m.model)}</code> <button class="btn small ghost free-copy" `
       + `title="复制模型名" data-model="${esc(m.model)}">复制</button>`
       + (m.in_queue ? ' <span class="tag active">队列中</span>' : '') + '</td>'
       + `<td><strong>${esc(ch.provider_name || ch.provider)}</strong>`
       + `<div class="sub-note">${esc(ch.name)}${ch.mode ? ` · ${esc(ch.mode)}` : ''}</div></td>`
-      + `<td><span class="tag ${cls}">${label}</span>${reason}</td>`
+      + `<td><span class="tag ${cls}">${label}</span>${reason}${testNote}</td>`
       + `<td>${freeQuotaCell(m.quota)}</td>`
       + `<td>${freeRateCell(ch)}</td>`
       + `<td>${useText}</td>`
