@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -52,6 +53,104 @@ def _send(h, status: int, data: bytes, content_type: str) -> None:
     h.send_header("Cache-Control", "no-store")
     h.end_headers()
     h.wfile.write(data)
+
+
+_CU_CREDS_FILE = "cu-credentials.json"
+
+
+def _cu_creds_path(app) -> Path | None:
+    """Where the browser agent keeps its per-host logins (same data directory)."""
+    return app.config_path.parent / _CU_CREDS_FILE if app.config_path else None
+
+
+def _cu_creds_load(app) -> dict:
+    path = _cu_creds_path(app)
+    if not path or not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _cu_creds_public(app) -> dict:
+    """Never echo a password or a cookie: the console only shows what exists."""
+    hosts = []
+    for host, entry in sorted(_cu_creds_load(app).items()):
+        if not isinstance(entry, dict):
+            continue
+        hosts.append({
+            "host": host,
+            "username": str(entry.get("username") or ""),
+            "has_password": bool(entry.get("password")),
+            "has_cookie": bool(entry.get("cookie")),
+        })
+    path = _cu_creds_path(app)
+    return {"hosts": hosts, "path": str(path) if path else ""}
+
+
+def _cu_creds_write(app, data: dict) -> Path:
+    path = _cu_creds_path(app)
+    if path is None:
+        raise ValueError("no config path; the data directory is unknown")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _cu_creds_update(app, incoming: dict) -> dict:
+    host = re.sub(r"^https?://", "", str(incoming.get("host") or "").strip().lower())
+    host = host.split("/")[0].split(":")[0]
+    if not host or not re.match(r"^[a-z0-9.-]+$", host):
+        raise ValueError("host must look like www.modelscope.cn")
+    data = _cu_creds_load(app)
+    if incoming.get("remove"):
+        data.pop(host, None)
+        _cu_creds_write(app, data)
+        return {"ok": True, "removed": host}
+
+    cookie = str(incoming.get("cookie") or "").strip()
+    if cookie and not re.match(r"^[^=\s]+\s*=", cookie):
+        raise ValueError("cookie must look like NAME=VALUE")
+    entry = dict(data.get(host) or {})
+    # Empty fields keep the stored value: the console renders masked hints and
+    # submits only what the user actually typed.
+    if str(incoming.get("username") or "").strip():
+        entry["username"] = str(incoming["username"]).strip()
+    if str(incoming.get("password") or ""):
+        entry["password"] = str(incoming["password"])
+    if cookie:
+        entry["cookie"] = cookie
+    data[host] = entry
+    _cu_creds_write(app, data)
+    return {"ok": True, "host": host}
+
+
+def _cu_credentials(app, h, method: str, raw: str) -> None:
+    if method == "GET":
+        _json(h, 200, _cu_creds_public(app))
+        return
+    incoming = {}
+    if raw:
+        try:
+            incoming = json.loads(raw)
+        except ValueError:
+            incoming = {}
+    if not isinstance(incoming, dict):
+        incoming = {}
+    try:
+        result = _cu_creds_update(app, incoming)
+    except ValueError as exc:
+        _json(h, 400, {"error": {"message": str(exc)}})
+        return
+    _json(h, 200, {**result, **_cu_creds_public(app)})
 
 
 def _json(h, status: int, payload) -> None:
@@ -660,6 +759,10 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             return True
         removed = app.reset_scores(channel, wire)
         _json(h, 200, {"ok": True, "removed": removed})
+        return True
+
+    if path == "/api/cu-credentials" and method in ("GET", "POST"):
+        _cu_credentials(app, h, method, raw)
         return True
 
     _json(h, 404, {"error": {"message": "not found", "path": path}})

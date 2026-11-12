@@ -59,6 +59,16 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
 const fmtNum = (v) => (v === null || v === undefined || isNaN(Number(v)))
   ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
+// Compact token counts for chart labels: 40298224 -> "40.3M", 411208 -> "411K".
+const fmtTok = (v) => {
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  if (n >= 1e9) return `${parseFloat((n / 1e9).toFixed(2))}B`;
+  if (n >= 1e6) return `${parseFloat((n / 1e6).toFixed(2))}M`;
+  if (n >= 1e3) return `${parseFloat((n / 1e3).toFixed(1))}K`;
+  return `${n}`;
+};
+
 // Embedded/IDE webviews have no native dialogs (calling one throws
 // "prompt() is not supported."). Use an in-page overlay instead, and never
 // reuse #modal so an open channel/subscription editor keeps its unsaved draft.
@@ -411,7 +421,7 @@ function channelCard(c, i) {
       <select class="auto-model" data-auto-model data-index="${i}" aria-label="切换该渠道的默认（auto）模型">
         ${autoModelOptions(c)}
       </select>
-      <small class="hint">切换后点上方「保存配置」生效；auto / facet 品牌名请求都走这里</small>
+      <small class="hint">切换后点「保存配置」生效，auto / facet 请求都走这里</small>
     </dd></div></dl>
     <dl class="models-line"><div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div></dl>
   </article>`;
@@ -505,8 +515,8 @@ function renderStatus() {
     ? `模型目录每 ${s.catalog_refresh_hours} 小时自动检查` : '模型目录自动检查已停用';
   $('status-meta').textContent = `粘性会话 ${s.sticky_sessions} · ${catalogText} · 每 5 秒自动刷新 · 更新于 ${new Date().toLocaleTimeString()}`;
   $('status-body').innerHTML = s.channels.map((c) => {
-    const kind = c.blocked ? 'bad' : (c.cooling ? 'warn' : 'ok');
-    const label = c.blocked ? '已停用' : (c.cooling ? '冷却中' : '可用');
+    const kind = !c.enabled ? 'bad' : (c.blocked ? 'bad' : (c.cooling ? 'warn' : (!c.configured ? 'muted' : 'ok')));
+    const label = !c.enabled ? '已停用' : (c.blocked ? '已停用' : (c.cooling ? '冷却中' : (!c.configured ? '未配置' : '可用')));
     const reason = c.blocked ? c.blocked_reason : c.reason;
     const q = c.quota || {};
     const quotaText = q.known
@@ -608,7 +618,7 @@ const PAGE_TITLES = {
   dashboard: '仪表板', free: '免费模型',
   channels: '渠道配置', routes: '路由链', models: '模型接入',
   subscriptions: '套餐订阅', vendors: '厂家管理',
-  status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
+  status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
   members: '成员用量',
 };
 
@@ -645,6 +655,7 @@ function switchPage(name) {
     loadFreeAlignLogs().catch(() => {});
     loadBackups().catch(() => {});
   }
+  if (name === 'cu') loadCuCredentials().catch((e) => toast(e.message, 'bad'));
   if (name === 'usage') {
     loadUsage().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -1717,10 +1728,10 @@ function renderUsage() {
       <h4>渠道缓存命中率（缓存输入 / 总输入，近 ${usage.range} 天）</h4>
       ${cacheRows.length ? cacheRows.slice(0, 6).map((c) => {
         const rate = (c.cached_tokens / c.input_tokens * 100).toFixed(1);
-        return `<div class="dist-row">
+        return `<div class="dist-row cache">
           <span>${esc(c.name)}</span>
           <div class="dist-bar"><span style="width:${rate}%"></span></div>
-          <span class="dist-value">${rate}%（${Number(c.cached_tokens).toLocaleString()} / ${Number(c.input_tokens).toLocaleString()} tok）</span>
+          <span class="dist-value">${rate}%（${fmtTok(c.cached_tokens)} / ${fmtTok(c.input_tokens)} tok）</span>
         </div>`;
       }).join('') : '<div class="chart-empty">上游未上报缓存字段（prompt_tokens_details.cached_tokens / cache_read_input_tokens），暂无数据</div>'}
     </div>
@@ -1848,6 +1859,63 @@ function renderMemberUsage(usage) {
       <td>${rate}</td>
     </tr>`;
   }).join('');
+}
+
+// Browser-agent logins: GET returns hosts with masked flags only (the console
+// never receives a password or cookie back), POST upserts by host.
+async function loadCuCredentials() {
+  const data = await api('/api/cu-credentials');
+  renderCuCredentials(data);
+}
+
+function renderCuCredentials(data) {
+  const body = $('cu-body');
+  const hosts = (data && data.hosts) || [];
+  if (!hosts.length) {
+    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有保存任何站点凭据。在下方表单填入站点与凭据后点「保存」。</td></tr>';
+    return;
+  }
+  body.innerHTML = hosts.map((h) => `<tr>
+      <td><code>${esc(h.host)}</code></td>
+      <td>${esc(h.username || '—')}</td>
+      <td>${h.has_password ? '<span class="tag active">已保存</span>' : '<span class="sub-note">—</span>'}</td>
+      <td>${h.has_cookie ? '<span class="tag active">已保存</span>' : '<span class="sub-note">—</span>'}</td>
+      <td><button class="btn small ghost" data-cu-remove="${esc(h.host)}">删除</button></td>
+    </tr>`).join('');
+  body.querySelectorAll('[data-cu-remove]').forEach((el) => {
+    el.onclick = () => removeCuCredential(el.dataset.cuRemove);
+  });
+}
+
+async function removeCuCredential(host) {
+  if (!await askConfirm('删除站点凭据', `确认删除 ${host} 的浏览器代理凭据？`)) return;
+  try {
+    await api('/api/cu-credentials', { method: 'POST', body: { host, remove: true } });
+    toast(`已删除 ${host} 的凭据`);
+    await loadCuCredentials();
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+async function saveCuCredential(event) {
+  event.preventDefault();
+  const f = $('cu-form');
+  const v = (n) => String(f.elements.namedItem(n)?.value ?? '').trim();
+  const host = v('cu-host');
+  if (!host) { toast('站点不能为空', 'bad'); return; }
+  const payload = { host };
+  const username = v('cu-username');
+  const password = String(f.elements.namedItem('cu-password')?.value ?? '');
+  const cookie = v('cu-cookie');
+  // Empty fields are omitted: the backend keeps the stored value unchanged.
+  if (username) payload.username = username;
+  if (password) payload.password = password;
+  if (cookie) payload.cookie = cookie;
+  try {
+    await api('/api/cu-credentials', { method: 'POST', body: payload });
+    toast(`已保存 ${host} 的凭据`);
+    f.reset();
+    await loadCuCredentials();
+  } catch (e) { toast(e.message, 'bad'); }
 }
 
 
@@ -2619,6 +2687,12 @@ function maintReportRows(r, withApply) {
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
 
+$('btn-refresh-cu').onclick = () => loadCuCredentials()
+  .then(() => toast('浏览器代理凭据已刷新', 'good'))
+  .catch((e) => toast(e.message, 'bad'));
+
+$('cu-form').onsubmit = saveCuCredential;
+
 $('btn-refresh-tasks').onclick = () => loadTasks()
   .then(() => toast('定时任务状态已刷新', 'good'))
   .catch((e) => toast(e.message, 'bad'));
@@ -3230,11 +3304,9 @@ function renderReport() {
         <td>${esc(s.monthly_equivalent?.amount ?? '—')} ${esc(s.currency)}</td>
         <td>${s.usage.requests} / ${s.usage.failed}</td>
         <td>${s.usage.tokens.toLocaleString()}</td>
-        <td>${s.cost_per_1k_requests === null || s.cost_per_1k_requests === undefined
-              ? '—' : s.cost_per_1k_requests + ' ' + esc(s.currency)}</td>
         <td class="${s.quota_ratio !== null && s.quota_ratio !== undefined && s.quota_ratio <= 0.15 ? 'quota-low' : 'sub-note'}">${s.quota_remaining === null || s.quota_remaining === undefined ? '—' : esc(s.quota_remaining + ' ' + (s.quota_unit || ''))}</td>
       </tr>`).join('')
-    : '<tr><td colspan="7" class="sub-note">还没有订阅记录</td></tr>';
+    : '<tr><td colspan="6" class="sub-note">还没有订阅记录</td></tr>';
   $('report-channels').textContent = '渠道用量：' + (r.channels.map((c) =>
     `${c.name} ${c.requests} 次 / ${c.tokens} tokens${c.linked ? '' : '（未关联订阅）'}`).join(' · ') || '暂无');
 }

@@ -2510,6 +2510,7 @@ class App:
         for channel in self.config.channels:
             item = dict(snap["channels"].get(channel.name, {}))
             catalog = self.store.catalog_view(channel.name)
+            has_key = bool(resolve_secret(channel.api_key))
             item.update({
                 "name": channel.name,
                 "protocol": channel.protocol,
@@ -2526,6 +2527,7 @@ class App:
                     "count": catalog["count"],
                     "changes": catalog["changes"],
                 },
+                "configured": has_key,
             })
             channels.append(item)
         return {
