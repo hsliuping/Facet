@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--usage-file", help="daily usage buckets (default: next to config)")
     parser.add_argument("--notifications-file", help="reminder delivery log (default: next to config)")
     parser.add_argument("--audit-file", help="request routing log, JSONL (default: next to config)")
+    parser.add_argument("--keys-file", help="member API keys (default: next to config)")
     parser.add_argument("--host", help="override listen host")
     parser.add_argument("--port", type=int, help="override listen port")
     parser.add_argument("--check", action="store_true", help="validate config and print routes, then exit")
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     notify_path = (Path(args.notifications_file) if args.notifications_file
                    else config_dir / "notifications.json")
     audit_path = Path(args.audit_file) if args.audit_file else config_dir / "requests.jsonl"
+    keys_path = Path(args.keys_file) if args.keys_file else config_dir / "keys.json"
 
     if args.check:
         print(f"config OK: {args.config}")
@@ -115,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
     httpd = make_server(
         config, args.host, args.port, args.config, state_path, subs_path,
-        usage_path, notify_path, audit_path,
+        usage_path, notify_path, audit_path, keys_file=keys_path,
     )
     app = httpd.app  # type: ignore[attr-defined]
     host, port = httpd.server_address[:2]
@@ -127,7 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  usage history: {usage_path}", flush=True)
     print(f"  notification log: {notify_path}", flush=True)
     print(f"  routing audit log: {audit_path}", flush=True)
-    summary = subs.summarize(app.subscriptions)
+    print(f"  member keys: {keys_path}", flush=True)
+    summary = subs.summarize(app.subscriptions,
+                             label=getattr(app, "subscription_label", None))
     if summary["monthly_cost"]:
         cost = ", ".join(f"{amount:g} {code}/month"
                          for code, amount in summary["monthly_cost"].items())

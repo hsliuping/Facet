@@ -1,8 +1,11 @@
-"""Vendor plan subscriptions: what you bought, when it expires, what it costs.
+"""Plan subscriptions: what you bought, when it expires, what it costs.
 
-A subscription is separate from a channel: it records vendor/account/plan/price
-and validity, while a channel records how requests reach it. One subscription
-may back several channels (e.g. two accounts at the same vendor).
+A subscription is separate from a channel: it records plan/tier/price and
+validity, while a channel records how requests reach it and who the vendor is.
+One subscription may back several channels (e.g. two accounts on the same
+plan). Channels are linked by stable channel id, so renaming a channel never
+breaks the link; a plan carries no vendor of its own — the vendor is whatever
+the linked channel's provider says.
 """
 from __future__ import annotations
 
@@ -52,10 +55,7 @@ def add_months(day: date, months: int) -> date:
 def normalize(record: dict) -> dict:
     if not isinstance(record, dict):
         raise ValueError("每条订阅必须是一个对象")
-    vendor = str(record.get("vendor") or "").strip()
     plan = str(record.get("plan") or "").strip()
-    if not vendor:
-        raise ValueError("订阅缺少厂家 vendor")
     if not plan:
         raise ValueError("订阅缺少套餐名称 plan")
     try:
@@ -101,8 +101,8 @@ def normalize(record: dict) -> dict:
     models = [str(x).strip() for x in raw_models if str(x).strip()]
     return {
         "id": str(record.get("id") or ("sub-" + uuid.uuid4().hex[:10])).strip(),
-        "vendor": vendor,
         "account": str(record.get("account") or "").strip(),
+        "account_id": str(record.get("account_id") or "").strip(),
         "plan": plan,
         "tier": str(record.get("tier") or "").strip(),
         "price": round(price, 2),
@@ -120,6 +120,7 @@ def normalize(record: dict) -> dict:
         "models_url": models_url,
         "models": models,
         "note": str(record.get("note") or "").strip(),
+        "business_line": str(record.get("business_line") or "").strip(),
     }
 
 
@@ -170,52 +171,77 @@ def enrich(record: dict, on: date | None = None) -> dict:
         "quota_remaining": remaining,
         "quota_ratio": ratio,
         "low_quota": ratio is not None and ratio <= 0.15,
+        "account_id": record.get("account_id") or record.get("account") or "",
     })
     return result
 
 
-def summarize(records: list[dict], on: date | None = None) -> dict:
+def summarize(records: list[dict], on: date | None = None,
+              label=None) -> dict:
+    """Build the dashboard summary.
+
+    `label` maps a record to the vendor line shown in alerts/notifications.
+    The server passes one derived from the linked channels' providers; when a
+    caller already supplies a `vendor` (report/notifier rows), it is used, and
+    otherwise the plan name stands in — a subscription stores no vendor.
+    """
     on = on or date.today()
+    label = label or (
+        lambda record: str(record.get("vendor") or record.get("plan") or ""))
     enriched = [enrich(record, on) for record in records]
     counts = {key: 0 for key in ("active", "expiring", "expired", "unknown")}
     monthly_cost: dict[str, float] = {}
+    # Group by account_id (fall back to account string if account_id empty)
+    account_groups: dict[str, list[dict]] = {}
     for record in enriched:
+        aid = record.get("account_id") or record.get("account") or ""
+        account_groups.setdefault(aid, []).append(record)
         counts[record["status"]] += 1
         equivalent = record["monthly_equivalent"]
         if equivalent and record["status"] != "expired":
             code = equivalent["currency"]
             monthly_cost[code] = round(monthly_cost.get(code, 0) + equivalent["amount"], 2)
-    alerts = [
-        {
-            "id": r["id"], "vendor": r["vendor"], "account": r["account"],
-            "plan": r["plan"], "tier": r["tier"], "expires_at": r["expires_at"],
-            "days_left": r["days_left"], "status": r["status"],
-            "price": r["price"], "currency": r["currency"],
-        }
-        for r in enriched if r["status"] in ("expiring", "expired")
-    ]
+    alerts = []
+    for aid, recs in account_groups.items():
+        for r in recs:
+            if r["status"] in ("expiring", "expired"):
+                alerts.append({
+                    "id": r["id"], "vendor": label(r), "account_id": aid,
+                    "account": r.get("account", ""),
+                    "plan": r["plan"], "tier": r["tier"], "expires_at": r["expires_at"],
+                    "days_left": r["days_left"], "status": r["status"],
+                    "price": r["price"], "currency": r["currency"],
+                })
     alerts.sort(key=lambda r: (r["days_left"] is None, r["days_left"]))
-    upcoming = sorted(
-        [r for r in enriched if r["days_left"] is not None and r["days_left"] >= 0],
-        key=lambda r: r["days_left"],
-    )[:5]
+    upcoming = []
+    for aid, recs in account_groups.items():
+        for r in recs:
+            if r["days_left"] is not None and r["days_left"] >= 0:
+                upcoming.append({
+                    "id": r["id"], "vendor": label(r), "account_id": aid,
+                    "account": r.get("account", ""),
+                    "plan": r["plan"], "expires_at": r["expires_at"], "days_left": r["days_left"]
+                })
+    upcoming.sort(key=lambda r: r["days_left"])
+    upcoming = upcoming[:5]
+    quota_alerts = []
+    for aid, recs in account_groups.items():
+        for r in recs:
+            if r.get("low_quota"):
+                quota_alerts.append({
+                    "id": r["id"], "vendor": label(r), "account_id": aid,
+                    "account": r.get("account", ""),
+                    "plan": r["plan"], "quota_remaining": r.get("quota_remaining"),
+                    "quota_unit": r.get("quota_unit", "")
+                })
     return {
         "today": on.isoformat(),
         "total": len(enriched),
         "counts": counts,
         "monthly_cost": monthly_cost,
         "alerts": alerts,
-        "quota_alerts": [
-            {"id": r["id"], "vendor": r["vendor"], "account": r["account"],
-             "plan": r["plan"], "quota_remaining": r.get("quota_remaining"),
-             "quota_unit": r.get("quota_unit", "")}
-            for r in enriched if r.get("low_quota")
-        ],
-        "upcoming": [
-            {"id": r["id"], "vendor": r["vendor"], "account": r["account"],
-             "plan": r["plan"], "expires_at": r["expires_at"], "days_left": r["days_left"]}
-            for r in upcoming
-        ],
+        "quota_alerts": quota_alerts,
+        "upcoming": upcoming,
     }
 
 

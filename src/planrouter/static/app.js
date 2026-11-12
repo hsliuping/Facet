@@ -183,6 +183,18 @@ function readDraft(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
 }
 
+// Shared by every copy button on the page.
+function copyText(value) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(
+      () => toast('已复制到剪贴板'),
+      () => toast('复制失败，请手动选中复制', 'warn'),
+    );
+  } else {
+    toast('当前环境不支持自动复制，请手动选中复制', 'warn');
+  }
+}
+
 // Every edit is persisted on its own; there is no separate "save and apply"
 // step. Debounced so typing in the model-policy box does not POST per keystroke.
 function scheduleSave(kind) {
@@ -236,6 +248,7 @@ async function loadState() {
   renderStatus();
   renderChannels();
   renderExactModels();
+  renderBrandList();
   renderScores();
   const badge = $('conn-badge');
   badge.textContent = '已连接';
@@ -330,6 +343,28 @@ function scoreBadge(score, channel, wire) {
   return `<span class="tag ${cls}" title="稳定性分：成功 +1，失败 -5">${score > 0 ? '+' : ''}${score}${reset}</span>`;
 }
 
+// The auto-model picker: `models.auto` is the concrete upstream model this
+// channel serves whenever the router schedules internally (branded ids and
+// unmatched names). Switching it here is the manual override the user asked
+// for: a model that performs badly gets swapped without editing the mapping.
+function autoModelOptions(c) {
+  const models = c.models || {};
+  const current = String(models.auto || '');
+  const seen = new Set();
+  const opts = [];
+  Object.entries(models).forEach(([k, v]) => {
+    if (!v || v === '*' || seen.has(v)) return;
+    seen.add(v);
+    const label = k === 'auto' ? `${v}（auto）` : (k === v ? v : `${v}（${k}）`);
+    opts.push(`<option value="${esc(v)}" ${v === current ? 'selected' : ''}>${esc(label)}</option>`);
+  });
+  if (current && !seen.has(current)) {
+    opts.unshift(`<option value="${esc(current)}" selected>${esc(current)}（当前）</option>`);
+  }
+  if (!opts.length) opts.push('<option value="">未配置模型</option>');
+  return opts.join('');
+}
+
 function channelCard(c, i) {
   const entries = Object.entries(c.models || {});
   // Runtime status (cooling/blocked) lives in the state snapshot, not the config.
@@ -369,8 +404,15 @@ function channelCard(c, i) {
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
+      <div><dt>账号 / 业务线</dt><dd>${c.account ? esc(accountLabel(c.account)) : '—'}${c.business_line ? ' · ' + esc(c.business_line) : ''}</dd></div>
       <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
     </dl>
+    <dl class="models-line"><div><dt>默认模型</dt><dd>
+      <select class="auto-model" data-auto-model data-index="${i}" aria-label="切换该渠道的默认（auto）模型">
+        ${autoModelOptions(c)}
+      </select>
+      <small class="hint">切换后点上方「保存配置」生效；auto / facet 品牌名请求都走这里</small>
+    </dd></div></dl>
     <dl class="models-line"><div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div></dl>
   </article>`;
 }
@@ -549,9 +591,10 @@ function renderBanner() {
   const critical = alerts.some((a) => a.status === 'expired');
   const items = alerts.map((a) => {
     const days = a.status === 'expired' ? `已过期 ${Math.abs(a.days_left)} 天` : `剩 ${a.days_left} 天`;
-    return `<span class="banner-item">${esc(a.vendor)} / ${esc(a.account || '—')} / ${esc(a.plan)} · <span class="days">${days}</span></span>`;
+    const account = a.account_id || a.account || '—';
+    return `<span class="banner-item">${esc(a.vendor)} / ${esc(account)} / ${esc(a.plan)} · <span class="days">${days}</span></span>`;
   }).join('') + quotaAlerts.map((a) =>
-    `<span class="banner-item">${esc(a.vendor)} / ${esc(a.account || '—')} / ${esc(a.plan)} · <span class="days">额度仅剩 ${esc(a.quota_remaining)} ${esc(a.quota_unit)}</span></span>`).join('');
+    `<span class="banner-item">${esc(a.vendor)} / ${esc(a.account_id || a.account || '—')} / ${esc(a.plan)} · <span class="days">额度仅剩 ${esc(a.quota_remaining)} ${esc(a.quota_unit)}</span></span>`).join('');
   el.innerHTML = `<div class="banner ${critical ? 'critical' : ''}">
     <span class="banner-title">${critical ? '有套餐已过期' : '套餐与额度提醒'}</span>
     <span class="banner-items">${items}</span>
@@ -566,10 +609,22 @@ const PAGE_TITLES = {
   channels: '渠道配置', routes: '路由链', models: '模型接入',
   subscriptions: '套餐订阅', vendors: '厂家管理',
   status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
+  members: '成员用量',
 };
 
+// The sidebar selection is mirrored in the URL hash ("#/vendors"), so a
+// reload or a bookmark reopens the page that was open instead of falling back
+// to the dashboard.
+function pageFromHash() {
+  const name = (location.hash || '').replace(/^#\/?/, '');
+  return PAGE_TITLES[name] ? name : '';
+}
+
 function switchPage(name) {
+  if (!PAGE_TITLES[name]) name = 'dashboard';
   state.tab = name;
+  const hash = '#/' + name;
+  if (location.hash !== hash) history.replaceState(null, '', hash);
   document.querySelectorAll('.menu-item').forEach((t) =>
     t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((p) =>
@@ -578,7 +633,11 @@ function switchPage(name) {
   // Each page loads its own data on entry, so opening the console stays cheap.
   if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
   if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
-  if (name === 'models') renderModels();
+  if (name === 'models') {
+    renderModels();
+    loadState().catch(() => {});
+    refreshModelInsights().catch(() => {});
+  }
   if (name === 'status') loadState().catch(() => {});
   if (name === 'maintenance') {
     loadMaintenance().catch((e) => toast(e.message, 'bad'));
@@ -591,6 +650,7 @@ function switchPage(name) {
     loadReport($('report-month').value).catch(() => {});
   }
   if (name === 'requests') loadRequests().catch(() => {});
+  if (name === 'members') loadMembers().catch((e) => toast(e.message, 'bad'));
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -600,6 +660,13 @@ function switchPage(name) {
     loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
   }
 }
+
+// Deep links rendered inside HTML strings (e.g. the fallback hint's jump to
+// the request log) resolve here.
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('[data-goto-tab]');
+  if (link) switchPage(link.dataset.gotoTab);
+});
 
 // Dashboard: the landing page. Pure frontend aggregation over existing
 // endpoints — /api/state carries channels, the subscription summary and the
@@ -691,7 +758,7 @@ function renderDashboard() {
       ? `<span class="days-left expired">${quotaAlerts} 条</span>` : '0 条'),
   ].join('')
     + (upcoming.length ? upcoming.map((r) => dashRow(
-        `${esc(r.vendor)}${r.account ? ' / ' + esc(r.account) : ''}`,
+        `${esc(r.vendor)}${r.account_id ? ' / ' + esc(r.account_id) : ''}`,
         `${esc(r.plan)} · 剩 ${r.days_left} 天`)).join('') : '');
 
   // 自维护（省心）：自主面板。
@@ -896,8 +963,9 @@ function renderSubscriptions() {
       planQuota = esc(quota);
     }
     return `<tr>
-      <td><strong>${esc(r.vendor)}</strong><br><span class="sub-note">${esc(r.account) || '未填账号'}</span></td>
-      <td>${esc(r.plan)}<br><span class="sub-note">${esc(r.tier) || '未填档位'}</span></td>
+      <td><strong>${esc(r.plan)}</strong><br><span class="sub-note">${esc([r.vendor && r.vendor !== r.plan ? r.vendor : '',
+        r.account_id || r.account || '未填账号'].filter(Boolean).join(' · '))}</span></td>
+      <td>${esc(r.tier) || '未填档位'}</td>
       <td>${esc(r.price)} ${esc(r.currency)}</td>
       <td>${esc(cycles[r.billing_cycle] || r.billing_cycle)}</td>
       <td>${esc(r.started_at) || '—'}</td>
@@ -906,39 +974,80 @@ function renderSubscriptions() {
       <td><span class="tag ${esc(r.status)}">${labels[r.status] || r.status}</span></td>
       <td>${r.auto_renew ? '是' : '否'}</td>
       <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${planQuota}</td>
-      <td class="sub-note">${esc((r.channels || []).join(', ')) || '—'}</td>
+      <td class="sub-note">${esc((r.channel_names || r.channels || []).join(', ')) || '—'}</td>
       <td>
         <button class="btn small" data-action="renew" data-id="${esc(r.id)}">续费</button>
         <button class="btn small ghost" data-action="edit-sub" data-id="${esc(r.id)}">编辑</button>
         <button class="btn small danger" data-action="delete-sub" data-id="${esc(r.id)}">删除</button>
       </td>
     </tr>`;
-  }).join('') : '<tr><td colspan="12" class="sub-note">还没有订阅记录，点击「新增订阅」录入厂家、账号、套餐与到期时间。</td></tr>';
+  }).join('') : '<tr><td colspan="12" class="sub-note">还没有订阅记录，点击「新增订阅」选择关联渠道、录入套餐与到期时间。</td></tr>';
 }
 
 function channelPicker(selected) {
   const saved = (Array.isArray(selected) ? selected : []).map((n) => String(n));
   const available = state.config?.channels || [];
-  const names = [...new Set([...available.map((c) => String(c.name)), ...saved])];
-  if (!names.length) {
+  // Channel ids are the stable link; older rows still carry the channel name.
+  const refOf = (c) => String(c.id || c.name);
+  const refs = [...new Set([...available.map(refOf), ...saved])];
+  if (!refs.length) {
     return `<div class="field wide"><label>关联渠道（勾选，可多选）</label>
       <div class="channel-picker empty">还没有可选渠道。请先在「渠道配置」新增渠道并点「保存」，再回来勾选。</div></div>`;
   }
-  const items = names.map((name) => {
-    const c = available.find((x) => String(x.name) === name);
+  const items = refs.map((ref) => {
+    const c = available.find((x) => refOf(x) === ref);
+    const name = c ? String(c.name) : ref;
     const detail = c ? `${c.protocol} · ${c.base_url}` : '渠道不存在（保存时保留原值）';
     return `<label class="pick ${c ? '' : 'missing'}">
-      <input type="checkbox" name="channels" value="${esc(name)}" ${saved.includes(name) ? 'checked' : ''}>
+      <input type="checkbox" name="channels" value="${esc(ref)}" ${saved.includes(ref) ? 'checked' : ''}>
       <span><strong>${esc(name)}</strong><small>${esc(detail)}</small></span>
     </label>`;
   }).join('');
   return `<div class="field wide"><label>关联渠道（勾选，可多选）</label>
     <div class="channel-picker">${items}</div>
-    <small class="pick-note">勾选后自动带出厂家与套餐名称，仍可手动修改</small></div>`;
+    <small class="pick-note">按渠道 ID 关联，渠道改名不影响；勾选后自动带出套餐名称与档位，仍可手动修改</small></div>`;
 }
 
 function pickedChannels(f) {
   return Array.from(f.querySelectorAll('input[name="channels"]:checked'), (n) => n.value);
+}
+
+// --- Account helpers ------------------------------------------------------
+// Accounts are optional: a channel with no account is its own implicit account.
+// They group one vendor's AK/SK so several business lines share a single pair.
+const BUSINESS_LINES = [['', '未指定'], ['coding', 'coding'], ['agent', 'agent'],
+  ['payg', '按量付费']];
+
+const accountsFor = (provider) => (state.config?.accounts || [])
+  .filter((a) => a && (!provider || a.provider === provider));
+
+const accountLabel = (id) => {
+  const a = (state.config?.accounts || []).find((x) => x && x.id === id);
+  return a ? `${a.label || a.id}（${a.id}）` : id;
+};
+
+function accountOptions(provider, current) {
+  const items = accountsFor(provider);
+  const opts = [`<option value="" ${current ? '' : 'selected'}>不绑定账号（渠道自带凭据）</option>`];
+  items.forEach((a) => {
+    opts.push(`<option value="${esc(a.id)}" ${a.id === current ? 'selected' : ''}>${esc(a.label || a.id)}（${esc(a.id)}）</option>`);
+  });
+  if (current && !items.some((a) => a.id === current)) {
+    opts.push(`<option value="${esc(current)}" selected>${esc(current)}（账号不存在）</option>`);
+  }
+  return opts.join('');
+}
+
+function businessLineOptions(current) {
+  const cur = String(current || '');
+  return BUSINESS_LINES.map(([v, l]) =>
+    `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
+}
+
+function selectField(label, name, optionsHtml, hint) {
+  return `<div class="field"><label for="f-${name}">${label}</label>
+    <select id="f-${name}" name="${name}">${optionsHtml}</select>
+    ${hint ? `<small class="hint">${esc(hint)}</small>` : ''}</div>`;
 }
 
 const VENDOR_RULES = [
@@ -975,9 +1084,9 @@ function inferPlan(c) {
 }
 
 function autofillFromChannels(f) {
-  const names = pickedChannels(f);
-  if (!names.length) return;
-  const c = (state.config?.channels || []).find((x) => x.name === names[0]);
+  const refs = pickedChannels(f);
+  if (!refs.length) return;
+  const c = (state.config?.channels || []).find((x) => String(x.id || x.name) === refs[0]);
   if (!c) return;
   const fill = (field, value) => {
     const el = f.elements.namedItem(field);
@@ -986,7 +1095,6 @@ function autofillFromChannels(f) {
     el.value = value;
     el.dataset.autofill = '1';
   };
-  fill('vendor', c.vendor || inferVendor(c));
   fill('plan', c.plan || inferPlan(c));
   if (c.tier) fill('tier', c.tier);
 }
@@ -994,7 +1102,8 @@ function autofillFromChannels(f) {
 function openSubEditor(index) {
   state.editingSub = index;
   const r = index >= 0 ? state.subs.subscriptions[index] : {
-    vendor: '', account: '', plan: '', tier: '', price: '', currency: 'CNY',
+    account: '', account_id: '', business_line: '', plan: '', tier: '',
+    price: '', currency: 'CNY',
     billing_cycle: 'monthly', started_at: todayISO(), expires_at: '',
     auto_renew: false, remind_days: 7, channels: [], note: '',
     quota_limit: '', quota_used: '', quota_unit: '', quota_updated_at: '',
@@ -1010,9 +1119,12 @@ function openSubEditor(index) {
     <form id="sub-form">
       <div class="form-grid">
         ${channelPicker(r.channels)}
-        ${field('厂家 *', 'vendor', r.vendor, { placeholder: '火山引擎' })}
-        ${field('账号 / 备注', 'account', r.account, { placeholder: '账号 A' })}
-        ${field('套餐名称 *', 'plan', r.plan, { placeholder: 'coding plan' })}
+        ${field('套餐名称 *', 'plan', r.plan, { placeholder: 'agentplan', hint: '这次订阅或套餐的名称；厂家由关联渠道的 provider 决定' })}
+        ${field('账号备注', 'account', r.account || '', { placeholder: '账号 A（自由文本）' })}
+        ${selectField('绑定账号', 'account_id',
+          accountOptions('', r.account_id || ''), '选择已建档账号后，余量按账号聚合；未建档就只填左侧备注')}
+        ${selectField('业务线', 'business_line',
+          businessLineOptions(r.business_line || ''), 'coding / agent / payg：同账号多条业务线分别记账')}
         ${field('档位', 'tier', r.tier, { placeholder: 'Pro / 基础版' })}
         ${field('价格 *', 'price', r.price, { type: 'number' })}
         <div class="field"><label for="f-currency">币种</label><select id="f-currency" name="currency">${currencies}</select></div>
@@ -1047,7 +1159,7 @@ function openSubEditor(index) {
   f.querySelectorAll('input[name="channels"]').forEach((box) => {
     box.addEventListener('change', () => autofillFromChannels(f));
   });
-  ['vendor', 'plan', 'tier'].forEach((n) => {
+  ['plan', 'tier'].forEach((n) => {
     const el = f.elements.namedItem(n);
     if (el) el.addEventListener('input', () => { el.dataset.autofill = ''; });
   });
@@ -1061,7 +1173,8 @@ function saveSubEditor() {
   try {
     const record = {
       ...(state.editingSub >= 0 ? { id: state.subs.subscriptions[state.editingSub].id } : {}),
-      vendor: val('vendor'), account: val('account'), plan: val('plan'), tier: val('tier'),
+      account: val('account'), account_id: val('account_id'),
+      business_line: val('business_line'), plan: val('plan'), tier: val('tier'),
       price: Number(val('price') || 0), currency: val('currency'),
       billing_cycle: val('billing_cycle'), started_at: val('started_at'),
       expires_at: val('expires_at'), remind_days: Number(val('remind_days') || 7),
@@ -1076,7 +1189,10 @@ function saveSubEditor() {
       models: f.elements.namedItem('models')?.value ?? '',
       note: val('note'),
     };
-    if (!record.vendor || !record.plan) throw new Error('厂家和套餐名称不能为空');
+    if (!record.plan) throw new Error('套餐名称不能为空');
+    // Keep the display names on the local row (the server returns them too).
+    record.channel_names = record.channels.map((ref) =>
+      (state.config?.channels || []).find((c) => String(c.id || c.name) === ref)?.name || ref);
     if (state.editingSub >= 0) state.subs.subscriptions[state.editingSub] = record;
     else state.subs.subscriptions.push(record);
     closeModal();
@@ -1109,7 +1225,7 @@ function openRenewModal(id) {
   if (!r) return;
   const months = { monthly: 1, quarterly: 3, yearly: 12 }[r.billing_cycle] || 1;
   const suggested = addMonthsISO(r.expires_at, months, !r.expires_at || r.expires_at < todayISO());
-  openModal('续费 · ' + r.vendor + ' / ' + r.plan, `
+  openModal('续费 · ' + (r.vendor && r.vendor !== r.plan ? r.vendor + ' / ' : '') + r.plan, `
     <form id="renew-form">
       <div class="form-grid">
         ${field('新开始日期', 'started_at', todayISO(), { type: 'date' })}
@@ -1146,7 +1262,7 @@ function openRenewModal(id) {
 
 async function deleteSub(id) {
   const record = state.subs.subscriptions.find((x) => x.id === id);
-  if (!record || !(await askConfirm('删除订阅', `删除订阅「${record.vendor} / ${record.plan}」？`))) return;
+  if (!record || !(await askConfirm('删除订阅', `删除订阅「${record.plan}」？`))) return;
   state.subs.subscriptions = state.subs.subscriptions.filter((x) => x.id !== id);
   markSubDirty();
   renderSubscriptions();
@@ -1222,9 +1338,146 @@ function renderVendors() {
             ? `<button type="button" class="btn small ghost" data-action="restore-vendor" data-id="${esc(p.id)}">恢复内置</button>` : ''}
         </div>
       </div>
+      ${vendorAccountsHtml(p.id)}
       ${modes || '<p class="sub-note">该厂家没有配置模式。</p>'}
     </div>`;
   }).join('');
+}
+
+// --- Account management (vendor page) -------------------------------------
+// One vendor's management-plane AK/SK shared by several channels. Optional:
+// a vendor with a single key can keep using the vendor-level credential slot.
+function ensureAccounts() {
+  if (!Array.isArray(state.config.accounts)) state.config.accounts = [];
+  return state.config.accounts;
+}
+
+function providerCredEnvs(providerId) {
+  const p = (state.providers || []).find((x) => x.id === providerId);
+  const seen = new Map();
+  Object.values((p && p.modes) || {}).forEach((m) => {
+    (m.credential_envs || []).forEach((e) => {
+      if (e && e.env && !seen.has(e.env)) seen.set(e.env, e);
+    });
+  });
+  return Array.from(seen.values());
+}
+
+function vendorAccountsHtml(providerId) {
+  const rows = accountsFor(providerId).map((a) => {
+    const credCount = Object.keys(a.credentials || {}).length;
+    return `<div class="vendor-account">
+      <span class="acc-main"><strong>${esc(a.label || a.id)}</strong> <code>${esc(a.id)}</code>
+        <span class="tag ${credCount ? 'active' : 'unknown'}">${credCount ? '凭据已配' : '无凭据'}</span>
+        ${a.note ? `<small class="sub-note">${esc(a.note)}</small>` : ''}</span>
+      <span class="chain-actions">
+        <button type="button" class="icon" data-action="edit-account" data-id="${esc(a.id)}" data-provider="${esc(providerId)}">编辑</button>
+        <button type="button" class="icon" data-action="delete-account" data-id="${esc(a.id)}" data-provider="${esc(providerId)}">删除</button>
+      </span>
+    </div>`;
+  }).join('');
+  return `<div class="vendor-accounts">
+    <div class="vendor-accounts-head"><strong>账号档案</strong>
+      <button type="button" class="btn small ghost" data-action="add-account" data-provider="${esc(providerId)}">+ 新增账号</button>
+    </div>
+    ${rows || '<p class="sub-note">未建档。同一 AK/SK 的多条业务线可共用一个账号；单 Key 厂家可跳过。</p>'}
+  </div>`;
+}
+
+function openAccountEditor(providerId, accountId) {
+  const p = (state.providers || []).find((x) => x.id === providerId)
+    || { id: providerId, name: providerId };
+  const existing = (state.config.accounts || []).find((a) => a && a.id === accountId) || null;
+  const credInputs = providerCredEnvs(providerId).map((e) => {
+    const prev = (existing && existing.credentials && existing.credentials[e.env]) || '';
+    const masked = prev === '***';
+    return `<div class="field"><label for="f-acc-${esc(e.env)}">${esc(e.label || e.env)}</label>
+      <input id="f-acc-${esc(e.env)}" data-acc-env="${esc(e.env)}" type="text"
+        value="${masked ? '' : esc(prev)}" placeholder="${masked ? '已配置，留空保持不变' : esc(e.env)}"
+        autocomplete="off" spellcheck="false"></div>`;
+  }).join('');
+  openModal(existing ? `编辑账号 · ${p.name || providerId}` : `新增账号 · ${p.name || providerId}`, `
+    <form id="account-form"><div class="form-grid">
+      ${field('账号 id', 'acc-id', existing ? existing.id : '', {
+        placeholder: 'volc-main',
+        hint: existing ? '账号 id 不可修改' : '字母开头，可含数字 / 下划线 / 横线，≤64 字符' })}
+      ${field('显示名', 'acc-label', existing ? (existing.label || '') : (p.name || ''), {
+        placeholder: '火山主账号' })}
+      ${field('备注', 'acc-note', existing ? (existing.note || '') : '', {
+        wide: true, placeholder: '可选' })}
+      ${credInputs
+        ? `<div class="field wide"><label>管理面凭据（AK/SK）</label>
+            <div class="form-grid">${credInputs}</div>
+            <small class="hint">只用于余量 / 套餐查询，不是数据面 API Key；保存后回显 ***。</small></div>`
+        : '<p class="sub-note wide">该厂家不需要管理面凭据。</p>'}
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn ghost" data-account="cancel">取消</button>
+      <button type="button" class="btn primary" data-account="save">保存账号</button>
+    </div></form>`);
+  const f = $('account-form');
+  if (existing) f.elements.namedItem('acc-id').disabled = true;
+  $('modal').querySelector('[data-account="cancel"]').onclick = closeModal;
+  $('modal').querySelector('[data-account="save"]').onclick = () => saveAccount(providerId, existing);
+}
+
+function saveAccount(providerId, existing) {
+  const f = $('account-form');
+  const v = (n) => String(f.elements.namedItem(n)?.value ?? '').trim();
+  const id = existing ? existing.id : v('acc-id');
+  if (!id) { toast('账号 id 不能为空', 'bad'); return; }
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(id)) {
+    toast('账号 id 需字母开头，仅含字母 / 数字 / 下划线 / 横线，≤64 字符', 'bad'); return;
+  }
+  const accounts = ensureAccounts();
+  if (!existing && accounts.some((a) => a && a.id === id)) {
+    toast(`账号 ${id} 已存在`, 'bad'); return;
+  }
+  const envs = providerCredEnvs(providerId);
+  const prevCreds = (existing && existing.credentials) || {};
+  const creds = {};
+  f.querySelectorAll('[data-acc-env]').forEach((inp) => {
+    const env = inp.dataset.accEnv;
+    const value = inp.value.trim();
+    if (value) creds[env] = value;
+    else if (prevCreds[env]) creds[env] = prevCreds[env];
+  });
+  if (!Object.keys(creds).length && envs.length) {
+    toast('至少填写一项管理面凭据（AK/SK）', 'bad'); return;
+  }
+  const entry = { id, provider: providerId, label: v('acc-label') || id };
+  // Vendors without a management plane keep whatever credentials they had
+  // (free-form escape hatch) instead of silently dropping them on edit.
+  const finalCreds = envs.length ? creds : { ...prevCreds, ...creds };
+  if (Object.keys(finalCreds).length) entry.credentials = finalCreds;
+  const note = v('acc-note');
+  if (note) entry.note = note;
+  if (existing) Object.assign(existing, entry);
+  else accounts.push(entry);
+  markDirty();
+  closeModal();
+  renderVendors();
+  renderChannels();
+  toast(`账号 ${id} 已${existing ? '更新' : '新增'}，点「保存配置」后生效`, 'warn');
+}
+
+async function deleteAccount(accountId) {
+  const refs = [];
+  (state.config.channels || []).forEach((c) => {
+    if (c && c.account === accountId) refs.push(`渠道「${c.name}」`);
+  });
+  ((state.subs && state.subs.subscriptions) || []).forEach((s) => {
+    if (s && s.account_id === accountId) refs.push(`订阅「${s.plan || s.id}」`);
+  });
+  const msg = refs.length
+    ? `以下对象正在引用该账号：${refs.join('、')}。删除后它们回退到渠道自带凭据，确认删除？`
+    : '确认删除该账号？';
+  if (!await askConfirm('删除账号', msg)) return;
+  state.config.accounts = (state.config.accounts || []).filter((a) => a && a.id !== accountId);
+  markDirty();
+  renderVendors();
+  renderChannels();
+  toast(`账号 ${accountId} 已删除（保存配置后生效）`, 'warn');
 }
 
 async function maintainVendor(id) {
@@ -1526,6 +1779,78 @@ async function loadNotifications() {
   renderNotifications();
 }
 
+// ---------------------------------------------------------------- members
+// Member keys + per-member usage. One page, two tables; keys are shown in
+// full so the admin can copy them straight to the member (same as One-API).
+
+async function loadMembers(range) {
+  if (range) state.memberRange = range;
+  const [keys, usage] = await Promise.all([
+    api('/api/keys'),
+    api('/api/usage/users/' + state.memberRange),
+  ]);
+  document.querySelectorAll('[data-member-range]').forEach((b) =>
+    b.classList.toggle('active', Number(b.dataset.memberRange) === state.memberRange));
+  renderMemberKeys(keys.keys || []);
+  renderMemberUsage(usage);
+}
+
+function renderMemberKeys(rows) {
+  const body = $('member-keys-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有成员 key。上方输入名称点「新建 Key」即可签发。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((r) => {
+    const when = r.created ? new Date(r.created * 1000).toLocaleString() : '—';
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td><code class="member-key" data-copy="${esc(r.key)}" title="点击复制">${esc(r.key)}</code></td>
+      <td>${r.enabled !== false ? '<span class="tag active">有效</span>' : '<span class="tag unknown">已吊销</span>'}</td>
+      <td>${when}</td>
+      <td>${r.enabled !== false
+        ? `<button class="btn small ghost" data-revoke="${esc(r.key)}">吊销</button>`
+        : '<span class="sub-note">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('[data-copy]').forEach((el) => {
+    el.onclick = () => {
+      navigator.clipboard.writeText(el.dataset.copy)
+        .then(() => toast('Key 已复制到剪贴板'))
+        .catch(() => toast('复制失败，请手动选择', 'bad'));
+    };
+  });
+  body.querySelectorAll('[data-revoke]').forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm('吊销后该 key 立即失效，确定？')) return;
+      try {
+        await api('/api/keys/revoke', { method: 'POST', body: { key: el.dataset.revoke } });
+        toast('已吊销');
+        loadMembers().catch(() => {});
+      } catch (e) { toast(e.message, 'bad'); }
+    };
+  });
+}
+
+function renderMemberUsage(usage) {
+  const body = $('member-usage-body');
+  const rows = (usage && usage.users) || [];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="4" class="sub-note">暂无按人统计。成员开始用各自的 key 调用后自动累计。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((r) => {
+    const rate = r.requests ? ((r.requests - r.failed) / r.requests * 100).toFixed(1) + '%' : '—';
+    return `<tr>
+      <td>${esc(r.name || '匿名')}</td>
+      <td>${r.requests} / ${r.failed}</td>
+      <td>${Number(r.tokens || 0).toLocaleString()}</td>
+      <td>${rate}</td>
+    </tr>`;
+  }).join('');
+}
+
+
 function renderNotifications() {
   const data = state.notify;
   if (!data) return;
@@ -1575,15 +1900,233 @@ async function checkNotifications() {
   } catch (err) { toast(err.message, 'bad'); }
 }
 
+// ---- 模型接入：名字落点可视化、链内展开、最近请求联动 ----
+
+const FREE_CHANNEL_MACRO = '$free';
+const REQUEST_LABELS = {
+  ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
+  no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+};
+
+function requestTag(status) {
+  const cls = status === 'ok' || status === 'local' ? 'active'
+    : (status === 'upstream_error' || status === 'network_error' || status === 'rejected')
+      ? 'expired' : 'unknown';
+  return `<span class="tag ${cls}">${esc(REQUEST_LABELS[status] || status || '—')}</span>`;
+}
+
+// Cooldown countdown for display: 95 -> "1分35秒".
+function fmtDur(seconds) {
+  const s = Math.max(1, Math.round(seconds));
+  if (s < 60) return s + '秒';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + '分' + (s % 60 ? (s % 60) + '秒' : '');
+  const h = Math.floor(m / 60);
+  return h + '小时' + (m % 60 ? (m % 60) + '分' : '');
+}
+
+// Mirror of the server-side "$free" route macro: every enabled tier="free"
+// channel speaking the route's protocol joins the chain unless named already.
+// The console cannot re-derive tier from subscriptions, so the channel's raw
+// config tier is the closest available approximation.
+function expandedChain(route) {
+  const raw = (route && route.channels) || [];
+  const listed = raw.filter((x) => x && x !== FREE_CHANNEL_MACRO);
+  const out = listed.map((name) => ({ name, viaMacro: false }));
+  if (!raw.includes(FREE_CHANNEL_MACRO)) return out;
+  (state.config.channels || []).forEach((c) => {
+    if (c.protocol !== route.protocol) return;
+    if (c.tier !== 'free' || c.enabled === false) return;
+    if (listed.includes(c.name)) return;
+    out.push({ name: c.name, viaMacro: true });
+  });
+  return out;
+}
+
+function channelEntry(name) {
+  return (state.config.channels || []).find((c) => c.name === name);
+}
+
+function channelSnap(name) {
+  return (state.snapshot?.channels || []).find((c) => c.name === name);
+}
+
+function modelStateOf(exposed) {
+  return (state.snapshot?.model_states || []).find((m) => m.model === exposed);
+}
+
+// Health of one (channel, wire model) pair. Cooldowns are tracked per wire
+// model (ChannelState.model_cooldown_until), channel cooling above that.
+function pairStatus(ch, snap, wire) {
+  if (ch.enabled === false) return { cls: 'off', text: '已停用' };
+  if (snap && snap.cooling) return { cls: 'warn', text: '渠道冷却 ' + fmtDur(snap.cooling_seconds || 0) };
+  const cd = snap && snap.model_cooldowns ? snap.model_cooldowns[wire] : 0;
+  if (cd > 0) return { cls: 'warn', text: '模型冷却 ' + fmtDur(cd) };
+  return { cls: 'active', text: '可用' };
+}
+
+function pairReady(ch, snap, wire) {
+  return !!ch && ch.enabled !== false && !!wire
+    && !(snap && (snap.cooling || (snap.model_cooldowns && snap.model_cooldowns[wire] > 0)));
+}
+
+// Where the next request for this brand lands right now: first ready channel
+// in the chain, dispatched to its auto model.
+function currentLanding(route) {
+  if (!route) return { cls: 'off', text: '链不存在' };
+  const nodes = expandedChain(route);
+  if (!nodes.length) return { cls: 'off', text: '链为空' };
+  for (const node of nodes) {
+    const ch = channelEntry(node.name);
+    const snap = channelSnap(node.name);
+    if (pairReady(ch, snap, ch && ch.auto)) {
+      return { cls: 'active', text: node.name + ' · ' + ch.auto };
+    }
+  }
+  return { cls: 'warn', text: '链内暂无可用落点' };
+}
+
+// Expandable detail under a brand row: one node per chain channel, listing
+// its auto mapping and every explicit model pair with live health.
+function chainDetail(route) {
+  const nodes = expandedChain(route);
+  if (!nodes.length) {
+    return '<div class="chain-node"><div class="chain-node-head">链为空</div></div>';
+  }
+  return nodes.map((node, i) => {
+    const ch = channelEntry(node.name);
+    const snap = channelSnap(node.name);
+    const dead = !ch || ch.enabled === false;
+    const pairs = [];
+    if (ch && ch.auto) {
+      const st = pairStatus(ch, snap, ch.auto);
+      pairs.push(`<li><span class="tag mixed">auto</span><code>${esc(ch.auto)}</code><span class="tag ${st.cls}">${esc(st.text)}</span></li>`);
+    }
+    Object.entries((ch && ch.models) || {}).forEach(([exposed, wire]) => {
+      if (exposed === 'auto' || exposed === '*') return;
+      const st = pairStatus(ch, snap, wire);
+      const ms = modelStateOf(exposed);
+      const label = ms ? `<span class="tag ${STATUS_CLASS[ms.status] || ''}">${esc(ms.label)}</span>` : '';
+      pairs.push(`<li><code>${esc(exposed)}</code><span class="sub-note">→</span><code>${esc(wire)}</code>${label}<span class="tag ${st.cls}">${esc(st.text)}</span></li>`);
+    });
+    const head = `<div class="chain-node-head"><span class="order">${i + 1}</span><strong>${esc(node.name)}</strong>`
+      + (node.viaMacro ? '<span class="tag mixed">$free</span>' : '')
+      + (ch ? `<span class="sub-note">${esc(ch.protocol || '')}</span>` : '<span class="tag off">未定义</span>')
+      + (dead ? '<span class="tag off">已停用</span>' : '')
+      + (snap && snap.cooling ? `<span class="tag warn">渠道冷却 ${esc(fmtDur(snap.cooling_seconds || 0))}</span>` : '')
+      + '</div>';
+    const body = pairs.length ? pairs.join('') : '<li class="sub-note">该渠道没有声明任何模型映射</li>';
+    return `<div class="chain-node">${head}<ul class="chain-models">${body}</ul></div>`;
+  }).join('');
+}
+
+// Expanded panels survive re-renders (typing in the policy box or a state
+// refresh re-renders rows); keyed by brand name, not row index.
+function brandPanelState(name) {
+  if (!state.brandPanels) state.brandPanels = {};
+  return state.brandPanels[name] || (state.brandPanels[name] = { chain: false, recent: false });
+}
+
+function brandRouteOf(name) {
+  const chain = ((state.config.models || {}).branded || {})[name];
+  return (state.config.routes || []).find((r) => r.name === chain) || null;
+}
+
+function brandRecentHtml(name) {
+  const entries = (state.recentEntries || []).filter((e) => e.model === name).slice(0, 8);
+  if (!entries.length) {
+    return '<ul class="recent-requests"><li class="sub-note">最近 200 条请求里没有这个模型名的调用</li></ul>';
+  }
+  return '<ul class="recent-requests">' + entries.map((e) => {
+    const at = logTime(e.ts);
+    const dest = e.channel
+      ? esc(e.channel) + (e.wire_model ? ' <span class="sub-note">·</span> ' + esc(e.wire_model) : '')
+      : '—';
+    return `<li><span class="sub-note">${esc(at.date)} ${esc(at.time)}</span>${requestTag(e.status)}`
+      + `<span>${dest}</span><span class="sub-note">${esc(e.mode || '')} · ${esc(e.tokens ?? 0)} tok · ${esc(e.ms ?? 0)} ms</span></li>`;
+  }).join('') + '</ul>';
+}
+
 function renderBrandList() {
-  const p = state.config.models || {};
-  const rows = Object.entries(p.branded || {});
-  $('brand-list').innerHTML = rows.length ? rows.map(([name, hint]) => `
-    <div class="model-row">
-      <code>${esc(name)}</code>
-      <span class="sub-note">→ ${esc(hint)} 链 · 内部调度</span>
-      <button class="btn small ghost" data-copy="${esc(name)}">复制</button>
-    </div>`).join('') : '<div class="chart-empty">还没有自有模型名</div>';
+  if (!state.config) return;
+  const branded = (state.config.models && state.config.models.branded) || {};
+  const names = Object.keys(branded);
+  $('brand-list').innerHTML = names.length ? names.map((name) => {
+    const st = brandPanelState(name);
+    const route = brandRouteOf(name);
+    const landing = currentLanding(route);
+    const chainBody = st.chain ? chainDetail(route) : '';
+    const recentBody = st.recent ? brandRecentHtml(name) : '';
+    return `<div class="model-row brand-block">
+      <div class="brand-head">
+        <code>${esc(name)}</code>
+        <span class="sub-note">→ ${esc(branded[name])} 链 · 内部调度</span>
+        ${route ? `<span class="tag ${landing.cls}" title="按当前健康度推断的下一个落点">${esc(landing.text)}</span>`
+          : '<span class="tag off">链不存在</span>'}
+        <span class="brand-actions">
+          <button class="btn small ghost" data-copy="${esc(name)}">复制</button>
+          <button class="btn small ghost" data-chain-toggle="${esc(name)}">${st.chain ? '收起链内' : '链内模型'}</button>
+          <button class="btn small ghost" data-recent-toggle="${esc(name)}">${st.recent ? '收起日志' : '最近请求'}</button>
+        </span>
+      </div>
+      <div class="brand-panel chain" ${st.chain ? '' : 'hidden'}>${chainBody}</div>
+      <div class="brand-panel recent" ${st.recent ? '' : 'hidden'}>${recentBody}</div>
+    </div>`;
+  }).join('') : '<div class="chart-empty">还没有自有模型名</div>';
+}
+
+function toggleChain(button) {
+  const name = button.dataset.chainToggle;
+  const st = brandPanelState(name);
+  st.chain = !st.chain;
+  const row = button.closest('.model-row');
+  const panel = row && row.querySelector('.brand-panel.chain');
+  if (!panel) return;
+  if (st.chain) panel.innerHTML = chainDetail(brandRouteOf(name));
+  panel.hidden = !st.chain;
+  button.textContent = st.chain ? '收起链内' : '链内模型';
+}
+
+async function toggleRecent(button) {
+  const name = button.dataset.recentToggle;
+  const st = brandPanelState(name);
+  st.recent = !st.recent;
+  const row = button.closest('.model-row');
+  const panel = row && row.querySelector('.brand-panel.recent');
+  if (!panel) return;
+  button.textContent = st.recent ? '收起日志' : '最近请求';
+  if (!st.recent) { panel.hidden = true; return; }
+  panel.hidden = false;
+  if (!state.recentEntries) {
+    panel.innerHTML = '<ul class="recent-requests"><li class="sub-note">加载中…</li></ul>';
+    try {
+      state.recentEntries = (await api('/api/requests/200')).entries || [];
+    } catch (err) {
+      panel.innerHTML = `<ul class="recent-requests"><li class="sub-note">加载失败：${esc(err.message)}</li></ul>`;
+      return;
+    }
+  }
+  panel.innerHTML = brandRecentHtml(name);
+}
+
+// Longer audit tail for the models page: powers both the per-brand "最近请求"
+// panels and the fallback hint below the policy editor.
+async function refreshModelInsights() {
+  const data = await api('/api/requests/200');
+  state.recentEntries = data.entries || [];
+  renderBrandList();
+  renderFallbackHint();
+}
+
+function renderFallbackHint() {
+  const box = $('fallback-hint');
+  if (!box) return;
+  const fallbacks = (state.recentEntries || []).filter((e) => e.mode === 'fallback');
+  if (!fallbacks.length) { box.hidden = true; box.innerHTML = ''; return; }
+  const names = [...new Set(fallbacks.map((e) => e.model).filter(Boolean))];
+  box.hidden = false;
+  box.innerHTML = `最近 ${fallbacks.length} 次请求是未知模型名走了兜底调度（${esc(names.slice(0, 6).join('、'))}${names.length > 6 ? ' 等' : ''}）。如果是固定使用的名字，建议在上面固化为自有模型名；明细见 `
+    + '<button class="btn small ghost" data-goto-tab="requests">请求日志</button>。';
 }
 
 const STATUS_CLASS = { free_ok: 'free', free_exhausted: 'warn', paid_only: 'paid', available: 'mixed', no_channel: 'off' };
@@ -1604,30 +2147,189 @@ function renderExactModels() {
     ? rows.join('') : '<div class="chart-empty">还没有显式模型映射，任意名字都会内部调度</div>';
 }
 
+// Ready-to-paste per-tool snippets. The gateway base URL is the console's
+// origin; the key is never echoed, so "<网关密钥>" stays a placeholder.
+const ACCESS_TOOLS = {
+  'claude-code': (model, base) => [
+    '# Claude Code（settings.json 的 env 段，或系统环境变量）',
+    'ANTHROPIC_BASE_URL=' + base,
+    'ANTHROPIC_AUTH_TOKEN=<网关密钥>',
+    'ANTHROPIC_MODEL=' + model,
+    'ANTHROPIC_SMALL_FAST_MODEL=' + model,
+  ].join('\n'),
+  'codex': (model, base) => [
+    '# ~/.codex/config.toml',
+    'model = "' + model + '"',
+    'model_provider = "planrouter"',
+    '',
+    '[model_providers.planrouter]',
+    'name = "PlanRouter"',
+    'base_url = "' + base + '/v1"',
+    'wire_api = "chat"',
+    'env_key = "PLANROUTER_API_KEY"',
+    '',
+    '# 另在环境变量中设置：',
+    '# export PLANROUTER_API_KEY=<网关密钥>',
+  ].join('\n'),
+  'cline': (model, base) => [
+    'Cline / VS Code 插件设置（API Provider 选 OpenAI Compatible）：',
+    'Base URL: ' + base + '/v1',
+    'API Key:  <网关密钥>',
+    'Model ID: ' + model,
+  ].join('\n'),
+  'dsh': (model, base) => [
+    '# ~/.dsh/profiles/<profile>/cordis.patch.yml（顶层 YAML 数组）',
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: planrouter',
+    '    model: ' + model,
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      planrouter:',
+    '        apiKeyEnv: ROUTER_API_KEY',
+    '        api: openai-completions',
+    '        baseURL: ' + base + '/v1',
+    '        compat:',
+    '          supportsDeveloperRole: false',
+    '          maxTokensField: max_tokens',
+    '        models:',
+    '          - id: ' + model,
+    '',
+    '# 另在环境变量中设置 ROUTER_API_KEY=<网关密钥>',
+    '# 建 profile：dsh --profile planrouter --from-default-profile web',
+  ].join('\n'),
+  'trae': (model, base) => [
+    'Trae（设置 → AI/LLM → 添加提供方，类型选 OpenAI/Custom Model）：',
+    'API Base: ' + base + '/v1',
+    'API Key:  <网关密钥>',
+    '模型名:   ' + model,
+    '',
+    '# 注意：Agent 模式依赖 tool calling，免费上游模型可能报 400，',
+    '# 此时换支持函数调用的模型或走付费渠道。',
+  ].join('\n'),
+  'opencode': (model, base) => [
+    '// opencode.json（项目根目录，或 ~/.config/opencode/opencode.json）',
+    JSON.stringify({
+      '$schema': 'https://opencode.ai/config.json',
+      'providers': {
+        'planrouter': {
+          'name': 'PlanRouter',
+          'env': ['ROUTER_API_KEY'],
+          'package': '@opencode/ai/providers/openai-compatible',
+          'settings': { 'baseURL': base + '/v1' },
+          'models': { [model]: { 'name': model } },
+        },
+      },
+    }, null, 2),
+    '// 另设置环境变量 ROUTER_API_KEY=<网关密钥>，会话内 /models 选择模型',
+  ].join('\n'),
+  'codebuddy': (model, base) => [
+    '// ~/.codebuddy/models.json（用户级）或项目根 .codebuddy/models.json（项目级）',
+    JSON.stringify({
+      'models': [{
+        'id': model,
+        'name': model + ' (PlanRouter)',
+        'vendor': 'Custom',
+        'url': base + '/v1',
+        'apiKey': '<网关密钥>',
+        'supportsToolCall': true,
+      }],
+      'availableModels': [model],
+    }, null, 2),
+    '// 启动：codebuddy --model ' + model + '，或会话内 /model 切换',
+  ].join('\n'),
+  'openai': (model, base) => [
+    'base_url = "' + base + '/v1"',
+    'api_key  = "<网关密钥>"',
+    'model    = "' + model + '"',
+  ].join('\n'),
+  'anthropic': (model, base) => [
+    'base_url = "' + base + '"   # Anthropic 协议用根路径（/v1/messages）',
+    'api_key  = "<网关密钥>"      # x-api-key 请求头',
+    'model    = "' + model + '"',
+  ].join('\n'),
+};
+
+function renderAccessSnippet() {
+  const box = $('access-snippet');
+  if (!box) return;
+  const tool = $('access-tool').value;
+  const model = $('access-model').value || 'auto';
+  const build = ACCESS_TOOLS[tool] || ACCESS_TOOLS.openai;
+  box.value = build(model, location.origin);
+}
+
+function fillAccessModels() {
+  const sel = $('access-model');
+  if (!sel) return;
+  const names = Object.keys(((state.config.models || {}).branded) || {});
+  const prev = sel.value;
+  sel.innerHTML = (names.length ? names : ['auto'])
+    .map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (names.includes(prev)) sel.value = prev;
+}
+
 function renderModels() {
   const p = state.config.models || {};
   $('set-branded').value = Object.entries(p.branded || {})
     .map(([name, hint]) => name + '=' + hint).join('\n');
   $('set-fallback').checked = p.fallback_unknown !== false;
   $('set-fallback-route').value = p.fallback_route || 'default';
+  renderPolicyErrors([]);
   renderBrandList();
   renderExactModels();
+  fillAccessModels();
+  renderAccessSnippet();
 }
 
-function syncModelPolicy() {
-  const branded = {};
-  $('set-branded').value.split('\n').forEach((line) => {
+function renderPolicyErrors(errors) {
+  const box = $('policy-errors');
+  if (!box) return;
+  if (!errors.length) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = errors.map((e) => `<div>${esc(e)}</div>`).join('');
+}
+
+// Strict "name=route" parsing for the policy box: unlike the old free-form
+// parser, a line without "=" is an error, not a silent "default" mapping.
+function parseBrandedLines(text, errors) {
+  const out = {};
+  text.split('\n').forEach((line, idx) => {
     const s = line.trim();
     if (!s) return;
     const i = s.indexOf('=');
-    const name = (i > 0 ? s.slice(0, i) : s).trim();
-    if (name) branded[name] = i > 0 ? s.slice(i + 1).trim() : 'default';
+    const name = i > 0 ? s.slice(0, i).trim() : '';
+    const chain = i > 0 ? s.slice(i + 1).trim() : '';
+    if (!name || !chain) {
+      errors.push(`第 ${idx + 1} 行「${s}」格式应为：模型名=路由链名`);
+      return;
+    }
+    if (out[name] && out[name] !== chain) {
+      errors.push(`模型名「${name}」重复定义（${out[name]} / ${chain}）`);
+    }
+    out[name] = chain;
   });
-  state.config.models = {
-    branded,
-    fallback_unknown: $('set-fallback').checked,
-    fallback_route: $('set-fallback-route').value.trim() || 'default',
-  };
+  return out;
+}
+
+function syncModelPolicy() {
+  const errors = [];
+  const branded = parseBrandedLines($('set-branded').value, errors);
+  const routeNames = new Set((state.config.routes || []).map((r) => r.name));
+  Object.entries(branded).forEach(([name, chain]) => {
+    if (!routeNames.has(chain)) {
+      errors.push(`模型名「${name}」指向的链「${chain}」不存在（现有：${[...routeNames].join('、') || '无'}）`);
+    }
+  });
+  const fallbackOn = $('set-fallback').checked;
+  const fallbackRoute = $('set-fallback-route').value.trim() || 'default';
+  if (fallbackOn && !routeNames.has(fallbackRoute)) {
+    errors.push(`未知名字默认走的链「${fallbackRoute}」不存在（现有：${[...routeNames].join('、') || '无'}）`);
+  }
+  renderPolicyErrors(errors);
+  if (errors.length) { renderBrandList(); return; }
+  state.config.models = { branded, fallback_unknown: fallbackOn, fallback_route: fallbackRoute };
   markDirty();
   renderBrandList();
 }
@@ -1643,23 +2345,22 @@ $('model-status-filter').addEventListener('click', (e) => {
 });
 $('set-fallback-route').addEventListener('input', syncModelPolicy);
 $('set-fallback').addEventListener('change', syncModelPolicy);
+$('access-tool').addEventListener('change', renderAccessSnippet);
+$('access-model').addEventListener('change', renderAccessSnippet);
+$('btn-copy-access').addEventListener('click', () => copyText($('access-snippet').value));
 $('brand-list').addEventListener('click', (e) => {
+  const chain = e.target.closest('button[data-chain-toggle]');
+  if (chain) { toggleChain(chain); return; }
+  const recent = e.target.closest('button[data-recent-toggle]');
+  if (recent) { toggleRecent(recent); return; }
   const button = e.target.closest('button[data-copy]');
-  if (!button) return;
-  const value = button.dataset.copy;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(value).then(
-      () => toast('已复制：' + value),
-      () => toast('复制失败，请手动选中：' + value, 'warn'),
-    );
-  } else {
-    toast('请手动复制：' + value, 'warn');
-  }
+  if (button) copyText(button.dataset.copy);
 });
 
 async function loadRequests() {
   state.requests = await api('/api/requests/50');
   renderRequests();
+  refreshModelInsights().catch(() => {});
 }
 
 // The audit log stores UTC ("2026-11-10T04:39:54Z"). Show it in the browser's
@@ -2333,7 +3034,7 @@ function renderScores() {
         <code>${esc(c.name)}</code>
         <code>${esc(wire)}</code>
         ${scoreBadge(score, c.name, wire)}
-        <span class="sub-note">${score > 0 ? '稳定' : '不稳定'} · 参与路由排序</span>
+        <span class="sub-note">${score > 0 ? '稳定' : '不稳定'} · ${score <= -3 ? '已沉底，衰减回升后归位' : '按链顺序参与调度'}</span>
       </div>`);
     });
   });
@@ -2751,9 +3452,14 @@ function renderCatalogList(models) {
   const mapped = new Set(Object.keys(current).filter((k) => k !== 'auto' && k !== '*'));
   const FREE_ID = /(:free|-free)$/i;
   const channelName = ($('editor-form').elements.namedItem('name')?.value || '').trim();
+  // Subscriptions link channels by id; accept the name too for legacy rows.
+  const channelId = String((state.config?.channels || [])
+    .find((c) => String(c.name) === channelName)?.id || '');
+  const channelRefs = new Set([channelName, channelId].filter(Boolean));
   const planModels = new Set();
   (state.subs?.subscriptions || []).forEach((rec) => {
-    if ((rec.channels || []).includes(channelName)) {
+    if ((rec.channels || []).some((r) => channelRefs.has(String(r))) ||
+        (rec.channel_names || []).includes(channelName)) {
       (Array.isArray(rec.models) ? rec.models : []).forEach((m) => planModels.add(String(m)));
     }
   });
@@ -2823,10 +3529,10 @@ function applyCatalogSelection() {
 
 function testSubscriptionEditor() {
   const f = $('sub-form');
-  const names = pickedChannels(f);
-  if (!names.length) return toast('请先勾选关联渠道', 'bad');
-  const drafts = names.map((name) =>
-    (state.config?.channels || []).find((c) => c.name === name) || name);
+  const refs = pickedChannels(f);
+  if (!refs.length) return toast('请先勾选关联渠道', 'bad');
+  const drafts = refs.map((ref) =>
+    (state.config?.channels || []).find((c) => String(c.id || c.name) === ref) || ref);
   return runProbe($('sub-test'), drafts, '');
 }
 
@@ -3350,6 +4056,12 @@ function openChannelEditor(index) {
           <select id="f-provider" name="provider">${providerOptions(c.provider || '')}</select></div>
         <div class="field"><label for="f-mode">计费模式</label>
           <select id="f-mode" name="mode">${providerModeOptions(c.provider || '', c.mode || '')}</select></div>
+        ${selectField('所属账号（可选）', 'account',
+          accountOptions(c.provider || '', c.account || ''),
+          '绑定后管理面 AK/SK 取自账号；同一账号可挂多条业务线渠道')}
+        ${selectField('业务线', 'business_line',
+          businessLineOptions(c.business_line || c.mode || ''),
+          '默认跟随计费模式；订阅余量按账号 + 业务线聚合')}
         <div class="field"><label for="f-protocol">协议</label>
           <select id="f-protocol" name="protocol">
             <option value="openai" ${c.protocol === 'openai' ? 'selected' : ''}>openai</option>
@@ -3411,12 +4123,18 @@ function openChannelEditor(index) {
   const fMode = $('f-mode');
   fProvider.onchange = () => {
     fMode.innerHTML = providerModeOptions(fProvider.value, '');
+    $('f-account').innerHTML = accountOptions(fProvider.value, '');
     applyProviderPreset();
     renderProviderLinks();
     renderVendorCredentials();
     renderRatePresets();
   };
-  fMode.onchange = () => { applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); renderRatePresets(); };
+  fMode.onchange = () => {
+    // Business line follows the billing mode until the user overrides it.
+    const bl = $('f-business_line');
+    if (bl && !bl.value && BUSINESS_LINES.some(([v]) => v === fMode.value)) bl.value = fMode.value;
+    applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); renderRatePresets();
+  };
   renderModelTierRows();
   renderProviderLinks();
   renderVendorCredentials();
@@ -3470,6 +4188,8 @@ function saveChannelEditor() {
       tiers,
       provider,
       mode: provider ? val('mode') : '',
+      account: val('account'),
+      business_line: val('business_line'),
       ...(Object.keys(ownCreds).length ? { creds: ownCreds } : {}),
       ...(val('editor-test-model') ? { test_model: val('editor-test-model') } : {}),
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),
@@ -3564,6 +4284,11 @@ function bindEvents() {
   document.querySelectorAll('.menu-item').forEach((item) => {
     item.onclick = () => switchPage(item.dataset.tab);
   });
+  // Back/forward or a hand-edited hash navigates like a menu click.
+  window.addEventListener('hashchange', () => {
+    const name = pageFromHash();
+    if (name && name !== state.tab) switchPage(name);
+  });
 
   $('btn-save').onclick = saveConfig;
   $('btn-add-channel').onclick = () => openChannelEditor(-1);
@@ -3623,6 +4348,18 @@ function bindEvents() {
     const firstEl = list[0], lastEl = list[list.length - 1];
     if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
     else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+  });
+
+  $('channel-list').addEventListener('change', (e) => {
+    const sel = e.target.closest('select[data-auto-model]');
+    if (!sel) return;
+    const i = Number(sel.dataset.index);
+    const c = state.config.channels[i];
+    if (!c || !sel.value) return;
+    c.models = { ...(c.models || {}), auto: sel.value };
+    markDirty();
+    renderChannels();
+    toast(`「${c.name}」默认模型已切换为 ${sel.value}，点「保存配置」后生效`, 'warn');
   });
 
   $('channel-list').addEventListener('click', async (e) => {
@@ -3747,6 +4484,23 @@ function bindEvents() {
   document.querySelectorAll('.range-switch .btn').forEach((button) => {
     button.onclick = () => loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
   });
+
+  // Member keys page: the shared .range-switch selector above also catches
+  // these buttons, so this later binding wins for them.
+  document.querySelectorAll('[data-member-range]').forEach((button) => {
+    button.onclick = () => loadMembers(Number(button.dataset.memberRange)).catch((e) => toast(e.message, 'bad'));
+  });
+  $('btn-member-create').onclick = async () => {
+    const name = $('member-name').value.trim();
+    if (!name) { toast('请先填写成员名称', 'bad'); return; }
+    try {
+      const record = await api('/api/keys', { method: 'POST', body: { name } });
+      $('member-name').value = '';
+      toast(`已为 ${record.name} 创建 key：${record.key}`);
+      loadMembers().catch(() => {});
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+
   $('btn-save-settings').onclick = () => saveSettings(false);
   $('btn-test-notify').onclick = () => saveSettings(true);
   $('btn-check-notify').onclick = checkNotifications;
@@ -3793,6 +4547,9 @@ function bindEvents() {
     if (b.dataset.action === 'edit-vendor') openVendorEditor(id);
     if (b.dataset.action === 'maintain-vendor') maintainVendor(id);
     if (b.dataset.action === 'restore-vendor') restoreVendor(id);
+    if (b.dataset.action === 'add-account') openAccountEditor(b.dataset.provider, '');
+    if (b.dataset.action === 'edit-account') openAccountEditor(b.dataset.provider, id);
+    if (b.dataset.action === 'delete-account') deleteAccount(id);
   });
 }
 
@@ -3833,7 +4590,7 @@ async function boot() {
     await loadMaintenance().catch(() => {});
     $('report-month').value = todayISO().slice(0, 7);
     await loadReport();
-    await loadDashboard();
+    switchPage(pageFromHash() || 'dashboard');
   } catch (err) {
     toast(err.message, 'bad');
     $('conn-badge').textContent = '连接失败';

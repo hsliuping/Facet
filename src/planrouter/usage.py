@@ -47,36 +47,47 @@ class UsageRecorder:
 
     def record(self, channel: str, success: bool, tokens: int = 0,
                on: date | None = None, model: str = "",
-               input_tokens: int = 0, cached_tokens: int = 0) -> None:
+               input_tokens: int = 0, cached_tokens: int = 0,
+               user: str = "") -> None:
         """Count one request for `channel` (and optionally its wire model).
 
         `input_tokens`/`cached_tokens` come from the upstream usage block so
         the console can show a cache hit rate; they stay absent when the
-        upstream does not report cache details.
+        upstream does not report cache details. `user` attributes the request
+        to a member key ("" = owner/anonymous); member buckets live beside
+        the per-channel data under a parallel top-level `users` key.
         """
         day = (on or date.today()).isoformat()
         with self.lock:
             bucket = self.data["days"].setdefault(day, {})
             entry = bucket.setdefault(channel, {key: 0 for key in COUNTERS})
-            entry["requests"] += 1
-            entry["success" if success else "failed"] += 1
-            entry["tokens"] += int(tokens or 0)
-            if input_tokens or cached_tokens:
-                entry["input_tokens"] = int(entry.get("input_tokens") or 0) + int(input_tokens or 0)
-                entry["cached_tokens"] = int(entry.get("cached_tokens") or 0) + int(cached_tokens or 0)
-            if model:
-                models = entry.setdefault("models", {})
-                row = models.setdefault(model, {
-                    "requests": 0, "success": 0, "failed": 0, "tokens": 0,
-                    **{key: 0 for key in TOKEN_COUNTERS}, "last_used": 0.0,
-                })
-                row["requests"] += 1
-                row["success" if success else "failed"] += 1
-                row["tokens"] += int(tokens or 0)
-                row["input_tokens"] = int(row.get("input_tokens") or 0) + int(input_tokens or 0)
-                row["cached_tokens"] = int(row.get("cached_tokens") or 0) + int(cached_tokens or 0)
-                row["last_used"] = time.time()
+            self._tally(entry, success, tokens, model, input_tokens, cached_tokens)
+            if user:
+                user_bucket = self.data.setdefault("users", {})
+                user_day = user_bucket.setdefault(user, {}).setdefault(day, {key: 0 for key in COUNTERS})
+                self._tally(user_day, success, tokens, model, input_tokens, cached_tokens)
             self.dirty = True
+
+    def _tally(self, entry: dict, success: bool, tokens: int, model: str,
+               input_tokens: int, cached_tokens: int) -> None:
+        entry["requests"] += 1
+        entry["success" if success else "failed"] += 1
+        entry["tokens"] += int(tokens or 0)
+        if input_tokens or cached_tokens:
+            entry["input_tokens"] = int(entry.get("input_tokens") or 0) + int(input_tokens or 0)
+            entry["cached_tokens"] = int(entry.get("cached_tokens") or 0) + int(cached_tokens or 0)
+        if model:
+            models = entry.setdefault("models", {})
+            row = models.setdefault(model, {
+                "requests": 0, "success": 0, "failed": 0, "tokens": 0,
+                **{key: 0 for key in TOKEN_COUNTERS}, "last_used": 0.0,
+            })
+            row["requests"] += 1
+            row["success" if success else "failed"] += 1
+            row["tokens"] += int(tokens or 0)
+            row["input_tokens"] = int(row.get("input_tokens") or 0) + int(input_tokens or 0)
+            row["cached_tokens"] = int(row.get("cached_tokens") or 0) + int(cached_tokens or 0)
+            row["last_used"] = time.time()
 
     def flush(self) -> None:
         with self.lock:
@@ -182,4 +193,33 @@ class UsageRecorder:
             "models": sorted(models.values(),
                              key=lambda item: (-item["requests"], item["channel"], item["model"])),
             "cache": sorted(cache.values(), key=lambda item: item["name"]),
+        }
+
+    def user_stats(self, days: int = 30, on: date | None = None) -> dict:
+        """Per-member usage over a window: totals plus a per-day timeline."""
+        on = on or date.today()
+        days = max(1, min(days, 365))
+        window = {(on - timedelta(days=offset)).isoformat() for offset in range(days)}
+        with self.lock:
+            users = {name: dict(bucket) for name, bucket
+                     in (self.data.get("users") or {}).items()}
+        timeline: dict[str, dict] = {}
+        totals: dict[str, dict] = {}
+        for name, bucket in users.items():
+            for day, entry in bucket.items():
+                if not isinstance(entry, dict) or day not in window:
+                    continue
+                day_row = timeline.setdefault(day, {})
+                row = day_row.setdefault(name, {key: 0 for key in COUNTERS})
+                for key in COUNTERS:
+                    row[key] += int(entry.get(key) or 0)
+                aggregate = totals.setdefault(name, {"name": name, **{key: 0 for key in COUNTERS}})
+                for key in COUNTERS:
+                    aggregate[key] += int(entry.get(key) or 0)
+        day_list = [{"date": day, "users": timeline.get(day) or {}}
+                    for day in sorted(timeline)]
+        return {
+            "range": days,
+            "users": sorted(totals.values(), key=lambda item: -item["requests"]),
+            "days": day_list,
         }

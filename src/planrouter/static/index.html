@@ -31,6 +31,7 @@
         <button class="menu-item" data-tab="status">运行状态</button>
         <button class="menu-item" data-tab="maintenance">自维护</button>
         <button class="menu-item" data-tab="usage">用量报表</button>
+        <button class="menu-item" data-tab="members">成员用量</button>
         <button class="menu-item" data-tab="requests">请求日志</button>
       </nav>
       <div class="sidebar-foot">
@@ -216,6 +217,42 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>接入配置生成</h3>
+                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code>&lt;网关密钥&gt;</code> 占位，请到「网关密钥」页创建后替换。</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="access-tool">工具类型</label>
+                <select id="access-tool">
+                  <option value="claude-code">Claude Code</option>
+                  <option value="codex">Codex CLI</option>
+                  <option value="cline">Cline / VS Code 插件</option>
+                  <option value="dsh">DSH（DeepSeek CLI）</option>
+                  <option value="trae">Trae</option>
+                  <option value="opencode">OpenCode</option>
+                  <option value="codebuddy">CodeBuddy Code</option>
+                  <option value="openai">OpenAI 兼容（通用）</option>
+                  <option value="anthropic">Anthropic 兼容（通用）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="access-model">模型名</label>
+                <select id="access-model"></select>
+              </div>
+              <div class="field wide">
+                <label for="access-snippet">生成的配置</label>
+                <textarea id="access-snippet" rows="12" readonly spellcheck="false"></textarea>
+              </div>
+            </div>
+            <div class="access-actions">
+              <button class="btn small" id="btn-copy-access">复制配置</button>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>模型名策略</h3>
                 <p class="sub-note">改动会自动保存并热加载，无需重启；页头可手动立即保存。</p>
               </div>
@@ -233,6 +270,8 @@
                 <input id="set-fallback-route" placeholder="default">
               </div>
             </div>
+            <div class="policy-errors" id="policy-errors" hidden></div>
+            <p class="hint" id="fallback-hint" hidden></p>
           </div>
 
           <div class="card settings-card">
@@ -258,7 +297,7 @@
           <div class="panel-head">
             <div>
               <h2>套餐订阅</h2>
-              <p>记录每个厂家账号买了什么套餐、何时开始、什么价位、何时到期。同一厂家可以有多个账号，也可以同时开多个套餐。</p>
+              <p>记录每笔订阅买的什么套餐、关联哪些渠道、何时开始、什么价位、何时到期。厂家由关联渠道的 provider 决定，订阅本身不记录厂家；同一账号可以同时开多个套餐。</p>
             </div>
             <div class="actions">
               <button class="btn ghost" id="btn-export-subs">导出订阅</button>
@@ -290,7 +329,7 @@
             <table class="status-table">
               <thead>
                 <tr>
-                  <th>厂家 / 账号</th><th>套餐 / 档位</th><th>价格</th><th>周期</th>
+                  <th>套餐 / 厂家</th><th>档位</th><th>价格</th><th>周期</th>
                   <th>开始</th><th>到期</th><th>剩余</th><th>状态</th>
                   <th>自动续费</th><th>额度余量</th><th>关联渠道</th><th></th>
                 </tr>
@@ -446,7 +485,7 @@
             <div class="card-top">
               <div>
                 <h3>稳定性评分</h3>
-                <p class="sub-note">渠道×模型粒度：服务成功 +1，非额度类失败 −5，按半衰期自动衰减；分数参与路由排序，越稳越靠前</p>
+                <p class="sub-note">渠道×模型粒度：服务成功 +1，非额度类失败 −5，按半衰期自动衰减；路由按链顺序调度（同优先级轮转），评分 ≤ −3 的渠道×模型自动沉底，衰减回升后自动归位</p>
               </div>
               <div class="actions">
                 <button class="btn small danger" id="btn-reset-all-scores">全部重置</button>
@@ -551,6 +590,61 @@
               </table>
             </div>
             <div id="report-channels" class="sub-note" style="margin-top:10px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-members">
+          <div class="panel-head">
+            <div>
+              <h2>成员用量</h2>
+              <p>给每个人发一个独立 key（sk-pr- 前缀），用量按人分开统计。用户 key 与主密钥等同网关凭证，仅用于归属，不区分可用模型。</p>
+            </div>
+            <div class="actions">
+              <input id="member-name" type="text" placeholder="成员名称，如 alice">
+              <button class="btn" id="btn-member-create">新建 Key</button>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>成员 Key</h3>
+                <p class="sub-note">吊销后该 key 立即失效，历史统计中的名称保留</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>成员</th><th>Key</th><th>状态</th><th>创建时间</th><th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="member-keys-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>分人统计</h3>
+                <p class="sub-note" id="member-usage-note">按成员 key 归属统计最近 30 天用量；不带 key 的调用记入「所有人」</p>
+              </div>
+              <div class="range-switch">
+                <button class="btn small" data-member-range="7">7 天</button>
+                <button class="btn small" data-member-range="30">30 天</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>成员</th><th>请求 / 失败</th><th>Tokens</th><th>成功率</th>
+                  </tr>
+                </thead>
+                <tbody id="member-usage-body"></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
