@@ -36,8 +36,8 @@
         <button class="menu-item" data-tab="requests">请求日志</button>
       </nav>
       <div class="sidebar-foot">
-        <button class="btn ghost" id="btn-key">网关密钥</button>
-        <button class="btn ghost" id="btn-admin-key">管理密钥</button>
+        <button class="btn ghost" id="btn-key" title="API Key：给工具/客户端调用网关用的，对应 listen.api_key">API Key</button>
+        <button class="btn ghost" id="btn-admin-key" title="管理密钥：登录控制台用的，对应 listen.admin_key，默认 admin">管理密钥</button>
       </div>
     </aside>
 
@@ -219,7 +219,7 @@
             <div class="card-top">
               <div>
                 <h3>接入配置生成</h3>
-                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code>&lt;网关密钥&gt;</code> 占位，请到「网关密钥」页创建后替换。</p>
+                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code><API Key></code> 占位，请到「API Key」页创建后替换。</p>
               </div>
             </div>
             <div class="form-grid">
@@ -775,3 +775,15 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
   <script src="/static/app.js"></script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+

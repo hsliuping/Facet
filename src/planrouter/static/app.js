@@ -128,10 +128,10 @@ function promptForAuth(isApi) {
   const kind = isApi ? 'api' : 'gateway';
   if (!authPrompts[kind]) {
     authPrompts[kind] = askText({
-      title: isApi ? '需要管理密钥' : '需要网关密钥',
+      title: isApi ? '需要管理密钥' : '需要 API Key',
       message: isApi
         ? '管理接口返回 401。首次登录默认填 admin；登录后可用右上角「管理密钥」重设或随机生成新的密钥。'
-        : '网关接口返回 401。填写 listen.api_key，也可点右上角「网关密钥」。',
+        : '网关接口返回 401。填写 listen.api_key（API Key），也可点右上角「API Key」。',
       password: true,
       remember: true,
     }).finally(() => { authPrompts[kind] = null; });
@@ -164,7 +164,7 @@ async function api(path, opts = {}) {
     }
     throw new Error(isApi
       ? '未授权：请点右上角「管理密钥」填入 admin_key 后重试'
-      : '未授权：请点右上角「网关密钥」填入 api_key 后重试');
+      : '未授权：请点右上角「API Key」填入 api_key 后重试');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
@@ -2216,12 +2216,12 @@ function renderExactModels() {
 }
 
 // Ready-to-paste per-tool snippets. The gateway base URL is the console's
-// origin; the key is never echoed, so "<网关密钥>" stays a placeholder.
+// origin; the key is never echoed, so "<API Key>" stays a placeholder.
 const ACCESS_TOOLS = {
   'claude-code': (model, base) => [
     '# Claude Code（settings.json 的 env 段，或系统环境变量）',
     'ANTHROPIC_BASE_URL=' + base,
-    'ANTHROPIC_AUTH_TOKEN=<网关密钥>',
+    'ANTHROPIC_AUTH_TOKEN=<API Key>',
     'ANTHROPIC_MODEL=' + model,
     'ANTHROPIC_SMALL_FAST_MODEL=' + model,
   ].join('\n'),
@@ -2237,12 +2237,12 @@ const ACCESS_TOOLS = {
     'env_key = "PLANROUTER_API_KEY"',
     '',
     '# 另在环境变量中设置：',
-    '# export PLANROUTER_API_KEY=<网关密钥>',
+    '# export PLANROUTER_API_KEY=<API Key>',
   ].join('\n'),
   'cline': (model, base) => [
     'Cline / VS Code 插件设置（API Provider 选 OpenAI Compatible）：',
     'Base URL: ' + base + '/v1',
-    'API Key:  <网关密钥>',
+    'API Key:  <API Key>',
     'Model ID: ' + model,
   ].join('\n'),
   'dsh': (model, base) => [
@@ -2264,13 +2264,13 @@ const ACCESS_TOOLS = {
     '        models:',
     '          - id: ' + model,
     '',
-    '# 另在环境变量中设置 ROUTER_API_KEY=<网关密钥>',
+    '# 另在环境变量中设置 ROUTER_API_KEY=<API Key>',
     '# 建 profile：dsh --profile planrouter --from-default-profile web',
   ].join('\n'),
   'trae': (model, base) => [
     'Trae（设置 → AI/LLM → 添加提供方，类型选 OpenAI/Custom Model）：',
     'API Base: ' + base + '/v1',
-    'API Key:  <网关密钥>',
+    'API Key:  <API Key>',
     '模型名:   ' + model,
     '',
     '# 注意：Agent 模式依赖 tool calling，免费上游模型可能报 400，',
@@ -2290,7 +2290,7 @@ const ACCESS_TOOLS = {
         },
       },
     }, null, 2),
-    '// 另设置环境变量 ROUTER_API_KEY=<网关密钥>，会话内 /models 选择模型',
+    '// 另设置环境变量 ROUTER_API_KEY=<API Key>，会话内 /models 选择模型',
   ].join('\n'),
   'codebuddy': (model, base) => [
     '// ~/.codebuddy/models.json（用户级）或项目根 .codebuddy/models.json（项目级）',
@@ -2300,7 +2300,7 @@ const ACCESS_TOOLS = {
         'name': model + ' (PlanRouter)',
         'vendor': 'Custom',
         'url': base + '/v1',
-        'apiKey': '<网关密钥>',
+        'apiKey': '<API Key>',
         'supportsToolCall': true,
       }],
       'availableModels': [model],
@@ -2309,12 +2309,12 @@ const ACCESS_TOOLS = {
   ].join('\n'),
   'openai': (model, base) => [
     'base_url = "' + base + '/v1"',
-    'api_key  = "<网关密钥>"',
+    'api_key  = "<API Key>"',
     'model    = "' + model + '"',
   ].join('\n'),
   'anthropic': (model, base) => [
     'base_url = "' + base + '"   # Anthropic 协议用根路径（/v1/messages）',
-    'api_key  = "<网关密钥>"      # x-api-key 请求头',
+    'api_key  = "<API Key>"      # x-api-key 请求头',
     'model    = "' + model + '"',
   ].join('\n'),
 };
@@ -3258,7 +3258,7 @@ $('btn-refresh-maintlog').onclick = () =>
 $('btn-admin-key').onclick = async () => {
   const answer = await askText({
     title: '管理密钥',
-    message: '首次登录默认是 admin。输入新的管理密钥并写入 router.json（立即生效）；留空则随机生成。',
+    message: '管理密钥用于登录控制台和调用管理 API（listen.admin_key）。首次登录默认是 admin。输入新密钥并写入 router.json（立即生效）；留空则随机生成。',
     password: true, remember: false, confirmText: '保存',
   });
   if (!answer) return;
@@ -4385,8 +4385,8 @@ function bindEvents() {
   };
   $('btn-key').onclick = async () => {
     const answer = await askText({
-      title: '网关密钥',
-      message: 'listen.api_key，留空表示清除。密钥只保存在本机浏览器。',
+      title: 'API Key',
+      message: 'API Key（listen.api_key）用于工具/客户端调用网关。留空表示清除。密钥只保存在本机浏览器。',
       value: state.key, password: true, remember: true,
     });
     if (!answer) return;
