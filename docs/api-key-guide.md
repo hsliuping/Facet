@@ -70,6 +70,43 @@
 - [九、控制台观测：免费池与缓存率](#九控制台观测免费池与缓存率)
   - [免费池：哪些模型真的会被调用](#91-免费池哪些模型真的会被调用)
   - [缓存命中率怎么看](#92-缓存命中率怎么看)
+- [十、成员 Key 与账号抽象](#十成员-key-与账号抽象)
+  - [10.1 为什么要成员 Key](#101-为什么要成员-key)
+  - [10.2 创建与管理成员 Key](#102-创建与管理成员-key)
+  - [10.3 成员 Key 如何工作](#103-成员-key-如何工作)
+  - [10.4 分人用量统计](#104-分人用量统计)
+- [十一、订阅管理与可视化](#十一订阅管理与可视化)
+  - [11.1 订阅是什么](#111-订阅是什么)
+  - [11.2 录入订阅](#112-录入订阅)
+  - [11.3 控制台订阅页看什么](#113-控制台订阅页看什么)
+  - [11.4 火山方舟 Ark 套餐窗口实时同步](#114-火山方舟-ark-套餐窗口实时同步)
+- [十二、FreeAlign 控制台操作](#十二freealign-控制台操作)
+  - [12.1 FreeAlign 是什么](#121-freealign-是什么)
+  - [12.2 控制台 FreeAlign 页](#122-控制台-freealign-页)
+  - [12.3 手动触发 vs 定时任务](#123-手动触发-vs-定时任务)
+  - [12.4 评分权重调整（高级）](#124-评分权重调整高级)
+- [十三、运行时告警与 Webhook](#十三运行时告警与-webhook)
+  - [13.1 三类告警条件](#131-三类告警条件)
+  - [13.2 节流与恢复](#132-节流与恢复)
+  - [13.3 Webhook 配置](#133-webhook-配置)
+- [十四、新增 OpenAI 兼容端点](#十四新增-openai-兼容端点)
+  - [14.1 \/v1/completions\（Legacy 文本补全）](#141-v1completionslegacy-文本补全)
+  - [14.2 \/v1/rerank\（重排序）](#142-v1rerank重排序)
+  - [14.3 \/v1/audio/speech\（TTS 语音合成）](#143-v1audiospeech-tts-语音合成)
+  - [14.4 \/v1/audio/transcriptions\（STT 语音转文字）](#144-v1audiotranscriptions-stt-语音转文字)
+  - [14.5 \/v1/audio/translations\（语音翻译）](#145-v1audiotranslations-语音翻译)
+  - [14.6 音频端点的共同特性](#146-音频端点的共同特性)
+- [十五、跨协议转换说明](#十五跨协议转换说明)
+  - [15.1 什么是跨协议转换](#151-什么是跨协议转换)
+  - [15.2 自动生效条件](#152-自动生效条件)
+  - [15.3 支持的映射范围](#153-支持的映射范围)
+  - [15.4 Route 级 System Prompt 注入](#154-route-级-system-prompt-注入)
+  - [15.5 Zero-copy 直通（同协议零开销）](#155-zero-copy-直通同协议零开销)
+- [十六、配置并发编辑保护](#十六配置并发编辑保护)
+  - [16.1 问题背景](#161-问题背景)
+  - [16.2 乐观锁机制（已上线）](#162-乐观锁机制已上线)
+  - [16.3 控制台交互流程](#163-控制台交互流程)
+  - [16.4 API 示例](#164-api-示例)
 
 ---
 
@@ -1331,10 +1368,405 @@ user_proxy.initiate_chat(assistant, message="Write a hello world python")
 
 ---
 
+## 十、成员 Key 与账号抽象
+
+### 10.1 为什么要成员 Key
+
+Facet 的网关 Key（`sk-router-...`）是**管理员全权限**，适合服务端集成、CI/CD、个人独享。但在以下场景需要更细粒度的凭据：
+
+| 场景 | 问题 | 成员 Key 解决 |
+|------|------|--------------|
+| 团队多人共用一个网关 | 不知道是谁发的请求，无法分人统计/限额 | `sk-pr-<name>` 归属绑定，每个 key 独立记账 |
+| 给外包/临时人员开权限 | 不想给管理员 Key，也怕泄露后撤销麻烦 | 单独 key，一键吊销/重置，不影响其它人 |
+| 为不同项目/应用分配额度 | 共用额度会互抢，且无法按项目对账 | key 级用量隔离，`/api/usage/users` 按 key 汇总 |
+| 需要审计「谁在什么时候调用了什么模型」 | 只有渠道维度日志，缺人维度 | 审计日志自动带上 `member_id` 字段 |
+
+### 10.2 创建与管理成员 Key
+
+**控制台路径**：`订阅` → `成员 Key` → `新增`
+
+```
+名称: alice-dev           # 显示名，仅用于识别
+备注: 前端组核心成员      # 可选
+额度上限(可选): 1000000   # 月度 token 上限，0/空=不限
+关联订阅(可选): volc-agent-plan  # 选填，绑定后该 key 走此订阅关联的渠道
+```
+
+点击「生成」得到 `sk-pr-xxxxxxxxxxxx`，**仅显示一次**，请立即复制保存。
+
+**CLI 等价操作**：
+```bash
+# 创建
+python -m planrouter.cli keys create --name alice-dev --quota 1000000 --subscription volc-agent-plan
+
+# 列表
+python -m planrouter.cli keys list
+
+# 吊销（软删除，保留历史用量）
+python -m planrouter.cli keys revoke sk-pr-xxx
+
+# 轮转（废弃旧 key、生成新 key、同名、同额度、同订阅绑定）
+python -m planrouter.cli keys rotate sk-pr-xxx
+```
+
+### 10.3 成员 Key 如何工作
+
+| 机制 | 说明 |
+|------|------|
+| **前缀识别** | `sk-pr-` 进网关自动识别为成员 Key，走 `KeyStore` 验证 |
+| **归属绑定** | 请求头 `Authorization: Bearer sk-pr-xxx` → 解析出 `member_id`，记入审计、用量 |
+| **订阅关联** | 创建时可选绑定一个订阅 → 该 key 仅能走该订阅关联的渠道（实现项目级隔离） |
+| **额度执行** | 月度 token 上限 → 超限返回 429 `MEMBER_QUOTA_EXCEEDED`，不影响其它 key |
+| **吊销即时生效** | `revoke` 后下一个请求即拦截，已建立的 SSE 流不中断（按已发 token 记账） |
+
+### 10.4 分人用量统计
+
+**控制台**：`用量` → `成员` 页（或 `GET /api/usage/users`）
+
+| 列 | 含义 |
+|----|------|
+| 成员 | 名称 / `sk-pr-` 前缀 |
+| 关联订阅 | 绑定的订阅名（无则显示「全局」） |
+| 请求数 | 近 30 天成功请求数 |
+| 输入/输出/缓存 Token | 分模型汇总，含缓存命中 |
+| 额度使用率 | `已用 / 上限`，未设上限显示 `—` |
+| 最近活跃 | 最后一次成功请求时间 |
+
+> **注意**：成员 Key 的用量**并入**渠道/模型总量，不是额外叠加。`/api/usage/users` 只是同一笔数据的另一个切面。
+
+---
+
+## 十一、订阅管理与可视化
+
+### 11.1 订阅是什么
+
+订阅记录回答四个问题：**谁（账号）买了什么（套餐），多少钱，什么时候到期**。它不直接处理请求，而是：
+
+1. **到期阻断**：开启后，到期自动把关联渠道从路由链摘除（`enabled=false`，不删除配置）
+2. **提醒推送**：到期前 N 天（`remind_days`）通过 Webhook/控制台历史推送告警
+3. **控制台可视化**：`订阅` 页实时展示每个订阅的窗口进度、剩余额度、到期倒计时
+4. **关联渠道**：`channels` 数组把订阅与 1~N 个渠道名绑定，一个订阅可管多渠道（如 Agent+套餐对应两个渠道：OpenAI 协议、Anthropic 协议）
+
+### 11.2 录入订阅
+
+**控制台**：`订阅` → `新增订阅`
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| 厂家 | 下拉：火山引擎、智谱、阿里云百炼、小米 MiMo 等 | 火山引擎 |
+| 账号 | 你的账号标识（邮箱/手机/内部代号） | `volc-team-a` |
+| 套餐 | 厂家官方套餐名 | `Agent 套餐` |
+| 周期 | monthly / yearly / one_time | monthly |
+| 价格/币种 | 数字 + CNY/USD | 199 / CNY |
+| 生效/到期 | ISO 日期 | 2026-10-10 / 2026-12-10 |
+| 提醒天数 | 到期前多少天推送 | 7 |
+| 关联渠道 | 勾选 1~N 个已建渠道 | `volc-a-agent`, `volc-a-agent-anthropic` |
+| 到期阻断 | 开启=到期自动禁用关联渠道 | ✅ |
+
+**CLI**：
+```bash
+python -m planrouter.cli sub create \
+  --vendor "火山引擎" --account "volc-team-a" --plan "Agent 套餐" \
+  --price 199 --currency CNY --cycle monthly \
+  --start 2026-10-10 --end 2026-12-10 --remind 7 \
+  --channels volc-a-agent,volc-a-agent-anthropic --block-on-expire
+```
+
+### 11.3 控制台订阅页看什么
+
+| 区块 | 关键信息 |
+|------|----------|
+| **窗口进度条** | 订阅周期内已用/总额度（火山方舟 Ark API 实时同步 `GetAFPUsage`） |
+| **到期倒计时** | 绿色>7天、黄色3-7天、红色<3天、灰色已过期 |
+| **关联渠道状态** | 每个渠道当前是否 enabled、是否在冷却、最近一次调用时间 |
+| **提醒历史** | 最近 5 条推送记录（Webhook/控制台），含 resolved 标记 |
+| **编辑/续费** | 点击行内编辑修改到期日、价格、提醒天数；续费即延长 `expires_at` |
+
+### 11.4 火山方舟 Ark 套餐窗口实时同步
+
+Facet 内置 `ark_quota.sync_ark_usage()`（每 5 分钟 + 控制台打开订阅页时触发），调用 Ark 管理接口 `GetAFPUsage` 拉取：
+
+- `coding-plan`：编码套餐窗口（5 小时滚动）
+- `agent-plan`：Agent 套餐窗口（月度）
+- `percent_used`、`reset_ts`、`model_list`
+
+同步结果写入 `subscriptions.json`，控制台订阅页直接读取展示，**无需手动刷新 Ark 控制台**。
+
+---
+
+## 十二、FreeAlign 控制台操作
+
+### 12.1 FreeAlign 是什么
+
+FreeAlign = **Free**（免费池）**Align**（对齐/再平衡）。它是 Facet 的夜间自动维护 + 手动触发的**智能再平衡引擎**，目标：**在不改变路由优先级语义的前提下，让免费额度用得更满、冷却渠道恢复得更快、整体可用性更高**。
+
+核心能力：
+1. **夜间目录刷新**：每天 03:00 自动拉取所有渠道模型目录，发现新模型自动加入候选
+2. **评分融合**：`最终分 = 0.55×probe_score + 0.35×free_bonus + 0.10×recency`，probe 探针实测延迟/成功率，free_bonus 免费渠道加分，recency 最近成功加权
+3. **冷却感知再平衡**：冷却中的渠道**不参与**评分排序，避免把流量推给正在冷却的渠道
+4. **Dry-run 预览**：控制台「FreeAlign」页点击「预览再平衡」→ 仅计算不落盘，展示拟变更的渠道优先级、模型映射增减
+5. **管理员确认落盘**：预览满意后点「应用」→ 生成新 `router.json`，网关热加载
+
+### 12.2 控制台 FreeAlign 页
+
+**入口**：`自维护` → `FreeAlign`
+
+| 区块 | 功能 |
+|------|------|
+| **当前评分表** | 所有渠道的 probe_score、free_bonus、recency、最终分、建议优先级 |
+| **冷却屏蔽列表** | 当前处于冷却期的渠道、剩余冷却时间、冷却原因（来自 `state.json`） |
+| **预览再平衡** | 点击 → 模拟评分融合 → 展示「变更前 vs 变更后」优先级对比、新增/移除模型映射 |
+| **应用再平衡** | 确认后写入 `router.json`，触发网关热加载，记录审计日志 `freealign_applied` |
+| **最近执行历史** | 最近 10 次应用记录：时间、操作者、变更摘要、是否 dry-run |
+
+### 12.3 手动触发 vs 定时任务
+
+| 触发方式 | 时机 | 适用场景 |
+|----------|------|----------|
+| **定时任务** | 每天 03:00（可在 `maintenance.py` `DAILY_AT` 调整） | 日常免费池目录同步、缓慢漂移修正 |
+| **手动预览+应用** | 任意时刻 | 新上线模型想立即纳入、大面积冷却后想快速恢复、上游重大变更后验证 |
+
+### 12.4 评分权重调整（高级）
+
+`freealign.py` 顶部常量：
+```python
+PROBE_WEIGHT = 0.55      # 探针实测权重
+FREE_BONUS_WEIGHT = 0.35 # 免费渠道加分权重
+RECENCY_WEIGHT = 0.10    # 最近成功加权
+```
+
+如需调整（例如团队更看重稳定性而非免费），修改常量重启网关即可。建议先在控制台「预览」观察排序变化再决定。
+
+---
+
+## 十三、运行时告警与 Webhook
+
+### 13.1 三类告警条件
+
+`notifier.py` `check_runtime()` 每 60 秒扫描一次，满足任一条件即产生告警：
+
+| 告警类型 | 触发条件 | cause key（节流键） | 典型场景 |
+|----------|----------|---------------------|----------|
+| **渠道链全冷却** | 某协议路由下**所有启用且非过期阻断**的渠道均处于 `cooling`/`blocked` 状态 | `route:{proto}:{route_name}` | 付费额度耗尽、上游大面积故障、Key 失效 |
+| **免费额度耗尽** | 免费渠道（`tier=free` 且有 `free_quota` 配置）触发 `free_quota_exhausted` 标记 | `freequota:{channel}:{wire}` | 百炼新模型 90 天窗口结束、魔搭魔粒用完 |
+| **连续失败** | 某渠道连续 `consecutive_errors >= 3`（健康探测或真实请求失败，中间无成功重置） | `probe:{channel}` | 上游接口变更、Key 权限收回、网络断连 |
+
+> **去噪设计**：瞬时限流（429 但非 `free_quota_exhausted`）、RPM 限流、单次超时**不**触发告警，需连续 3 次失败或全链路冷却才告警。
+
+### 13.2 节流与恢复
+
+| 机制 | 规则 |
+|------|------|
+| **同因节流** | 同一 `cause key` 1 小时内只告警一次（`notifier.py` `_runtime_throttle`） |
+| **自动恢复** | 条件消失（如渠道冷却结束、免费额度次月恢复、探针成功） → 立即写 `resolved` 记录 + 推送恢复通知 |
+| **控制台历史** | `订阅` → `告警历史` 或 `GET /api/runtime/alerts` 查看全量进/出记录 |
+
+### 13.3 Webhook 配置
+
+**控制台**：`设置` → `Webhook` → 填入 URL（支持 Lark/Slack/Dingtalk/通用 JSON POST）
+
+```json
+// 发送示例
+{
+  "alert_type": "runtime",
+  "cause": "route:openai:default",
+  "level": "critical",
+  "message": "路由 default (openai) 所有渠道已冷却，请检查额度或 Key",
+  "timestamp": "2026-11-12T14:30:00+08:00",
+  "resolved": false
+}
+```
+
+> **无 Webhook 时**：告警仍写入控制台历史（`runtime_alerts` 列表），不丢失，仅无外部推送。
+
+---
+
+## 十四、新增 OpenAI 兼容端点
+
+Facet 网关现在原生支持以下 OpenAI 兼容端点，**无需额外配置**，只要渠道协议为 `openai` 且模型具备对应能力即可路由。
+
+### 14.1 `/v1/completions`（Legacy 文本补全）
+
+**用途**：老版本 SDK、非 chat 场景、纯文本补全
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/completions \
+  -H "Authorization: Bearer sk-router-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "facet-auto", "prompt": "Say hello", "max_tokens": 50}'
+```
+
+**内部机制**：`CompletionsAdapter` 将 `prompt` 转为 `messages=[{"role":"user","content":prompt}]`，走 chat pipeline（路由/冷却/故障转移/记账），响应映射回 `choices[0].text` 格式。
+
+**支持参数**：`prompt`/`suffix`/`max_tokens`/`temperature`/`top_p`/`stop`/`stream`/`echo`/`logprobs`，其它透传。
+
+### 14.2 `/v1/rerank`（重排序）
+
+**用途**：RAG 检索后重排、语义相关度打分
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/rerank \
+  -H "Authorization: Bearer sk-router-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bge-reranker-v2-m3", "query": "什么是向量数据库", "documents": ["向量数据库存储向量...", "传统数据库存表..."], "top_k": 2}'
+```
+
+**路由规则**：仅路由到在 `providers.json` 声明 `capabilities: ["rerank"]` 的渠道/模型。无 rerank 能力渠道时返回 400 `NO_RERANK_CHANNEL`。
+
+**记账**：请求数 + 字节数（rerank 无 token 语义，不计 token）。
+
+### 14.3 `/v1/audio/speech`（TTS 语音合成）
+
+**用途**：文本转语音
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/audio/speech \
+  -H "Authorization: Bearer sk-router-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "tts-1", "input": "你好世界", "voice": "alloy", "response_format": "mp3"}' \
+  --output speech.mp3
+```
+
+**响应**：二进制音频流（`audio/mpeg` 等），`Content-Disposition: attachment; filename="speech.mp3"`。
+
+### 14.4 `/v1/audio/transcriptions`（STT 语音转文字）
+
+**用途**：音频文件转文字（单语种）
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-router-xxx" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-1" \
+  -F "language=zh"
+```
+
+### 14.5 `/v1/audio/translations`（语音翻译）
+
+**用途**：音频文件翻译成英文文字
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/audio/translations \
+  -H "Authorization: Bearer sk-router-xxx" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-1"
+```
+
+### 14.6 音频端点的共同特性
+
+| 特性 | 说明 |
+|------|------|
+| **Multipart 透传** | 请求体 `multipart/form-data` 原样转发上游，不做 JSON 解析/转换 |
+| **故障转移** | 上游 5xx/超时/网络错误 → 自动尝试路由链下一渠道（同 chat pipeline） |
+| **记账** | 请求数 + 上报字节（上游返回 `usage` 时累加 token） |
+| **能力路由** | 仅路由到 `capabilities` 含 `speech`/`transcriptions`/`translations` 的渠道 |
+
+> **注意**：音频端点**不支持**跨协议转换（上游多为 OpenAI 协议），也不走 `convert.py`。如需 Anthropic 协议音频，暂不支持。
+
+---
+
+## 十五、跨协议转换说明
+
+### 15.1 什么是跨协议转换
+
+**客户端协议 ≠ 渠道协议** 时，网关在**渠道边界**自动做双向转换，客户端无感知。
+
+| 客户端协议 | 渠道协议 | 转换方向 |
+|------------|----------|----------|
+| OpenAI | Anthropic | 请求：`tools`→`tools`、`tool_calls`→`tool_use`、system 参数映射、图片块映射；响应：`tool_use`→`tool_calls`、`stop_reason`→`finish_reason`、usage 归一化 |
+| Anthropic | OpenAI | 反向映射 |
+
+### 15.2 自动生效条件
+
+1. 路由配置 `protocol: "openai"`（客户端侧）
+2. 渠道配置 `protocol: "anthropic"`（上游侧）
+3. **无需额外开关**，`_forward` 出网前自动 `convert_request`，`_relay` 回程自动 `convert_response`/`StreamConverter`
+
+### 15.3 支持的映射范围
+
+| 特性 | OpenAI → Anthropic | Anthropic → OpenAI |
+|------|-------------------|-------------------|
+| `messages` 结构 | `content: [{type:image_url}]` → `content: [{type:image, source:{...}}]` | 反向 |
+| `system` 参数 | 顶层 `system` 字符串/数组 → `system` 数组（前置拼接不覆盖） | `system` 数组 → 顶层字符串（取第一个 text） |
+| `tools`/`tool_choice` | `functions` → `tools`（含 `type:any/auto/none` 映射） | `tools` → `functions` |
+| 流式 `tool_calls` | `tool_calls[index].function.arguments` delta → `input_json_delta` | `input_json_delta` → `tool_calls` delta |
+| `finish_reason` | `tool_calls`/`stop`/`length` → `tool_use`/`end_turn`/`max_tokens` | 反向 |
+| `usage` 归一化 | `prompt_tokens`/`completion_tokens`/`cached_tokens` 双向透传 | 同左 |
+
+### 15.4 Route 级 System Prompt 注入
+
+**配置**：路由对象新增 `system_prompt` 字段（字符串）
+
+```json
+{
+  "name": "coding",
+  "protocol": "openai",
+  "system_prompt": "You are a senior software engineer. Follow the code style guide strictly.",
+  "channels": ["volc-a-coding", "deepseek"]
+}
+```
+
+**行为**：
+- 请求已有 `system` 消息 → **前置拼接**（route system 在前，用户 system 在后），不覆盖
+- 请求无 `system` → 直接插入为首条 system 消息
+- Anthropic 渠道同理，转换层会把合并后的 system 映射为 Anthropic `system` 数组
+
+### 15.5 Zero-copy 直通（同协议零开销）
+
+**客户端协议 == 渠道协议** 时：请求字节**原样转发**，不经过 `convert.py`，零 CPU、零内存拷贝、零行为变化。这是默认且最常见的情况。
+
+---
+
+## 十六、配置并发编辑保护
+
+### 16.1 问题背景
+
+多标签页同时编辑控制台配置时，后保存者会**静默覆盖**先保存者的修改（路由链、渠道优先级、模型映射等）。这是已知操作陷阱。
+
+### 16.2 乐观锁机制（已上线）
+
+1. **配置版本号**：`GET /api/config` 返回的 JSON 根对象新增 `_version` 字段（SHA256 哈希，基于可见配置内容计算）
+2. **保存时校验**：`POST /api/config` 请求体必须带 `_version`，服务端重新计算当前版本号对比
+3. **冲突响应**：不匹配 → `409 Conflict` + `{"error": "VERSION_MISMATCH", "message": "配置已被他人修改，请刷新后重试"}`
+4. **用户操作**：收到 409 → 刷新页面 → 重新编辑 → 再次保存
+
+### 16.3 控制台交互流程
+
+```
+用户 A 打开配置页     → 获取 _version=v1
+用户 B 打开配置页     → 获取 _version=v1
+用户 A 修改优先级，保存 → POST _version=v1 → 成功，配置变为 v2
+用户 B 修改模型映射，保存 → POST _version=v1 → 409 VERSION_MISMATCH
+用户 B 刷新页面       → 获取 _version=v2，看到 A 的修改
+用户 B 重新编辑，保存 → POST _version=v2 → 成功
+```
+
+### 16.4 API 示例
+
+```bash
+# 获取配置（含版本号）
+curl http://127.0.0.1:8787/api/config
+# 返回: {"listen": "...", "routes": [...], "channels": [...], "_version": "a1b2c3d4..."}
+
+# 保存配置（必须带 _version）
+curl -X POST http://127.0.0.1:8787/api/config \
+  -H "Content-Type: application/json" \
+  -d '{"listen": "...", "routes": [...], "channels": [...], "_version": "a1b2c3d4..."}'
+
+# 冲突响应
+# HTTP 409
+# {"error": "VERSION_MISMATCH", "message": "配置已被他人修改，请刷新后重试"}
+```
+
+> **CLI 导入/导出**：`planrouter.cli config export/import` 也遵循版本号，导入时可用 `--force` 跳过校验（慎用）。
+
+---
+
 ## 更新记录
 
 | 日期 | 变动 |
 |---|---|
+| 2026-11-12 | **新增七大章节**：十、成员 Key 与账号抽象（`sk-pr-` 创建/吊销/轮转、分人用量、订阅关联）；十一、订阅管理与可视化（订阅录入、到期阻断、Ark 窗口实时同步）；十二、FreeAlign 控制台操作（夜间刷新、评分融合、dry-run 预览、手动再平衡）；十三、运行时告警与 Webhook（三类条件、节流、恢复）；十四、新增 OpenAI 兼容端点（completions/rerank/audio 三端点、multipart、故障转移、能力路由）；十五、跨协议转换说明（OpenAI↔Anthropic 双向、system 注入、zero-copy 直通）；十六、配置并发编辑保护（乐观锁版本号、409 冲突、CLI 支持） |
 | 2026-11-11 | 7.4.1 扩为「内置别名」四种：新增 **`facet-free`**（`free` 链，纯免费不碰付费渠道）；说明 `facet-auto` 语义由链序决定（当前默认部署付费优先：火山 Agent/Coding 套餐 → deepseek → `$free` 免费兜底）；配置新增 `openai:free` 路由链；新增 7.5–7.8（DSH / OpenCode / CodeBuddy Code CLI / CodeBuddy 插件），原 7.5–7.11 顺延为 7.9–7.15 |
 | 2026-11-10 | 新增第七章「在 Trae / IDE 里使用 Facet」及第八章端点速查；补充容器 host 与常见 401/200 空白问题；**扩充分支**：Claude Code、Cline/Roo Code、OpenHands/Devika、Windsurf/Zed/Cursor、LangChain/LlamaIndex、LangGraph/AutoGen/CrewAI 共 9 个流行框架的配置示例，并强化 Agent tool calling 注意事项 |
 | 2026-11-10 | 新增 7.4.1 「三种内置别名」章节，说明 `facet-auto` / `facet-cheap` / **`facet-agent`** 的区别与适用场景；同步把 Claude Code / Cline / Roo Code / LangChain / OpenHands 的示例模型名统一改为 `facet-agent`，并说明响应头 `X-Routed-Model-Mode: agent` 的验证方式 |
