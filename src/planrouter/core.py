@@ -1,10 +1,10 @@
 """Channel configuration, quota/cooldown detection and channel health.
 
 Pure standard library. A *channel* is one upstream endpoint (a coding plan, a
-subscription bridge, or a free-tier API key). The router never converts between
-wire protocols: a request on /v1/chat/completions only goes to openai channels,
-a request on /v1/messages only goes to anthropic channels. Use a local bridge
-(one-api / new-api / CLIProxyAPI) upstream if a plan speaks another protocol.
+subscription bridge, or a free-tier API key). A route speaks the client's wire
+protocol (picked by the endpoint path); its channels may speak either one —
+payloads are converted at the channel boundary (convert.py) when the protocols
+differ, and pass through byte-for-byte when they match.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,6 +35,12 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # without any further configuration; paid channels are always hand-placed.
 FREE_CHANNEL_MACRO = "$free"
 
+# Route order stays as the operator arranged it; the stability score only
+# demotes a channel×model that keeps failing to the back of its route, so a
+# known-bad vendor does not add a failed hop to every request. The score
+# decays toward zero, which restores the pair to its chain position.
+DEMOTE_SCORE = -3.0
+
 # Providers such as Volcengine Ark expose https://host/api/v3 (or
 # /api/coding/v3) as the OpenAI-compatible base. Appending the usual
 # /v1/chat/completions would produce /v3/v1/chat/completions and a 404.
@@ -41,11 +48,29 @@ VERSIONED_BASE = re.compile(r"/v\d+(?:beta)?$", re.IGNORECASE)
 
 
 def upstream_path_for(base_url: str, upstream_path: str | None,
-                      protocol: str) -> str:
-    """Pick the upstream path without duplicating a version segment."""
+                      protocol: str, endpoint: str = "chat") -> str:
+    """Pick the upstream path without duplicating a version segment.
+
+    `endpoint` selects the API path: "chat" -> /v1/chat/completions (or /messages),
+    "embeddings" -> /v1/embeddings (OpenAI only), "rerank" -> /v1/rerank (OpenAI only),
+    "speech" -> /v1/audio/speech (OpenAI only),
+    "transcriptions" -> /v1/audio/transcriptions (OpenAI only),
+    "translations" -> /v1/audio/translations (OpenAI only).
+    """
     if upstream_path:
         return upstream_path
-    suffix = "/chat/completions" if protocol == OPENAI else "/messages"
+    if endpoint == "embeddings":
+        suffix = "/embeddings"
+    elif endpoint == "rerank":
+        suffix = "/rerank"
+    elif endpoint == "speech":
+        suffix = "/audio/speech"
+    elif endpoint == "transcriptions":
+        suffix = "/audio/transcriptions"
+    elif endpoint == "translations":
+        suffix = "/audio/translations"
+    else:
+        suffix = "/chat/completions" if protocol == OPENAI else "/messages"
     if VERSIONED_BASE.search(base_url.rstrip("/")):
         return suffix
     return "/v1" + suffix
@@ -68,10 +93,13 @@ def open_with_proxy(req, timeout, proxy: str = ""):
 # one into a tool's model field means "let the router schedule internally".
 AUTO_MODEL = "auto"
 AGENT_MODEL = "facet-agent"
+EMBEDDING_MODEL = "facet-embedding"
 DEFAULT_BRANDED_MODELS = {
     "facet-auto": "default",
     "facet-cheap": "cheap",
+    "facet-free": "free",
     AGENT_MODEL: "default",
+    EMBEDDING_MODEL: "embedding",
 }
 INTERNAL_MODEL_PREFIXES = ("auto:", "facet:")
 
@@ -288,6 +316,27 @@ class Channel:
     # Free-tier allowance per upstream model. Explicit channel config wins;
     # otherwise the vendor registry mode supplies the baseline.
     free_quota: FreeQuota | None = None
+    # Optional link to a config.accounts entry. Empty means "this channel is
+    # its own account" — the legacy model every single-key vendor uses.
+    account: str = ""
+    # Business line this channel serves: "coding" / "agent" / "payg" / "".
+    # Empty falls back to `mode` (the registry billing-mode key).
+    business_line: str = ""
+    # Stable identifier assigned once by the server and persisted in
+    # router.json. Unlike `name` (which the operator may edit at will), the id
+    # never changes, so subscriptions that link channels by id survive a
+    # rename. Empty on legacy configs parsed without the server's backfill;
+    # `channel_ref` then falls back to the name.
+    id: str = ""
+    # Multimodal routing: when a request carries image/document/audio parts
+    # the router only sends it to channels that can take them. Per channel:
+    #   "vision": false            → text-only, never receives image requests
+    #   "vision": ["wire", ...]    → only these wire models accept images
+    #   "vision_model": "wire-x"   → image requests are re-pointed to this model
+    # Unset means capable: an unconfigured gateway forwards as before and the
+    # upstream stays the final judge.
+    vision: bool | tuple[str, ...] | None = None
+    vision_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -295,6 +344,18 @@ class Route:
     name: str
     protocol: str
     channels: tuple[str, ...]
+    # Route-level system prompt prepended before routing (P1-3 §2.3); empty
+    # means the client's request is sent untouched.
+    system_prompt: str = ""
+
+
+@dataclass(frozen=True)
+class Account:
+    id: str
+    provider: str
+    label: str
+    credentials: dict[str, str] = field(default_factory=dict)
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -377,6 +438,10 @@ class Config:
     channels: tuple[Channel, ...]
     routes: dict[str, Route]
     models: ModelPolicy = field(default_factory=ModelPolicy)
+    # Optional accounts shared across channels. When `channel.account` is
+    # set on a channel, the channel's resolve_creds path prefers
+    # Account.credentials over channel.creds.
+    accounts: tuple[Account, ...] = field(default_factory=tuple)
     # Vendor management credentials for free-quota CLI tools, keyed by
     # provider id then env-var name, resolved from plaintext or `env:VAR`
     # at parse time (missing variables are dropped). The raw section stays
@@ -386,6 +451,18 @@ class Config:
 
     def channel(self, name: str) -> Channel | None:
         return next((c for c in self.channels if c.name == name), None)
+
+    def channel_by_ref(self, ref: str) -> Channel | None:
+        """Resolve a channel reference: stable id first, then legacy name.
+
+        Subscriptions store channel ids, but files written before ids existed
+        still carry names, so both forms have to resolve.
+        """
+        key = str(ref or "").strip()
+        if not key:
+            return None
+        by_id = next((c for c in self.channels if c.id and c.id == key), None)
+        return by_id or self.channel(key)
 
     def route(self, protocol: str, hint: str) -> Route | None:
         return self.routes.get(f"{protocol}:{hint}") or self.routes.get(f"{protocol}:default")
@@ -423,6 +500,58 @@ def dispatch_wire_model(channel: Channel, requested: str = AUTO_MODEL) -> str | 
     if wildcard == "*":
         return requested
     return wildcard or None
+
+
+# Message-part types that make a request multimodal: the OpenAI chat shapes
+# (image_url / input_image / file / audio) and the Anthropic block names
+# (image / document). Text parts are absent on purpose.
+VISION_PART_TYPES = frozenset({
+    "image_url", "input_image", "image", "file", "input_file",
+    "input_audio", "audio", "document",
+})
+
+
+def body_has_vision(payload: dict) -> bool:
+    """True when any message carries image/document/audio content.
+
+    Covers the OpenAI chat shapes (content as a list or object of typed
+    parts) and the Anthropic shapes (typed content blocks), so both wire
+    protocols get the same routing behaviour.
+    """
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str) or content is None:
+            continue
+        parts = content if isinstance(content, list) else [content]
+        for part in parts:
+            if isinstance(part, dict) and str(part.get("type") or "") in VISION_PART_TYPES:
+                return True
+    return False
+
+
+def vision_wire(channel: Channel, wire: str) -> str:
+    """Wire model for an image-bearing request on this channel.
+
+    A channel with `vision_model` re-points image requests to that model
+    (its own auto mapping may be text-only); every other mapping stands.
+    """
+    return channel.vision_model or wire
+
+
+def channel_takes_images(channel: Channel, wire: str) -> bool:
+    """Config-declared multimodal capability for this channel+wire pair."""
+    if channel.vision_model:
+        return True
+    if channel.vision is None:
+        return True
+    if channel.vision is False:
+        return False
+    return wire in channel.vision
 
 
 @dataclass(frozen=True)
@@ -548,6 +677,33 @@ def parse_config(raw: dict) -> Config:
             if resolved:
                 credentials[str(vendor_id)] = resolved
 
+    # Optional accounts shared across channels.
+    accounts: tuple[Account, ...] = ()
+    accounts_raw = raw.get("accounts") or []
+    if isinstance(accounts_raw, list):
+        # Imported here to avoid an import cycle (providers imports core).
+        from .accounts import ValidationError, validate_account
+        from .providers import load_providers
+        prov = load_providers()
+        for a_raw in accounts_raw:
+            if not isinstance(a_raw, dict):
+                continue
+            try:
+                a = validate_account(a_raw, prov)
+            except ValidationError:
+                continue  # silently skip bad entries
+            # Same env: handling as the vendor slot: a reference resolves at
+            # load time so callers only ever see plain secrets.
+            acc_creds: dict[str, str] = {}
+            for env_name, value in (a.get("credentials") or {}).items():
+                secret = resolve_secret(str(value).strip())
+                if secret:
+                    acc_creds[str(env_name)] = secret
+            accounts = accounts + (Account(
+                id=a["id"], provider=a["provider"], label=a["label"],
+                credentials=acc_creds,
+                note=a.get("note") or "",
+            ),)
     channels: list[Channel] = []
     seen: set[str] = set()
     for item in raw.get("channels") or []:
@@ -607,6 +763,22 @@ def parse_config(raw: dict) -> Config:
             free_quota = parse_free_quota(item.get("free_quota"))
         except ValueError as exc:
             raise ValueError(f"channel {name}: {exc}") from None
+        vision_raw = item.get("vision")
+        vision: bool | tuple[str, ...] | None = None
+        if vision_raw is not None:
+            if isinstance(vision_raw, bool):
+                vision = vision_raw
+            elif isinstance(vision_raw, list):
+                vision = tuple(dict.fromkeys(
+                    str(entry).strip() for entry in vision_raw if str(entry).strip()))
+                if not vision:
+                    raise ValueError(f"channel {name}: vision list cannot be empty")
+            else:
+                raise ValueError(
+                    f'channel {name}: vision must be true, false or a list of model names')
+        vision_model = str(item.get("vision_model") or "").strip()
+        if vision_model and vision is False:
+            raise ValueError(f"channel {name}: vision_model conflicts with vision: false")
         channels.append(Channel(
             name=name,
             protocol=protocol,
@@ -626,6 +798,11 @@ def parse_config(raw: dict) -> Config:
             creds=creds,
             proxy=proxy,
             free_quota=free_quota,
+            account=str(item.get("account") or "").strip(),
+            business_line=str(item.get("business_line") or "").strip(),
+            id=str(item.get("id") or "").strip(),
+            vision=vision,
+            vision_model=vision_model,
         ))
     if not channels:
         raise ValueError("at least one channel is required")
@@ -636,6 +813,7 @@ def parse_config(raw: dict) -> Config:
         name = item.get("name", "default")
         protocol = item.get("protocol", OPENAI)
         names = tuple(item.get("channels") or [])
+        system_prompt = str(item.get("system_prompt") or "")
         if protocol not in PROTOCOLS:
             raise ValueError(f"route {name}: protocol must be one of {PROTOCOLS}")
         if not names:
@@ -664,16 +842,13 @@ def parse_config(raw: dict) -> Config:
             channel = next((c for c in channels if c.name == channel_name), None)
             if channel is None:
                 raise ValueError(f"route {name}: unknown channel {channel_name!r}")
-            if channel.protocol != protocol:
-                raise ValueError(
-                    f"route {name}: channel {channel_name!r} speaks {channel.protocol}, "
-                    f"route speaks {protocol}. Protocols are never converted; "
-                    f"put a local bridge upstream instead."
-                )
+        # A channel may speak another protocol than its route: the payload is
+        # converted at the channel boundary (see convert.py).
         key = f"{protocol}:{name}"
         if key in routes:
             raise ValueError(f"duplicate route {key!r}")
-        routes[key] = Route(name=name, protocol=protocol, channels=names)
+        routes[key] = Route(name=name, protocol=protocol, channels=names,
+                            system_prompt=system_prompt)
     for protocol in PROTOCOLS:
         if f"{protocol}:default" not in routes:
             raise ValueError(f"missing {protocol}:default route")
@@ -687,6 +862,7 @@ def parse_config(raw: dict) -> Config:
     return Config(
         listen=listen, defaults=defaults, channels=tuple(channels),
         routes=routes, models=model_policy, credentials=credentials,
+        accounts=accounts,
     )
 
 
@@ -694,10 +870,43 @@ def load_config(path: str | Path) -> Config:
     return parse_config(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
+def channel_ref(channel: Channel) -> str:
+    """Reference that survives a rename: the id when present, else the name."""
+    return channel.id or channel.name
+
+
+def ensure_channel_ids(raw: dict) -> bool:
+    """Assign a stable id to every channel that lacks one.
+
+    Ids are generated once and persisted in the raw config, so a name edit
+    never changes them. Returns True when the raw dict was modified.
+    """
+    if not isinstance(raw, dict):
+        return False
+    changed = False
+    seen: set[str] = set()
+    for channel in (raw.get("channels") or []):
+        if not isinstance(channel, dict):
+            continue
+        current = str(channel.get("id") or "").strip()
+        if current and current not in seen:
+            seen.add(current)
+            continue
+        while True:
+            generated = "ch-" + uuid.uuid4().hex[:12]
+            if generated not in seen:
+                break
+        channel["id"] = generated
+        seen.add(generated)
+        changed = True
+    return changed
+
+
 @dataclass
 class ChannelState:
     name: str
     cooldown_until: float = 0.0
+    model_cooldown_until: dict[str, float] = field(default_factory=dict)
     reason: str = ""
     last_error: str = ""
     consecutive_errors: int = 0
@@ -712,11 +921,20 @@ class ChannelState:
     last_used: float = 0.0
     quota: dict = field(default_factory=dict)
 
+    def model_available(self, now: float, wire: str) -> bool:
+        """该模型的冷却是否已结束（不含渠道整体冷却）。"""
+        return self.model_cooldown_until.get(wire, 0.0) <= now
+
     def _prune(self, now: float) -> None:
         while self.req_times and now - self.req_times[0] > 86400:
             self.req_times.popleft()
         while self.tok_events and now - self.tok_events[0][0] > 86400:
             self.tok_events.popleft()
+        if self.model_cooldown_until:
+            expired = [w for w, until in self.model_cooldown_until.items()
+                       if until <= now]
+            for wire in expired:
+                del self.model_cooldown_until[wire]
 
     def available(self, now: float, rate: Rate) -> tuple[bool, str]:
         self._prune(now)
@@ -745,18 +963,34 @@ class ChannelState:
         if self.half_open:
             self.half_open = False
 
-    def mark_cooldown(self, seconds: float, reason: str, now: float, half_open: bool = False) -> None:
-        self.cooldown_until = now + seconds
-        self.reason = reason
+    def mark_cooldown(self, seconds: float, reason: str, now: float,
+                      per_model: bool = False, *, wire: str | None = None,
+                      half_open: bool = False) -> None:
+        """Freeze the channel, or with `per_model` only this wire model.
+
+        A quota window belongs to one upstream model: 百炼 and 火山引擎 each
+        expose many models whose allowances run out independently, so cooling
+        the whole channel would skip the sibling models (and the next channel
+        in the route) for hours. Account-level failures keep using the
+        channel-wide branch.
+        """
+        if per_model and wire:
+            self.model_cooldown_until[wire] = now + seconds
+        else:
+            self.cooldown_until = now + seconds
+            self.reason = reason
         self.consecutive_errors += 1
         self.failed_requests += 1
         self.half_open = half_open
 
-    def mark_success(self, tokens: int, now: float) -> None:
+    def mark_success(self, tokens: int, now: float,
+                     wire: str | None = None) -> None:
         self.cooldown_until = 0.0
         self.reason = ""
         self.consecutive_errors = 0
         self.half_open = False
+        if wire:
+            self.model_cooldown_until.pop(wire, None)
         self.served_requests += 1
         if tokens:
             self.tok_events.append((now, tokens))
@@ -768,6 +1002,11 @@ class ChannelState:
             "cooling": cooling > 0,
             "cooling_seconds": round(cooling, 1),
             "reason": self.reason if cooling > 0 else "",
+            "model_cooldowns": {
+                wire: round(until - now, 1)
+                for wire, until in self.model_cooldown_until.items()
+                if until > now
+            },
             "consecutive_errors": self.consecutive_errors,
             "last_error": self.last_error[:300],
             "total_requests": self.total_requests,
@@ -1005,18 +1244,18 @@ class StateStore:
                 reachable[name] = channel
                 if decision.mode == "exact" and name in decision.exact_channels:
                     wire = wire_model(channel, decision.exposed)
-                    if wire:
+                    if wire and self.states[name].model_available(now, wire):
                         exact.append((channel, wire))
                     continue
                 if decision.mode == "agent":
                     continue  # filled from the caller's ranked list below
                 wire = dispatch_wire_model(channel, decision.requested)
-                if wire:
+                if wire and self.states[name].model_available(now, wire):
                     scheduled.append((channel, wire))
             if decision.mode == "agent":
                 for name, wire in (agent_candidates or ()):
                     channel = reachable.get(name)
-                    if channel is not None:
+                    if channel is not None and self.states[name].model_available(now, wire):
                         scheduled.append((channel, wire))
                 if not scheduled:
                     # No usable catalog entry anywhere (fresh install, or
@@ -1025,7 +1264,7 @@ class StateStore:
                     # mapping so the alias still works.
                     for channel in reachable.values():
                         wire = dispatch_wire_model(channel, decision.requested)
-                        if wire:
+                        if wire and self.states[channel.name].model_available(now, wire):
                             scheduled.append((channel, wire))
                 return scheduled, route
             # Stability reordering: within each group, higher score first;
@@ -1037,13 +1276,26 @@ class StateStore:
 
     def _by_score(self, pairs: list[tuple[Channel, str]],
                   sticky: str | None) -> list[tuple[Channel, str]]:
-        """Stable sort by descending score, keeping a sticky channel first."""
+        """Chain order decides; only known-bad pairs sink to the back.
+
+        The console's route order is authoritative: untested and healthy
+        pairs keep their chain position, so a channel or model that was never
+        called still gets its turn. A pair whose decayed score sits at or
+        below DEMOTE_SCORE is known-bad and moves behind its siblings; the
+        score decays toward zero, which naturally restores its position.
+        """
         if len(pairs) < 2:
             return pairs
         head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
-        tail = pairs[head:]
-        tail.sort(key=lambda pair: -self.score(pair[0].name, pair[1]))
-        return pairs[:head] + tail
+        body = pairs[head:]
+        healthy, bad = [], []
+        for pair in body:
+            if self.score(pair[0].name, pair[1]) <= DEMOTE_SCORE:
+                bad.append(pair)
+            else:
+                healthy.append(pair)
+        bad.sort(key=lambda pair: -self.score(pair[0].name, pair[1]))
+        return pairs[:head] + healthy + bad
 
     def snapshot(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now
