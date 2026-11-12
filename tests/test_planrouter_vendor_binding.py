@@ -176,5 +176,131 @@ class SeedBindingTests(unittest.TestCase):
             app._check_vendor_binding(app.config)
 
 
+def volc_config() -> dict:
+    """Two channels on one vendor, sharing a single management-plane account."""
+    return {
+        "listen": {"host": "127.0.0.1", "port": 0},
+        "channels": [
+            {"name": "volc-coding", "provider": "volcengine", "mode": "coding",
+             "base_url": "https://ark.example/api/v3", "api_key": "k",
+             "models": {"auto": "*"}},
+            {"name": "old-claude", "protocol": "anthropic",
+             "base_url": "https://old.example/v1", "api_key": "k",
+             "models": {"auto": "*"}},
+        ],
+        "routes": [{"name": "default", "protocol": "openai",
+                    "channels": ["volc-coding"]},
+                   {"name": "default", "protocol": "anthropic",
+                    "channels": ["old-claude"]}],
+        # Vendor-level fallback: the account should win over it.
+        "credentials": {"volcengine": {"VOLC_ACCESSKEY": "vendor-ak"}},
+        "accounts": [{
+            "id": "volc-main", "provider": "volcengine", "label": "火山主账号",
+            "credentials": {"VOLC_ACCESSKEY": "AK1", "VOLC_SECRETKEY": "SK1"},
+        }],
+    }
+
+
+class AccountTests(unittest.TestCase):
+    """Optional account entity: parse, credential chain, console round-trip."""
+
+    def test_account_parses_and_wins_the_credential_chain(self):
+        from planrouter.accounts import resolve_creds
+        raw = volc_config()
+        raw["channels"][0]["account"] = "volc-main"
+        raw["channels"][0]["business_line"] = "coding"
+        cfg = parse_config(raw)
+        self.assertEqual([a.id for a in cfg.accounts], ["volc-main"])
+        self.assertEqual(cfg.accounts[0].credentials,
+                         {"VOLC_ACCESSKEY": "AK1", "VOLC_SECRETKEY": "SK1"})
+        volc = next(c for c in cfg.channels if c.name == "volc-coding")
+        self.assertEqual(volc.account, "volc-main")
+        self.assertEqual(volc.business_line, "coding")
+        self.assertEqual(resolve_creds(volc, cfg),
+                         {"VOLC_ACCESSKEY": "AK1", "VOLC_SECRETKEY": "SK1"})
+        # A channel without an account binding resolves nothing on its own.
+        claude = next(c for c in cfg.channels if c.name == "old-claude")
+        self.assertEqual(resolve_creds(claude, cfg), {})
+
+    def test_channel_creds_override_account_creds(self):
+        from planrouter.accounts import resolve_creds
+        raw = volc_config()
+        raw["channels"][0].update({"account": "volc-main",
+                                   "creds": {"VOLC_ACCESSKEY": "own-ak"}})
+        cfg = parse_config(raw)
+        volc = next(c for c in cfg.channels if c.name == "volc-coding")
+        self.assertEqual(resolve_creds(volc, cfg), {"VOLC_ACCESSKEY": "own-ak"})
+
+    def test_invalid_account_is_skipped_not_fatal(self):
+        raw = volc_config()
+        raw["accounts"] = [
+            {"id": "9bad", "provider": "volcengine", "label": "坏 id",
+             "credentials": {"VOLC_ACCESSKEY": "x"}},
+            {"id": "no-vendor", "provider": "nope", "label": "坏厂家",
+             "credentials": {"VOLC_ACCESSKEY": "x"}},
+            {"id": "volc-main", "provider": "volcengine", "label": "火山主账号",
+             "credentials": {"VOLC_ACCESSKEY": "AK1"}},
+        ]
+        cfg = parse_config(raw)
+        self.assertEqual([a.id for a in cfg.accounts], ["volc-main"])
+
+    def test_console_masks_and_restores_account_secrets(self):
+        from planrouter.server import App, merge_secrets
+        import hashlib
+        import copy
+        import json
+        
+        def _compute_config_version(raw: dict) -> str:
+            visible = copy.deepcopy(raw)
+            for channel in (visible.get("channels") or []):
+                key = channel.get("api_key")
+                if key and not str(key).startswith("env:"):
+                    channel["api_key"] = "***"
+                own_creds = channel.get("creds")
+                if isinstance(own_creds, dict):
+                    for env_name, value in own_creds.items():
+                        if value and not str(value).startswith("env:"):
+                            own_creds[env_name] = "***"
+            listen = visible.get("listen") or {}
+            for field in ("api_key", "admin_key"):
+                if listen.get(field) and not str(listen[field]).startswith("env:"):
+                    listen[field] = "***"
+            creds = visible.get("credentials")
+            if isinstance(creds, dict):
+                for vendor_map in creds.values():
+                    if not isinstance(vendor_map, dict):
+                        continue
+                    for env_name, value in vendor_map.items():
+                        if value and not str(value).startswith("env:"):
+                            vendor_map[env_name] = "***"
+            for account in (visible.get("accounts") or []):
+                if not isinstance(account, dict):
+                    continue
+                acc_creds = account.get("credentials")
+                if isinstance(acc_creds, dict):
+                    for env_name, value in acc_creds.items():
+                        if value and not str(value).startswith("env:"):
+                            acc_creds[env_name] = "***"
+            serialized = json.dumps(visible, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+        
+        raw = volc_config()
+        cfg = parse_config(raw)
+        app = type("FakeApp", (), {
+            "raw": raw, 
+            "config": cfg,
+            "_compute_config_version": staticmethod(_compute_config_version),
+        })()
+        visible = App.public_config(app)
+        self.assertEqual(visible["accounts"][0]["credentials"],
+                         {"VOLC_ACCESSKEY": "***", "VOLC_SECRETKEY": "***"})
+        merged = merge_secrets(visible, raw)
+        self.assertEqual(merged["accounts"][0]["credentials"],
+                         {"VOLC_ACCESSKEY": "AK1", "VOLC_SECRETKEY": "SK1"})
+        # A save that deletes the account must keep it deleted.
+        visible["accounts"] = []
+        self.assertEqual(merge_secrets(visible, raw)["accounts"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
