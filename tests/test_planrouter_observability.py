@@ -120,12 +120,38 @@ class AuditUnitTests(unittest.TestCase):
             log.record(model=f"m{index}", status="ok")
         self.assertEqual([e["model"] for e in log.recent(3)], ["m4", "m3", "m2"])
 
-    def test_log_is_bounded(self):
-        log = RequestLog(self.path, max_lines=10, max_bytes=1024)
-        for index in range(100):
-            log.record(model="facet-auto", status="ok", tokens=index)
-        self.assertLessEqual(len(log.recent(500)), 10)
-        self.assertLessEqual(self.path.stat().st_size, 64 * 1024)
+    def test_log_rotates_and_caps_archives(self):
+        log = RequestLog(self.path, max_bytes=64 * 1024, keep_files=2)
+        for index in range(800):
+            log.record(model=f"m{index}", status="ok", reason="x" * 300)
+        # The active file stays bounded; overflow history is preserved in
+        # numbered archives instead of being truncated away.
+        self.assertLess(self.path.stat().st_size, 65 * 1024)
+        self.assertTrue(log._slot(1).is_file())
+        self.assertTrue(log._slot(2).is_file())
+        self.assertFalse(log._slot(3).is_file())  # retention cap drops oldest
+        # Queries span the active file and the archives, newest first.
+        indices = [int(e["model"][1:]) for e in log.recent(500)]
+        self.assertEqual(indices, sorted(indices, reverse=True))
+        self.assertEqual(indices[0], 799)
+        kept = sum(len(p.read_text(encoding="utf-8").splitlines())
+                   for p in log._files() if p.is_file())
+        self.assertLess(kept, 800)  # rotations beyond retention were pruned
+
+    def test_rotation_state_survives_restart(self):
+        log = RequestLog(self.path, max_bytes=64 * 1024, keep_files=5)
+        for index in range(250):
+            log.record(model=f"m{index}", status="ok", reason="x" * 300)
+        self.assertTrue(log._slot(1).is_file())  # history archived pre-"restart"
+        reopened = RequestLog(self.path, max_bytes=64 * 1024, keep_files=5)
+        for index in range(250, 700):
+            reopened.record(model=f"m{index}", status="ok", reason="x" * 300)
+        indices = [int(e["model"][1:]) for e in reopened.recent(500)]
+        self.assertEqual(indices, sorted(indices, reverse=True))
+        self.assertEqual(indices[0], 699)
+        kept = sum(len(p.read_text(encoding="utf-8").splitlines())
+                   for p in reopened._files() if p.is_file())
+        self.assertEqual(kept, 700)  # nothing lost or duplicated across restart
 
     def test_track_stream_usage_validation(self):
         raw = base_config("http://127.0.0.1:9000")

@@ -9,9 +9,9 @@ from collections import deque
 from pathlib import Path
 
 STATE_FIELDS = (
-    "cooldown_until", "reason", "last_error", "consecutive_errors", "half_open",
-    "total_requests", "served_requests", "failed_requests", "total_tokens",
-    "handoffs", "last_used", "quota",
+    "cooldown_until", "model_cooldown_until", "reason", "last_error",
+    "consecutive_errors", "half_open", "total_requests", "served_requests",
+    "failed_requests", "total_tokens", "handoffs", "last_used", "quota",
 )
 WINDOW_SECONDS = 86400
 
@@ -53,6 +53,14 @@ def restore(store, data: dict, now: float | None = None) -> int:
                 if field == "quota" and not isinstance(value, dict):
                     value = {}
                 setattr(state, field, value)
+        if not isinstance(state.model_cooldown_until, dict):
+            state.model_cooldown_until = {}
+        state.model_cooldown_until = {
+            str(wire): float(until)
+            for wire, until in state.model_cooldown_until.items()
+            if isinstance(until, (int, float)) and not isinstance(until, bool)
+            and float(until) > now
+        }
         state.req_times = deque(
             float(t) for t in (entry.get("req_times") or [])
             if isinstance(t, (int, float)) and 0 <= now - float(t) < WINDOW_SECONDS

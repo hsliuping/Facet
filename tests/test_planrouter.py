@@ -1,6 +1,7 @@
 """Unit tests for channel cooldown detection, config validation and routing."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -9,9 +10,14 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
-from planrouter.core import (OPENAI, StateStore, load_config, open_with_proxy,
-                             parse_cooldown, wire_model)
+from planrouter.core import (OPENAI, StateStore, body_has_vision,
+                             channel_takes_images, load_config,
+                             open_with_proxy, parse_cooldown, vision_wire,
+                             wire_model)
+from planrouter.keys import KeyStore
+from planrouter.server import App
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -182,11 +188,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.defaults.daily_429_cooldown_hours, 12)
         self.assertEqual(cfg.defaults.network_retries, 0)
 
-    def test_mixed_protocols_in_one_route_rejected(self):
+    def test_mixed_protocols_in_one_route_allowed(self):
+        # P1-3: payloads are converted at the channel boundary, so a route may
+        # chain channels speaking different wire protocols.
         data = json.loads(json.dumps(BASE))
         data["routes"][0]["channels"] = ["plan-a", "claude"]
-        with self.assertRaisesRegex(ValueError, "never converted"):
-            load_config(write_config(data))
+        cfg = load_config(write_config(data))
+        self.assertEqual(cfg.route("openai", "default").channels, ("plan-a", "claude"))
+
+    def test_route_system_prompt_parsed(self):
+        data = json.loads(json.dumps(BASE))
+        data["routes"][0]["system_prompt"] = "Answer in Chinese."
+        cfg = load_config(write_config(data))
+        self.assertEqual(cfg.route("openai", "default").system_prompt, "Answer in Chinese.")
+        self.assertEqual(cfg.route("openai", "cheap").system_prompt, "")
 
     def test_non_loopback_requires_gateway_key(self):
         data = json.loads(json.dumps(BASE))
@@ -305,6 +320,612 @@ class RoutingTests(unittest.TestCase):
         self.store.states["plan-a"].mark_cooldown(3600, "quota", self.now)
         candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
         self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
+
+
+class ModelLevelCooldownTests(unittest.TestCase):
+    """A model's allowance is not the channel's: its siblings stay usable."""
+
+    def setUp(self):
+        self.cfg = load_config(write_config(BASE))
+        self.store = StateStore(self.cfg)
+        self.now = time.time()
+
+    def test_model_cooldown_keeps_the_channel_open(self):
+        state = self.store.states["plan-a"]
+        state.mark_cooldown(3600, "http_429", self.now,
+                            per_model=True, wire="wire-a")
+        ok, _ = state.available(self.now, self.cfg.channel("plan-a").rate)
+        self.assertTrue(ok)
+        self.assertFalse(state.model_available(self.now, "wire-a"))
+        self.assertTrue(state.model_available(self.now, "model-a"))
+        snap = self.store.snapshot(self.now)["channels"]["plan-a"]
+        self.assertFalse(snap["cooling"])
+        self.assertEqual(snap["model_cooldowns"], {"wire-a": 3600.0})
+
+    def test_route_falls_through_to_the_next_channel(self):
+        # facet-cheap's chain starts at 'free'; only free's model is out of
+        # allowance, so the next channel in the chain must take over.
+        self.store.states["free"].mark_cooldown(
+            3600, "http_429", self.now, per_model=True, wire="model-free")
+        candidates, _ = self.store.pick(OPENAI, "cheap", "auto", None, self.now)
+        self.assertEqual([c.name for c, _ in candidates], ["plan-b"])
+
+    def test_exact_model_cooling_degrades_to_schedule(self):
+        self.store.states["plan-a"].mark_cooldown(
+            3600, "http_404_not_found", self.now, per_model=True, wire="wire-a")
+        candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
+        self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
+
+    def test_success_clears_only_the_served_model(self):
+        state = self.store.states["plan-a"]
+        state.mark_cooldown(3600, "http_429", self.now,
+                            per_model=True, wire="wire-a")
+        state.mark_cooldown(3600, "http_429", self.now,
+                            per_model=True, wire="model-a")
+        state.mark_success(10, self.now, "wire-a")
+        self.assertTrue(state.model_available(self.now, "wire-a"))
+        self.assertFalse(state.model_available(self.now, "model-a"))
+
+
+class ModelScopedFailureTests(unittest.TestCase):
+    """HTTP failures: a model allowance cools that model, billing the channel."""
+
+    def setUp(self):
+        self.app = App(load_config(write_config(BASE)))
+        self.channel = self.app.config.channel("plan-a")
+
+    def forward(self, status, body, headers=None):
+        err = HTTPError(self.channel.base_url + "/v1/chat/completions", status,
+                        "boom", headers or {}, io.BytesIO(body.encode()))
+        with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+            return self.app._forward(None, OPENAI, self.channel, "wire-a",
+                                     {"messages": []}, 0, False)
+
+    def test_quota_429_cools_only_that_model(self):
+        status, _, _ = self.forward(429, '{"error":"rate limit exceeded"}')
+        self.assertEqual(status, 429)
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertTrue(state.available(now, self.channel.rate)[0])
+        self.assertFalse(state.model_available(now, "wire-a"))
+        self.assertTrue(state.model_available(now, "model-a"))
+
+    def test_account_out_of_credit_cools_the_channel(self):
+        self.forward(
+            429,
+            '{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}')
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertFalse(state.available(now, self.channel.rate)[0])
+        self.assertTrue(state.cooldown_until > now)
+
+
+class PlanWindowCooldownTests(unittest.TestCase):
+    """A 429 on a plan whose vendor window already reads exhausted cools the
+    channel until that window resets, not for the fixed five minutes."""
+
+    def setUp(self):
+        self.app = App(load_config(write_config(BASE)))
+        self.channel = self.app.config.channel("plan-a")
+        self.now = time.time()
+
+    def bind(self, plan):
+        self.app.subscriptions = [{"plan": "agentplan", "channels": ["plan-a"]}]
+        with mock.patch.object(App, "plan_for", return_value=plan):
+            err = HTTPError(self.channel.base_url + "/v1/chat/completions", 429,
+                            "boom", {}, io.BytesIO(b'{"error":"quota exceeded"}'))
+            with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+                return self.app._forward(None, OPENAI, self.channel, "wire-a",
+                                         {"messages": []}, 0, False)
+
+    def test_exhausted_window_extends_to_reset(self):
+        status, reason, seconds = self.bind({
+            "kind": "agent",
+            "windows": [{"level": "monthly", "quota": 100, "used": 100,
+                         "reset_ts": self.now + 40 * 3600}],
+        })
+        self.assertEqual(status, 429)
+        self.assertEqual(reason, "plan_monthly_exhausted")
+        self.assertAlmostEqual(seconds, 40 * 3600, delta=5)
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertFalse(state.available(now, self.channel.rate)[0])
+        self.assertEqual(state.reason, "plan_monthly_exhausted")
+
+    def test_longest_exhausted_window_wins(self):
+        status, reason, seconds = self.bind({
+            "kind": "agent",
+            "windows": [{"level": "five_hour", "quota": 10, "used": 10,
+                         "reset_ts": self.now + 3600},
+                        {"level": "monthly", "quota": 100, "used": 100,
+                         "reset_ts": self.now + 40 * 3600}],
+        })
+        self.assertEqual(reason, "plan_monthly_exhausted")
+        self.assertAlmostEqual(seconds, 40 * 3600, delta=5)
+
+    def test_window_with_room_keeps_model_level_cooldown(self):
+        status, reason, seconds = self.bind({
+            "kind": "agent",
+            "windows": [{"level": "monthly", "quota": 100, "used": 10,
+                         "reset_ts": self.now + 40 * 3600}],
+        })
+        self.assertEqual(reason, "quota")
+        self.assertAlmostEqual(seconds, 18000.0, delta=5)
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertTrue(state.available(now, self.channel.rate)[0])
+        self.assertFalse(state.model_available(now, "wire-a"))
+
+    def test_percent_window_and_stale_reset_ignored(self):
+        status, reason, seconds = self.bind({
+            "kind": "coding",
+            "windows": [{"level": "monthly", "percent": 100.0,
+                         "reset_ts": self.now - 5},
+                        {"level": "five_hour", "percent": 30.0}],
+        })
+        self.assertEqual(reason, "quota")
+        self.assertAlmostEqual(seconds, 18000.0, delta=5)
+
+
+class VisionRoutingTests(unittest.TestCase):
+    """Image-bearing requests only reach channels that can take them."""
+
+    def setUp(self):
+        data = json.loads(json.dumps(BASE))
+        data["channels"][0]["vision"] = False                 # plan-a: text-only
+        data["channels"][2]["models"]["vision"] = "model-vl"  # free: extra mapping
+        data["channels"][2]["vision_model"] = "model-vl"      # free: re-points images
+        self.app = App(load_config(write_config(data)))
+        self.image_body = {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "what is this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}]}
+
+    def route_image(self):
+        candidates, _ = self.app.store.pick(OPENAI, "default", "auto", None, time.time())
+        candidates = [(channel, vision_wire(channel, wire))
+                      for channel, wire in candidates]
+        return self.app._apply_vision_filter(candidates)
+
+    def test_image_request_skips_text_only_channel(self):
+        candidates, skipped = self.route_image()
+        self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
+        self.assertEqual(skipped, [{"channel": "plan-a", "wire_model": "model-a",
+                                    "reason": "channel_text_only"}])
+
+    def test_vision_model_replaces_auto_mapping(self):
+        candidates, _ = self.route_image()
+        self.assertEqual([wire for _, wire in candidates], ["model-b", "model-vl"])
+
+    def test_text_request_keeps_full_chain_and_auto_mapping(self):
+        # The handler consults the filter only for image-bearing requests;
+        # a text request flows through pick untouched, text-only channels
+        # included (vision only gates multimodal traffic).
+        candidates, _ = self.app.store.pick(OPENAI, "default", "auto", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates],
+                         ["plan-a", "plan-b", "free"])
+        self.assertEqual([wire for _, wire in candidates],
+                         ["model-a", "model-b", "model-free"])
+        self.assertFalse(channel_takes_images(
+            self.app.config.channel("plan-a"), "model-a"))
+        self.assertTrue(channel_takes_images(
+            self.app.config.channel("free"), "model-free"))
+
+    def test_vision_list_restricts_by_wire_model(self):
+        data = json.loads(json.dumps(BASE))
+        data["channels"][0]["vision"] = ["wire-a"]
+        cfg = load_config(write_config(data))
+        channel = cfg.channel("plan-a")
+        self.assertTrue(channel_takes_images(channel, "wire-a"))
+        self.assertFalse(channel_takes_images(channel, "other"))
+
+    def test_anthropic_blocks_detected_as_vision(self):
+        self.assertTrue(body_has_vision({"messages": [
+            {"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "data": "AAAA"}}]}]}))
+        self.assertTrue(body_has_vision({"messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": "read this"},
+                {"type": "document", "source": {}}]}]}))
+        self.assertFalse(body_has_vision({"messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]}]}))
+        self.assertFalse(body_has_vision({"messages": [
+            {"role": "user", "content": "plain string"}]}))
+
+    def test_vision_config_validation(self):
+        data = json.loads(json.dumps(BASE))
+        data["channels"][0]["vision"] = "yes"
+        with self.assertRaisesRegex(ValueError, "vision"):
+            load_config(write_config(data))
+        data["channels"][0]["vision"] = []
+        with self.assertRaisesRegex(ValueError, "vision list"):
+            load_config(write_config(data))
+        data["channels"][0]["vision"] = False
+        data["channels"][0]["vision_model"] = "vl"
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            load_config(write_config(data))
+
+
+class EmbeddingRoutingTests(unittest.TestCase):
+    """Embeddings use the same routing pipeline but a different endpoint."""
+
+    def setUp(self):
+        data = json.loads(json.dumps(BASE))
+        # Add an embedding-specific channel and route
+        data["channels"].append({
+            "name": "emb-ch1",
+            "protocol": "openai",
+            "base_url": "http://127.0.0.1:9005",
+            "models": {
+                "auto": "text-embedding-3-small",
+                "text-embedding-3-small": "text-embedding-3-small",
+                "text-embedding-3-large": "text-embedding-3-large",
+            },
+            "priority": 5,
+            "tier": "free",
+            "free_quota": {"requests": 10, "period": "total"},
+        })
+        data["channels"].append({
+            "name": "emb-ch2",
+            "protocol": "openai",
+            "base_url": "http://127.0.0.1:9006",
+            "models": {"auto": "text-embedding-ada-002", "*": "*", "text-embedding-3-large": "text-embedding-3-large", "text-embedding-ada-002": "text-embedding-ada-002"},
+            "priority": 10,
+        })
+        data["routes"].append({
+            "name": "embedding",
+            "protocol": "openai",
+            "channels": ["emb-ch1", "emb-ch2"],
+        })
+        # Need usage_file for UsageRecorder
+        import tempfile
+        self.usage_file = tempfile.NamedTemporaryFile(suffix='.json', delete=False).name
+        self.app = App(load_config(write_config(data)), usage_file=self.usage_file)
+        self.embedding_body = {"model": "facet-embedding", "input": "test"}
+
+    def tearDown(self):
+        try:
+            os.unlink(self.usage_file)
+        except OSError:
+            pass
+
+    def test_branded_embedding_routes_to_embedding_chain(self):
+        """facet-embedding should pick the embedding route."""
+        candidates, route = self.app.store.pick(OPENAI, "embedding", "auto", None, time.time())
+        self.assertEqual(route.name, "embedding")
+        self.assertEqual([c.name for c, _ in candidates], ["emb-ch1", "emb-ch2"])
+        self.assertEqual([wire for _, wire in candidates],
+                         ["text-embedding-3-small", "text-embedding-ada-002"])
+
+    def test_exact_embedding_model_on_embedding_route(self):
+        """Exact model name routes correctly on embedding route."""
+        candidates, _ = self.app.store.pick(OPENAI, "embedding", "text-embedding-3-large", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates], ["emb-ch1", "emb-ch2"])
+        self.assertEqual(candidates[0][1], "text-embedding-3-large")
+
+    def test_embedding_failover_on_model_cooldown(self):
+        """Model-level cooldown on emb-ch1 should fall through to emb-ch2."""
+        self.app.store.states["emb-ch1"].mark_cooldown(
+            3600, "http_429", time.time(), per_model=True, wire="text-embedding-3-small"
+        )
+        candidates, _ = self.app.store.pick(OPENAI, "embedding", "auto", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates], ["emb-ch2"])
+        self.assertEqual(candidates[0][1], "text-embedding-ada-002")
+
+    def test_embedding_free_quota_exhaustion_blocks_model(self):
+        """Free quota exhaustion on an embedding model blocks it from routing."""
+        # Record 10 successful requests to exhaust the free quota (configured in setUp)
+        for _ in range(10):
+            self.app.record_usage("emb-ch1", True, tokens=0, model="text-embedding-3-small")
+        # Check via App's free_quota_exhausted method
+        channel = self.app.config.channel("emb-ch1")
+        self.assertTrue(self.app.free_quota_exhausted(channel, "text-embedding-3-small"))
+        # Verify the filter skips it
+        candidates, _ = self.app.store.pick(OPENAI, "embedding", "auto", None, time.time())
+        decision = type("Decision", (), {"exposed": "facet-embedding", "hint": "embedding"})()
+        kept, skipped = self.app._apply_free_quota_filter(candidates, decision)
+        self.assertEqual([c.name for c, _ in kept], ["emb-ch2"])
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+
+    def test_embedding_channel_not_used_for_chat(self):
+        """Embedding channels don't appear in default chat route."""
+        candidates, route = self.app.store.pick(OPENAI, "default", "auto", None, time.time())
+        self.assertEqual(route.name, "default")
+        self.assertNotIn("emb-ch1", [c.name for c, _ in candidates])
+        self.assertNotIn("emb-ch2", [c.name for c, _ in candidates])
+
+    def test_embedding_model_list_includes_branded(self):
+        """Model list includes embedding models from channels and branded alias."""
+        model_list = self.app.model_list()
+        ids = [m["id"] for m in model_list["data"]]
+        # Models explicitly declared in channels
+        self.assertIn("text-embedding-3-small", ids)
+        self.assertIn("text-embedding-3-large", ids)
+        self.assertIn("text-embedding-ada-002", ids)
+        # Branded alias
+        self.assertIn("facet-embedding", ids)
+
+
+class _FakeHandler:
+    """Minimal stand-in for BaseHTTPRequestHandler in auth checks."""
+
+    def __init__(self, headers=None):
+        self.headers = headers or {}
+
+
+class KeyTests(unittest.TestCase):
+    """Member keys: storage, the gateway auth matrix and per-member usage."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.keys_file = self.tmp / "keys.json"
+        self.usage_file = self.tmp / "usage.json"
+
+    def app(self, api_key="master-key"):
+        data = json.loads(json.dumps(BASE))
+        if api_key:
+            data["listen"]["api_key"] = api_key
+        return App(load_config(write_config(data)),
+                   usage_file=self.usage_file, keys_file=self.keys_file)
+
+    def check(self, app, key):
+        h = _FakeHandler({"Authorization": "Bearer " + key} if key else {})
+        return app._authorized(h), getattr(h, "user_key", None)
+
+    def test_key_store_format_and_persistence(self):
+        app = self.app()
+        record = app.keys.create("alice")
+        self.assertTrue(record["key"].startswith("sk-pr-"))
+        self.assertEqual(len(record["key"]), len("sk-pr-") + 32)
+        # Same name twice is fine: the key is the identity, the name a label.
+        second = app.keys.create("alice")
+        self.assertNotEqual(record["key"], second["key"])
+        reloaded = KeyStore(self.keys_file)
+        self.assertEqual(reloaded.match(record["key"]), "alice")
+        self.assertEqual(len(reloaded.list()), 2)
+
+    def test_master_only_when_no_members(self):
+        app = self.app()
+        self.assertEqual(app.keys.records, [])
+        self.assertEqual(self.check(app, "master-key"), (True, ""))
+        self.assertEqual(self.check(app, "wrong"), (False, ""))
+        self.assertEqual(self.check(app, ""), (False, ""))
+
+    def test_member_key_is_a_valid_credential_and_attributes(self):
+        app = self.app()
+        record = app.keys.create("alice")
+        self.assertEqual(self.check(app, record["key"]), (True, "alice"))
+        self.assertEqual(self.check(app, "master-key"), (True, ""))
+
+    def test_revoked_key_fails_and_master_survives(self):
+        app = self.app()
+        record = app.keys.create("bob")
+        self.assertTrue(app.keys.revoke(record["key"]))
+        self.assertFalse(app.keys.revoke(record["key"]))  # already revoked
+        self.assertEqual(self.check(app, record["key"])[0], False)
+        self.assertEqual(self.check(app, "master-key")[0], True)
+
+    def test_open_gateway_allows_keyless_but_attributes_members(self):
+        app = self.app(api_key=None)
+        record = app.keys.create("carol")
+        self.assertEqual(self.check(app, record["key"]), (True, "carol"))
+        self.assertEqual(self.check(app, ""), (True, ""))
+
+    def test_usage_is_attributed_per_member(self):
+        app = self.app()
+        record = app.keys.create("alice")
+        ok, user = self.check(app, record["key"])
+        self.assertTrue(ok)
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        h.user_key = user
+        app.record_usage("plan-a", True, 100, model="wire-a", h=h)
+        app.record_usage("plan-a", False, 0, model="wire-a", h=None)  # anonymous
+        stats = app.usage.user_stats(30)
+        self.assertEqual([(u["name"], u["requests"], u["success"], u["failed"], u["tokens"])
+                          for u in stats["users"]],
+                         [("alice", 1, 1, 0, 100)])
+
+    def test_keyless_record_lands_nowhere_in_users(self):
+        app = self.app()
+        app.record_usage("plan-a", True, 10, model="wire-a", h=None)
+        stats = app.usage.user_stats(30)
+        self.assertEqual(stats["users"], [])
+
+
+class _StreamResp:
+    """Fake upstream response yielding prepared chunks and tracking close()."""
+
+    def __init__(self, chunks, log=None):
+        self._chunks = list(chunks)
+        self.headers = {"Content-Type": "text/event-stream"}
+        self.closed = 0
+        self.log = [] if log is None else log
+
+    def read(self, n=-1):
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def close(self):
+        self.closed += 1
+        self.log.append("resp.close")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+class _DropHandler(_FakeHandler):
+    """Handler whose client connection dies after `fail_after` wfile writes."""
+
+    def __init__(self, log=None, fail_after=1):
+        super().__init__()
+        self.log = [] if log is None else log
+        self.fail_after = fail_after
+        self.writes = 0
+        self.sent = []
+        self.wfile = self
+
+    def send_response(self, code):
+        self.status = code
+
+    def send_header(self, key, value):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def write(self, data):
+        self.writes += 1
+        if self.writes > self.fail_after:
+            self.log.append("disconnect")
+            raise BrokenPipeError("client hung up")
+        self.sent.append(data)
+
+    def flush(self):
+        pass
+
+
+class _TailAdapter:
+    """Streaming adapter whose finish() emits a small tail event."""
+
+    def feed(self, chunk):
+        return chunk
+
+    def finish(self, data=None):
+        return b"tail"
+
+
+SSE_DELTA = b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+SSE_USAGE_7 = (b'data: {"choices":[],"usage":{"prompt_tokens":5,'
+               b'"completion_tokens":2,"total_tokens":7}}\n\n')
+SSE_USAGE_99 = (b'data: {"choices":[],"usage":{"prompt_tokens":50,'
+                b'"completion_tokens":49,"total_tokens":99}}\n\n')
+
+
+class StreamCancelTests(unittest.TestCase):
+    """P0-1: a client that hangs up mid-stream must drop the upstream
+    connection immediately (stop paying for a stream nobody reads) and still
+    record exactly the tokens that were relayed before the disconnect."""
+
+    def setUp(self):
+        self.app = App(load_config(write_config(BASE)))
+        self.channel = self.app.config.channel("plan-a")
+
+    def test_disconnect_closes_upstream_before_recording_usage(self):
+        log = []
+        resp = _StreamResp([SSE_USAGE_7, SSE_USAGE_99], log)  # 2nd never relays
+        h = _DropHandler(log, fail_after=1)
+        with mock.patch.object(self.app, "record_usage") as rec:
+            rec.side_effect = lambda *a, **k: log.append("usage")
+            result = self.app._relay(h, resp, OPENAI, self.channel, "wire-a",
+                                     0, False, True)
+        self.assertIsNone(result)        # no exception escaped _relay
+        self.assertEqual(resp.closed, 1)  # upstream released at the disconnect
+        # close happens inside the except branch, before usage is recorded
+        self.assertEqual(log, ["disconnect", "resp.close", "usage"])
+        rec.assert_called_once()
+        args, kwargs = rec.call_args
+        self.assertEqual(args, ("plan-a", True, 7))  # only the relayed chunk
+        self.assertEqual(kwargs["input_tokens"], 5)
+
+    def test_tail_write_disconnect_still_records_usage(self):
+        # The adapter tail write used to sit outside the try block: a second
+        # disconnect there escaped into _forward's bare except, which marked
+        # success(0) and skipped record_usage entirely.
+        resp = _StreamResp([SSE_DELTA, SSE_USAGE_7])
+        h = _DropHandler(fail_after=2)   # chunks relay, the tail write dies
+        with mock.patch("planrouter.server.open_with_proxy", return_value=resp):
+            with mock.patch.object(self.app, "record_usage") as rec:
+                result = self.app._forward(
+                    h, OPENAI, self.channel, "wire-a",
+                    {"messages": [], "stream": True}, 0, False,
+                    delivery={"adapter": _TailAdapter()})
+        self.assertIsNone(result)
+        rec.assert_called_once()
+        self.assertEqual(rec.call_args[0], ("plan-a", True, 7))
+        self.assertEqual(resp.closed, 1)  # released via _forward's with-block
+
+    def test_full_stream_records_all_relayed_usage(self):
+        resp = _StreamResp([SSE_DELTA, SSE_USAGE_7])
+        h = _DropHandler(fail_after=99)   # nobody hangs up
+        with mock.patch("planrouter.server.open_with_proxy", return_value=resp):
+            with mock.patch.object(self.app, "record_usage") as rec:
+                result = self.app._forward(
+                    h, OPENAI, self.channel, "wire-a",
+                    {"messages": [], "stream": True}, 0, False)
+        self.assertIsNone(result)
+        self.assertEqual(h.writes, 2)
+        self.assertEqual(h.sent, [SSE_DELTA, SSE_USAGE_7])
+        self.assertEqual(resp.closed, 1)
+        rec.assert_called_once()
+        self.assertEqual(rec.call_args[0], ("plan-a", True, 7))
+
+
+class RuntimeAlertConditionTests(unittest.TestCase):
+    """P1-2: the three runtime alarm families evaluated off live state."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.usage_file = Path(self.dir.name) / "usage.json"
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def app(self, data=None, notifications=False):
+        kwargs = {"usage_file": self.usage_file}
+        if notifications:
+            kwargs["notifications_file"] = Path(self.dir.name) / "notifications.json"
+        return App(load_config(write_config(data or BASE)), **kwargs)
+
+    def test_route_chain_all_cooling_alerts(self):
+        data = json.loads(json.dumps(BASE))
+        for channel in data["channels"]:
+            channel["api_key"] = "sk-test"
+        app = self.app(data, notifications=True)
+        now = time.time()
+        for name in ("free", "plan-b"):  # the whole "cheap" chain
+            app.store.states[name].mark_cooldown(3600, "rate limit", now)
+        alerts = app.runtime_alerts()
+        keys = {a["key"] for a in alerts}
+        self.assertIn("route:openai:cheap", keys)
+        # plan-a is still healthy, so the default chains stay silent
+        self.assertNotIn("route:openai:default", keys)
+        self.assertNotIn("route:anthropic:default", keys)
+        # the notifier is wired to the same conditions
+        self.assertEqual(app.notifier.get_health(), alerts)
+
+    def test_route_alert_ignores_config_gaps(self):
+        # Channels without api_key are config gaps: cooling one of them plus
+        # the keyless rest must not raise a "chain down" alarm.
+        app = self.app()
+        now = time.time()
+        for name in ("free", "plan-b"):
+            app.store.states[name].mark_cooldown(3600, "rate limit", now)
+        self.assertNotIn("route:openai:cheap", {a["key"] for a in app.runtime_alerts()})
+
+    def test_probe_failing_alerts_after_repeated_errors(self):
+        app = self.app()
+        state = app.store.states["plan-a"]
+        for _ in range(3):
+            state.mark_cooldown(30, "transient", time.time())
+        self.assertIn("probe:plan-a", {a["key"] for a in app.runtime_alerts()})
+        state.mark_success(0, time.time())
+        self.assertNotIn("probe:plan-a", {a["key"] for a in app.runtime_alerts()})
+
+    def test_free_quota_exhausted_alerts(self):
+        data = json.loads(json.dumps(BASE))
+        data["channels"][2]["api_key"] = "sk-test"
+        data["channels"][2]["tier"] = "free"
+        data["channels"][2]["free_quota"] = {"tokens": 10, "period": "total"}
+        app = self.app(data)
+        app.record_usage("free", True, 100, model="model-free")
+        self.assertIn("freequota:free:model-free",
+                      {a["key"] for a in app.runtime_alerts()})
 
 
 if __name__ == "__main__":
