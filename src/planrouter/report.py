@@ -91,8 +91,6 @@ def build_report(records: list[dict], days: dict, month: str | None = None,
             "quota_remaining": record.get("quota_remaining"),
             "quota_ratio": record.get("quota_ratio"),
             "usage": usage,
-            "cost_per_1k_requests": (round(amount / usage["requests"] * 1000, 2)
-                                     if usage["requests"] else None),
         })
 
     totals = _zero()

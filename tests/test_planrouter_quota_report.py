@@ -171,7 +171,6 @@ class ReportTests(unittest.TestCase):
         first = report["subscriptions"][0]
         self.assertEqual(first["usage"]["requests"], 16)
         self.assertEqual(first["usage"]["tokens"], 800)
-        self.assertAlmostEqual(first["cost_per_1k_requests"], 199 / 16 * 1000, places=1)
         self.assertEqual(first["quota_remaining"], 100)
         channels = {c["name"]: c for c in report["channels"]}
         self.assertTrue(channels["plan-a"]["linked"])
