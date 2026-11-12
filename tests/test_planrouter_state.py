@@ -119,6 +119,33 @@ class PersistenceTests(unittest.TestCase):
         self.assertFalse(restarted.store.snapshot(now + 60)["channels"]["a"]["cooling"])
         self.assertEqual(restarted.store.states["a"].cooldown_until, 0.0)
 
+    def test_model_cooldown_survives_restart(self):
+        app = App(parse_config(config_dict()))
+        now = time.time()
+        app.store.states["a"].mark_cooldown(3600, "http_429", now,
+                                            per_model=True, wire="model-a")
+        snapshot = capture(app.store, now)
+
+        restarted = App(parse_config(config_dict()))
+        restore(restarted.store, snapshot, now)
+        state = restarted.store.states["a"]
+        self.assertFalse(state.model_available(now, "model-a"))
+        self.assertTrue(state.model_available(now, "model-b"))
+        self.assertFalse(restarted.store.snapshot(now)["channels"]["a"]["cooling"])
+
+    def test_expired_model_cooldown_is_dropped(self):
+        app = App(parse_config(config_dict()))
+        now = time.time()
+        app.store.states["a"].mark_cooldown(3600, "http_429", now - 7200,
+                                            per_model=True, wire="model-a")
+        snapshot = capture(app.store, now + 60)
+
+        restarted = App(parse_config(config_dict()))
+        restore(restarted.store, snapshot, now + 60)
+        state = restarted.store.states["a"]
+        self.assertEqual(state.model_cooldown_until, {})
+        self.assertTrue(state.model_available(now + 60, "model-a"))
+
     def test_flush_and_restart_via_app(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "router.state.json"

@@ -442,7 +442,7 @@ def refresh_plan_models(app, report: dict) -> None:
         url = str(record.get("models_url") or "").strip()
         if not url:
             continue
-        label = f"{record.get('vendor') or '—'} / {record.get('plan') or '—'}"
+        label = f"{app.subscription_label(record) or '—'} / {record.get('plan') or '—'}"
         try:
             text = html_to_text(fetch_plan_doc(url, proxy=app.docs_proxy()))
         except Exception as exc:  # any fetch failure must keep the old list
@@ -468,10 +468,11 @@ def refresh_plan_models(app, report: dict) -> None:
         if not new or (not added and not removed):
             continue
         record["models"] = new
+        label = app.subscription_label(record)
         report["applied"].append({
-            "channel": ", ".join(record.get("channels") or []) or record.get("vendor") or "",
+            "channel": ", ".join(app.subscription_channels(record)) or label,
             "action": "update_plan_models",
-            "vendor": record.get("vendor") or "",
+            "vendor": label,
             "plan": record.get("plan") or "",
             "models": new,
             "added": len(added), "removed": len(removed), "source": source,

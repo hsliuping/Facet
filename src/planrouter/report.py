@@ -63,8 +63,12 @@ def build_report(records: list[dict], days: dict, month: str | None = None,
         currency = equivalent.get("currency") or record.get("currency", "CNY")
         if record["status"] != "expired":
             currency_totals[currency] = round(currency_totals.get(currency, 0) + amount, 2)
-        group = vendors.setdefault((record["vendor"], record["account"]), {
-            "vendor": record["vendor"], "account": record["account"],
+        # A subscription no longer stores a vendor of its own: the server
+        # derives it from the linked channel and injects it as `vendor`,
+        # falling back to the plan name for unbound rows.
+        vendor = record.get("vendor") or record.get("plan") or ""
+        group = vendors.setdefault((vendor, record["account"]), {
+            "vendor": vendor, "account": record["account"],
             "subscriptions": 0, "monthly_cost": {},
         })
         group["subscriptions"] += 1
@@ -73,7 +77,7 @@ def build_report(records: list[dict], days: dict, month: str | None = None,
                 group["monthly_cost"].get(currency, 0) + amount, 2,
             )
         rows.append({
-            "id": record["id"], "vendor": record["vendor"],
+            "id": record["id"], "vendor": vendor,
             "account": record["account"], "plan": record["plan"],
             "tier": record["tier"], "status": record["status"],
             "days_left": record["days_left"], "expires_at": record["expires_at"],

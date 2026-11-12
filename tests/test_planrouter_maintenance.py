@@ -436,10 +436,14 @@ class RefreshPlanModelsTests(unittest.TestCase):
                                           encoding="utf-8")
         tmp.close()
         self.path = Path(tmp.name)
-        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        data = maintenance_config()
+        # A subscription has no vendor of its own: the label comes from the
+        # channel's provider, so bind channel "a" to the Ark vendor.
+        data["channels"][0].update({"provider": "volcengine", "mode": "coding"})
+        self.path.write_text(json.dumps(data), encoding="utf-8")
         self.app = App(load_config(self.path), config_path=self.path)
         self.app.probe_channel_models = lambda payload: {"ok": False, "name": payload.get("name")}
-        self.app.providers = []  # provider doc refresh is covered elsewhere
+        self.app.providers = [{"id": "volcengine", "name": "火山引擎方舟"}]
         self.app.subscriptions = [subs.normalize({
             "vendor": "火山引擎", "plan": "coding plan", "channels": ["a"],
             "models_url": "https://docs.example.com/coding-plan",
@@ -476,7 +480,7 @@ class RefreshPlanModelsTests(unittest.TestCase):
         entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
         self.assertEqual(entry["source"], "regex")
         self.assertEqual((entry["added"], entry["removed"]), (2, 0))
-        self.assertEqual(entry["vendor"], "火山引擎")
+        self.assertEqual(entry["vendor"], "火山引擎方舟")
         self.assertEqual(entry["plan"], "coding plan")
         self.assertIn("新增 2 个", entry["reason"])
         self.assertIn("来源 regex", entry["reason"])

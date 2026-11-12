@@ -453,11 +453,11 @@ class ConsoleAssetsTests(unittest.TestCase):
         self.assertIn("关联渠道（勾选，可多选）", js)
         self.assertIn(".channel-picker", css)
         self.assertNotIn("关联渠道（逗号分隔）", js)
-        # Picking a channel pre-fills vendor / plan without overwriting user edits.
+        # Picking a channel pre-fills the plan name without overwriting edits.
         self.assertIn("function autofillFromChannels(", js)
         self.assertIn("function inferVendor(", js)
         self.assertIn("dataset.autofill", js)
-        self.assertIn("自动带出厂家与套餐名称", js)
+        self.assertIn("自动带出套餐名称与档位", js)
         self.assertIn(".pick-note", css)
 
     def test_console_never_calls_native_dialogs(self):

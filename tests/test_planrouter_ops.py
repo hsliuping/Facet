@@ -255,7 +255,10 @@ class NotifierTests(OpsFixture):
         def sender(request):
             sent.append(json.loads(request.data.decode("utf-8"))["text"]["content"])
 
-        records = subs.normalize_all([subscription(3, [])])
+        # The App hands the notifier rows already labeled with the vendor
+        # derived from each linked channel's provider.
+        records = [dict(r, vendor="火山引擎方舟")
+                   for r in subs.normalize_all([subscription(3, [])])]
         service = ReminderService(
             self.subs_path, self.root / "notifications.json",
             lambda: records,
@@ -296,6 +299,59 @@ class NotifierTests(OpsFixture):
         message = alert_message(alert)
         self.assertIn("199", message)
         self.assertIn(alert["expires_at"], message)
+
+    def test_runtime_alert_throttle_and_resolve(self):
+        sent = []
+
+        def sender(request):
+            sent.append(json.loads(request.data.decode("utf-8"))["text"]["content"])
+
+        conditions = [{
+            "kind": "route_all_cooling", "key": "route:openai:cheap",
+            "title": "渠道链全冷却：openai:cheap",
+            "message": "[PlanRouter 运行告警] 渠道链全冷却",
+        }]
+        service = ReminderService(
+            self.subs_path, self.root / "notifications.json",
+            lambda: [],
+            lambda: {"notify_enabled": True, "webhook_url": "https://example.com/hook",
+                     "interval_minutes": 60},
+            sender=sender, get_health=lambda: list(conditions),
+        )
+        self.assertEqual(service.check_runtime()["sent"], 1)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("渠道链全冷却", sent[0])
+        # throttled: the same cause stays silent inside the window
+        self.assertEqual(service.check_runtime()["sent"], 0)
+        self.assertEqual(len(sent), 1)
+        # recovery closes the alert with one resolved message + history entry
+        conditions.clear()
+        done = service.check_runtime()
+        self.assertEqual(done["resolved"], 1)
+        self.assertEqual(len(sent), 2)
+        self.assertIn("恢复", sent[1])
+        self.assertFalse(service.status()["runtime"]["route:openai:cheap"]["active"])
+        self.assertTrue(service.status()["history"][0]["resolved"])
+
+    def test_runtime_alert_records_history_without_webhook(self):
+        def sender(request):
+            raise AssertionError("should not send")
+
+        service = ReminderService(
+            self.subs_path, self.root / "notifications.json",
+            lambda: [],
+            lambda: {"notify_enabled": False, "webhook_url": "https://secret.example/hook",
+                     "interval_minutes": 60},
+            sender=sender,
+            get_health=lambda: [{
+                "kind": "probe_failing", "key": "probe:plan-a",
+                "title": "渠道连续失败：plan-a", "message": "x",
+            }],
+        )
+        self.assertEqual(service.check_runtime()["sent"], 0)
+        history = service.status()["history"]
+        self.assertEqual(history[0]["title"], "渠道连续失败：plan-a")
+        self.assertTrue(service.status()["runtime"]["probe:plan-a"]["active"])
 
     def test_notifications_api(self):
         self.start([subscription(3, [])])

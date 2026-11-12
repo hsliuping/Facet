@@ -413,17 +413,25 @@ class PlanQuotaTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
                                           encoding="utf-8")
-        json.dump(align_config(), tmp)
+        raw = align_config()
+        # The plan kind and the vendor gate come from the linked channel now,
+        # so the fixture needs an Ark coding-plan channel to bind to.
+        raw["channels"].append({
+            "name": "火山引擎0198", "protocol": "openai",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "api_key": "sk-" + "fixture", "models": {"auto": "doubao"},
+            "provider": "volcengine", "mode": "coding"})
+        json.dump(raw, tmp)
         tmp.close()
         self.path = Path(tmp.name)
         self.app = App(load_config(self.path), config_path=self.path)
         self.app.subscriptions = [
             {"id": "s1", "vendor": "火山引擎_6198_codingplan",
              "account": "6198", "plan": "coding plan", "tier": "Pro",
-             "expires_at": "2026-12-09"},
+             "expires_at": "2026-12-09", "channels": ["火山引擎0198"]},
             {"id": "s2", "vendor": "百炼", "account": "main",
              "plan": "free tier", "tier": "free",
-             "expires_at": "2026-12-31"},
+             "expires_at": "2026-12-31", "channels": ["百炼免费"]},
         ]
         # Config is a frozen dataclass; swap in management credentials.
         cfg = self.app.config
@@ -498,7 +506,7 @@ class PlanQuotaTests(unittest.TestCase):
             "name": "火山Agent", "protocol": "openai",
             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
             "api_key": "sk-x", "models": {"kimi": "kimi"},
-            "provider": "volcengine", "mode": "payg",
+            "provider": "volcengine", "mode": "agent",
             "creds": {"VOLC_ACCESSKEY": "ch-ak", "VOLC_SECRETKEY": "ch-sk"}})
         self.app.apply_config(raw)
         record = {"id": "s3", "vendor": "火山引擎_agentplan",
