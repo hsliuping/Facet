@@ -118,8 +118,10 @@ class EndToEndTests(unittest.TestCase):
             health = json.loads(resp.read())
         self.assertIn("backup-plan", health["available"])
         cooling = health["channels"]["quota-plan"]
-        self.assertTrue(cooling["cooling"])
-        self.assertAlmostEqual(cooling["cooling_seconds"], 7200, delta=5)
+        # Only the served model is out of allowance; the channel itself (and
+        # its sibling models) stays usable.
+        self.assertFalse(cooling["cooling"])
+        self.assertAlmostEqual(cooling["model_cooldowns"]["model-a"], 7200, delta=5)
 
         # while cooling, the exhausted channel is not contacted at all
         with self._post() as resp:
@@ -150,9 +152,8 @@ class EndToEndTests(unittest.TestCase):
             with urlopen(f"http://127.0.0.1:{self.gateway.server_address[1]}/health",
                          timeout=5) as resp:
                 cooling = json.loads(resp.read())["channels"]["quota-plan"]
-            self.assertTrue(cooling["cooling"])
-            self.assertAlmostEqual(cooling["cooling_seconds"], 86400, delta=5)
-            self.assertEqual(cooling["reason"], "http_404_not_found")
+            self.assertFalse(cooling["cooling"])
+            self.assertAlmostEqual(cooling["model_cooldowns"]["model-a"], 86400, delta=5)
 
             # cooling without half_open: the dead model is not probed again
             with self._post() as resp:

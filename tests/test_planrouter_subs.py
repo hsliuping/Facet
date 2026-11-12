@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import tempfile
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 from planrouter import cli
 from planrouter import subscriptions as subs
 from planrouter.core import load_config
-from planrouter.server import App, Handler
+from planrouter.server import App, Handler, channel_tier
 
 TODAY = date(2026, 11, 7)
 
@@ -120,7 +121,7 @@ class SubscriptionMathTests(unittest.TestCase):
 
     def test_validation_rejects_bad_records(self):
         bad = [
-            {"plan": "p"},
+            {"vendor": "v"},
             {"vendor": "v", "plan": "p", "started_at": "2026/11/07"},
             {"vendor": "v", "plan": "p", "price": -1},
             {"vendor": "v", "plan": "p", "currency": "BTC"},
@@ -273,6 +274,75 @@ class SubscriptionApiTests(unittest.TestCase):
         self.assertIn("RENEW", text)
         self.assertIn("coding plan", text)
         self.assertIn("697", text)
+
+
+class ChannelIdLinkTests(unittest.TestCase):
+    """Subscriptions link channels by stable id, and carry no vendor."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.config_path = self.root / "router.json"
+        data = config_dict()
+        # Vendor and plan kind live on the channel, not on the subscription.
+        data["channels"][0].update({"provider": "volcengine", "mode": "coding"})
+        self.config_path.write_text(json.dumps(data), encoding="utf-8")
+        self.subs_path = self.root / "subscriptions.json"
+        subs.save_file(self.subs_path, subs.normalize_all([{
+            "vendor": "火山引擎", "plan": "coding plan", "price": 199,
+            "channels": ["a"], "expires_at": "2026-12-31",
+        }]))
+        self.app = App(load_config(self.config_path),
+                       config_path=self.config_path,
+                       subscriptions_file=self.subs_path)
+        self.app.providers = [
+            {"id": "volcengine", "name": "火山引擎方舟", "modes": ["coding", "agent"]}]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_legacy_name_links_are_migrated_to_ids(self):
+        cid = self.app.config.channel("a").id
+        self.assertTrue(cid)
+        self.assertEqual(self.app.subscriptions[0]["channels"], [cid])
+        stored = subs.load_file(self.subs_path)[0]
+        self.assertEqual(stored["channels"], [cid])
+        self.assertNotIn("vendor", stored)
+
+    def test_rename_keeps_the_subscription_linked(self):
+        cid = self.app.config.channel("a").id
+        self.assertEqual(self.app.subscriptions[0]["channels"], [cid])
+        raw = copy.deepcopy(self.app.raw)
+        raw["channels"][0]["name"] = "ark-renamed"
+        # Routes reference channels by name, so a rename updates them too.
+        raw["routes"][0]["channels"] = ["ark-renamed"]
+        self.app.apply_config(raw)
+        record = self.app.subscriptions[0]
+        self.assertEqual(self.app.config.channel("ark-renamed").id, cid)
+        self.assertEqual(self.app.subscription_channels(record), ["ark-renamed"])
+        self.assertEqual(self.app.subscription_label(record), "火山引擎方舟")
+        self.assertEqual(
+            channel_tier(self.app.config.channel("ark-renamed"), self.app.subscriptions),
+            "paid")
+
+    def test_payload_derives_vendor_and_keeps_ids(self):
+        row = self.app.subscriptions_payload()["subscriptions"][0]
+        cid = self.app.config.channel("a").id
+        self.assertEqual(row["channels"], [cid])
+        self.assertEqual(row["channel_names"], ["a"])
+        self.assertEqual(row["vendor"], "火山引擎方舟")
+
+    def test_plan_kind_comes_from_channel_mode(self):
+        self.assertEqual(self.app._plan_creds_for(self.app.subscriptions[0])[0], "coding")
+        raw = copy.deepcopy(self.app.raw)
+        raw["channels"][0]["mode"] = "agent"
+        self.app.apply_config(raw)
+        self.assertEqual(self.app._plan_creds_for(self.app.subscriptions[0])[0], "agent")
+
+    def test_unbound_subscription_falls_back_to_plan_name(self):
+        record = subs.normalize({"plan": "zhipu plan", "channels": ["gone"]})
+        self.assertEqual(self.app.subscription_label(record), "zhipu plan")
+        self.assertEqual(self.app._plan_creds_for(record), ("", "", ""))
 
 
 if __name__ == "__main__":

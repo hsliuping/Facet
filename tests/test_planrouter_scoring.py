@@ -114,11 +114,6 @@ class PickOrderingTests(unittest.TestCase):
         pairs, route = self.store.pick("openai", "default", "whatever", session_id)
         return [channel.name for channel, _ in pairs]
 
-    def test_higher_score_first(self):
-        self.store.record_score("free-a", "auto-a", -5)
-        self.store.record_score("free-b", "auto-b", 3)
-        self.assertEqual(self.candidates(), ["free-b", "free-a"])
-
     def test_equal_score_keeps_chain_order(self):
         self.store.record_score("free-a", "auto-a", 2, now=0.0)
         self.store.record_score("free-b", "auto-b", 2, now=0.0)
@@ -128,6 +123,23 @@ class PickOrderingTests(unittest.TestCase):
         self.store.record_score("free-a", "auto-a", -5)
         self.store.bind_session("sess-1", "free-a", time.time())
         self.assertEqual(self.candidates("sess-1"), ["free-a", "free-b"])
+
+    def test_chain_order_wins_over_higher_score(self):
+        # Editing the route order in the console must take effect immediately;
+        # a healthy score never outranks the operator's chain position.
+        self.store.record_score("free-a", "auto-a", -2)
+        self.store.record_score("free-b", "auto-b", 3)
+        self.assertEqual(self.candidates(), ["free-a", "free-b"])
+
+    def test_demoted_pair_sinks_behind_healthy_and_untested(self):
+        # -5 is a fresh failure: the pair drops to the back so it does not add
+        # a failed hop to every request, while free-b keeps its chain position.
+        self.store.record_score("free-a", "auto-a", -5)
+        self.assertEqual(self.candidates(), ["free-b", "free-a"])
+
+    def test_untested_pair_keeps_its_chain_position(self):
+        self.store.record_score("free-b", "auto-b", 3)
+        self.assertEqual(self.candidates(), ["free-a", "free-b"])
 
 
 class PersistenceTests(unittest.TestCase):

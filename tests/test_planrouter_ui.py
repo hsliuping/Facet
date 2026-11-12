@@ -158,10 +158,10 @@ class ConsoleTests(unittest.TestCase):
         before = self.path.read_bytes()
         _, _, body = self.call(base, "GET", "/api/config")
         config = json.loads(body)
-        config["routes"][0]["channels"].append("claude")  # anthropic channel in an openai route
+        config["routes"][0]["channels"].append("no-such-channel")  # unknown channel
         status, _, body = self.call(base, "POST", "/api/config", config)
         self.assertEqual(status, 400)
-        self.assertIn(b"never converted", body)
+        self.assertIn(b"unknown channel", body)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_reset_cooldown_and_reload_from_disk(self):
