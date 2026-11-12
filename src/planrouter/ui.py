@@ -134,10 +134,16 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         if not isinstance(incoming, dict):
             _json(h, 400, {"error": {"message": "body must be an object"}})
             return True
+        # Extract version for optimistic locking (if provided)
+        expected_version = incoming.pop("_version", None)
         try:
-            config = app.apply_config(incoming)
+            config = app.apply_config(incoming, expected_version=expected_version)
         except ValueError as exc:
-            _json(h, 400, {"error": {"message": str(exc)}})
+            msg = str(exc)
+            if "version mismatch" in msg:
+                _json(h, 409, {"error": {"message": msg, "code": "VERSION_MISMATCH"}})
+            else:
+                _json(h, 400, {"error": {"message": msg}})
             return True
         except OSError as exc:
             _json(h, 500, {"error": {"message": f"cannot write config: {exc}"}})
@@ -265,6 +271,19 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": str(exc)}})
         return True
 
+    # /api/usage/users must match before the generic /api/usage prefix below.
+    if method == "GET" and (path == "/api/usage/users" or path.startswith("/api/usage/users/")):
+        try:
+            days = int(path.split("/")[4]) if len(path.split("/")) > 4 else 30
+        except ValueError:
+            days = 30
+        if app.usage:
+            _json(h, 200, app.usage.user_stats(days))
+        else:
+            _json(h, 200, {"range": days, "users": [], "days": [],
+                           "note": "usage recorder not enabled"})
+        return True
+
     if path.startswith("/api/usage") and method == "GET":
         parts = path.split("/")
         try:
@@ -287,6 +306,34 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         else:
             _json(h, 200, {"range": days, "days": [], "channels": [], "models": [],
                            "note": "usage recorder not enabled"})
+        return True
+
+    if path == "/api/keys" and method == "GET":
+        rows = app.keys.list() if app.keys else []
+        # Reuse the per-channel usage shape for a compact recent-activity hint.
+        _json(h, 200, {"keys": rows})
+        return True
+
+    if path == "/api/keys" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+            record = app.keys.create(str(incoming.get("name") or ""))
+        except (ValueError, AttributeError) as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot save keys file: {exc}"}})
+        else:
+            _json(h, 200, record)
+        return True
+
+    if path == "/api/keys/revoke" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+            done = app.keys.revoke(str(incoming.get("key") or "")) if app.keys else False
+        except (ValueError, OSError) as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, {"revoked": bool(done)})
         return True
 
     if path == "/api/notifications" and method == "GET":

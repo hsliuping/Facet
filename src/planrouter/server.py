@@ -28,11 +28,16 @@ from . import providers as providers_mod
 from . import facts as facts_mod
 from . import ark_quota
 from .audit import RequestLog
+from .completions import CompletionsAdapter
+from .completions import to_chat_request as legacy_to_chat_request
+from .convert import convert_request, convert_response, inject_system, stream_converter
 from .core import (
-    ANTHROPIC, AUTO_MODEL, OPENAI, Config, StateStore, explicit_models,
+    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, OPENAI, Config, StateStore, channel_ref,
+    body_has_vision, channel_takes_images, ensure_channel_ids, explicit_models,
     open_with_proxy, parse_cooldown, parse_config, parse_free_quota,
-    resolve_model, resolve_secret, upstream_path_for,
+    resolve_model, resolve_secret, upstream_path_for, vision_wire,
 )
+from .keys import KeyStore
 from .notifier import ReminderService
 from .persistence import StatePersistence
 from .probe import MAX_CHANNELS, probe_channel, probe_models
@@ -53,6 +58,21 @@ PLAN_TTL = 300.0
 # A failed fetch is retried sooner than a successful one: the vendor call
 # is cheap and the user is staring at the error text waiting to fix auth.
 PLAN_ERROR_TTL = 60.0
+# A vendor-reported window reset is authoritative (GetAFPUsage / coding-plan
+# percent windows), but never trust one for months: a plan-driven cooldown is
+# capped at this horizon, after which normal 429 handling takes over again.
+PLAN_RESET_CAP_HOURS = 45 * 24
+# A 429/404 or an allowance marker belongs to the upstream model that was
+# called; the sibling models of the same channel keep their own quotas. An
+# account out of credit or with an invalid key is different: every model
+# behind it fails, so those failures freeze the whole channel.
+ACCOUNT_SCOPED_MARKERS = (
+    "insufficient_quota", "billing", "credit", "balance", "arrearage",
+    "payment", "余额不足", "欠费", "账户", "账号",
+)
+# A channel failing this many times in a row (no success in between) deserves
+# a runtime alert: something is broken even while cooldowns route around it.
+RUNTIME_ALERT_ERROR_THRESHOLD = 3
 
 
 def _header_safe(value) -> str:
@@ -67,6 +87,56 @@ def _audit_headers(decision) -> dict:
         "X-Routed-Requested-Model": _header_safe(decision.requested),
         "X-Route": _header_safe(decision.hint),
     }
+
+
+def _part_tag(part) -> str:
+    """Compact descriptor of one content part — types and sizes, never base64."""
+    if not isinstance(part, dict):
+        return type(part).__name__
+    kind = str(part.get("type") or "text")
+    if kind in ("image_url", "input_image", "image"):
+        src = part.get("image_url") or part.get("source") or part
+        url = str((src.get("url") if isinstance(src, dict) else None) or "")
+        if not url and isinstance(src, dict):
+            url = "data:%s;base64,%s" % (src.get("media_type") or "?",
+                                         str(src.get("data") or "")[:8])
+        if url.startswith("data:"):
+            return f"image(data,{len(url) // 1024}kb)"
+        return f"image(url,{url[:40]})" if url else "image(empty)"
+    if kind == "text":
+        return f"text({len(str(part.get('text') or ''))}c)"
+    return kind
+
+
+def _log_inbound_shape(body: dict, raw_len: int) -> None:
+    """One line per request in the container log: what the client sent us.
+
+    Multimodal disputes (an IDE that strips images before sending) are
+    settled by looking at this line — it shows whether any image part
+    actually reached the gateway and how large it was.
+    """
+    try:
+        messages = body.get("messages") or []
+        tags = []
+        for i, message in enumerate(messages[:8]):
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                desc = f"str({len(content)}c)"
+            elif isinstance(content, list):
+                desc = "list[" + ",".join(_part_tag(p) for p in content[:6]) + "]"
+            elif content is None:
+                desc = "null"
+            else:
+                desc = type(content).__name__
+            tags.append(f"[{i}]{message.get('role') or '?'}:{desc}")
+        if len(messages) > 8:
+            tags.append(f"...+{len(messages) - 8}more")
+        print(f"[inbound] model={body.get('model')} bytes={raw_len} "
+              f"msgs={len(messages)} | " + " | ".join(tags), flush=True)
+    except Exception:
+        pass  # logging must never break the request
 
 
 def _json(h: BaseHTTPRequestHandler, status: int, payload: dict, extra: dict | None = None) -> None:
@@ -141,6 +211,51 @@ def _stream_tokens(data: bytes, protocol: str = OPENAI) -> tuple[int, int, int]:
     return total, prompt, cached
 
 
+def _parse_multipart(headers: dict, body: bytes) -> dict:
+    """Parse multipart/form-data request body.
+
+    Returns a dict with form fields and file parts. Used for /v1/audio/transcriptions
+    and /v1/audio/translations endpoints.
+
+    Format: {"fields": {field_name: value}, "files": {field_name: (filename, content, content_type)}}
+    """
+    import email.parser
+    import email.policy
+
+    content_type = headers.get("Content-Type") or headers.get("content-type") or ""
+    if "multipart/form-data" not in content_type.lower():
+        raise ValueError("not multipart/form-data")
+
+    # Use email.parser to parse multipart data.
+    # The parser needs the Content-Type header to know the boundary.
+    # Prepend it to the body as a fake message header.
+    fake_headers = f"Content-Type: {content_type}\r\n\r\n".encode("utf-8")
+    parser = email.parser.BytesParser(policy=email.policy.default)
+    msg = parser.parsebytes(fake_headers + body)
+
+    fields = {}
+    files = {}
+    for part in msg.walk():
+        if part.get_content_disposition() != "form-data":
+            continue
+        name = part.get_param("name", header="content-disposition")
+        if name is None:
+            continue
+        filename = part.get_filename()
+        if filename:
+            # File part
+            part_content_type = part.get_content_type() or "application/octet-stream"
+            # For files, we need raw bytes, not decoded string
+            raw_content = part.get_payload(decode=True)
+            files[name] = (filename, raw_content, part_content_type)
+        else:
+            # Regular form field
+            content = part.get_content()
+            fields[name] = content
+
+    return {"fields": fields, "files": files}
+
+
 def _estimate_tokens(body: dict) -> int:
     """Cheap local estimate for /v1/messages/count_tokens; never calls an upstream."""
     parts: list[str] = []
@@ -174,12 +289,16 @@ def channel_tier(channel, subscriptions: list[dict]) -> str:
     if channel.tier:
         return channel.tier
     for record in subscriptions:
-        if channel.name in (record.get("channels") or []):
-            try:
-                if float(record.get("price") or 0) > 0:
-                    return "paid"
-            except (TypeError, ValueError):
-                continue
+        refs = record.get("channels") or []
+        # Records store the stable channel id; files written before ids
+        # existed still carry the name, so accept both.
+        if channel_ref(channel) not in refs and channel.name not in refs:
+            continue
+        try:
+            if float(record.get("price") or 0) > 0:
+                return "paid"
+        except (TypeError, ValueError):
+            continue
     return ""
 
 
@@ -193,15 +312,31 @@ def model_tier(channel, subscriptions: list[dict], model: str) -> str:
 def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
     """Keep stored secrets when the editor sends '***' or an empty value."""
     merged = copy.deepcopy(new_raw)
-    previous = {
+    by_name = {
         c.get("name"): c for c in (old_raw.get("channels") or [])
         if isinstance(c, dict)
     }
+    by_id = {
+        str(c.get("id")): c for c in (old_raw.get("channels") or [])
+        if isinstance(c, dict) and c.get("id")
+    }
+
+    def previous_channel(channel: dict) -> dict:
+        """Stored channel for this editor entry: id first, legacy name second."""
+        ident = str(channel.get("id") or "")
+        return by_id.get(ident) or by_name.get(channel.get("name")) or {}
+
     for channel in (merged.get("channels") or []):
         if not isinstance(channel, dict):
             continue
+        prev = previous_channel(channel)
+        # A rename keeps the id, and carrying it forward is what makes the
+        # subscription link survive. An older console tab that omits the id
+        # inherits it from the stored channel of the same name.
+        if not channel.get("id") and prev.get("id"):
+            channel["id"] = prev["id"]
         if channel.get("api_key") in (None, "", "***"):
-            key = previous.get(channel.get("name"), {}).get("api_key")
+            key = prev.get("api_key")
             if key:
                 channel["api_key"] = key
             else:
@@ -210,7 +345,6 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
         # editor omits provider/mode entirely and would otherwise erase them
         # one channel per save. Absent or empty values inherit; explicit
         # values win — a bound vendor is replaced, never silently cleared.
-        prev = previous.get(channel.get("name"), {})
         for field in ("provider", "mode"):
             if not channel.get(field) and prev.get(field):
                 channel[field] = prev[field]
@@ -261,6 +395,38 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
         for vendor_id in [k for k, v in creds.items()
                           if isinstance(v, dict) and not v]:
             creds.pop(vendor_id)
+    # Accounts carry their own AK/SK; same masked-inheritance rules keyed by
+    # account id. A console tab opened before accounts existed inherits the
+    # whole stored list; a present list wins (deleted accounts stay deleted).
+    if "accounts" not in merged and old_raw.get("accounts"):
+        merged["accounts"] = copy.deepcopy(old_raw["accounts"])
+    old_accounts = {
+        str(a.get("id") or ""): a
+        for a in (old_raw.get("accounts") or []) if isinstance(a, dict)
+    }
+    for account in (merged.get("accounts") or []):
+        if not isinstance(account, dict):
+            continue
+        acc_creds = account.get("credentials")
+        prev_creds = (old_accounts.get(str(account.get("id") or "")) or {}).get(
+            "credentials") or {}
+        if not isinstance(acc_creds, dict):
+            # Entry posted without a credentials block (older console tab):
+            # inherit whatever the account had instead of losing its AK/SK.
+            if prev_creds:
+                account["credentials"] = copy.deepcopy(prev_creds)
+            else:
+                account.pop("credentials", None)
+            continue
+        for env_name, value in list(acc_creds.items()):
+            if value in (None, "", "***"):
+                inherited = prev_creds.get(env_name)
+                if inherited:
+                    acc_creds[env_name] = inherited
+                else:
+                    acc_creds.pop(env_name, None)
+        if not acc_creds:
+            account.pop("credentials", None)
     return merged
 
 
@@ -452,11 +618,26 @@ class App:
         usage_file: str | Path | None = None,
         notifications_file: str | Path | None = None,
         audit_file: str | Path | None = None,
+        keys_file: str | Path | None = None,
     ):
-        self.config = config
-        self.store = StateStore(config)
         self.config_path = Path(config_path) if config_path else None
         self.raw = self._read_raw()
+        # Channel ids are the stable anchors subscriptions link to; assign and
+        # persist them once so later console renames cannot break the links.
+        if ensure_channel_ids(self.raw) and self.config_path:
+            try:
+                tmp = self.config_path.with_name(self.config_path.name + ".tmp")
+                tmp.write_text(json.dumps(self.raw, ensure_ascii=False, indent=2) + "\n",
+                               encoding="utf-8")
+                os.replace(tmp, self.config_path)
+            except OSError:
+                pass
+        # Reparse from disk so the in-memory channels carry the ids assigned
+        # above; a test-constructed App without a config file keeps its config.
+        if self.raw.get("channels"):
+            config = parse_config(self.raw)
+        self.config = config
+        self.store = StateStore(config)
         self.subscriptions_path = Path(subscriptions_file) if subscriptions_file else None
         try:
             self.subscriptions = subs.load_file(self.subscriptions_path)
@@ -464,6 +645,15 @@ class App:
         except (OSError, ValueError):
             self.subscriptions = []
             self.subscription_settings = dict(subs.DEFAULT_SETTINGS)
+        # Subscriptions written before channel ids existed link by name; point
+        # them at the ids now, while those names still resolve.
+        if self._migrate_subscription_channels(self.subscriptions) \
+                and self.subscriptions_path:
+            try:
+                subs.save_file(self.subscriptions_path, self.subscriptions,
+                               self.subscription_settings)
+            except OSError:
+                pass
         # Vendor registry (builtin providers.json + optional user overlay in
         # the config dir); a broken overlay must not keep the gateway down.
         try:
@@ -477,9 +667,13 @@ class App:
         self.usage = UsageRecorder(usage_file) if usage_file else None
         self.notifier = ReminderService(
             self.subscriptions_path, notifications_file,
-            lambda: self.subscriptions, lambda: self.subscription_settings,
+            lambda: self._sub_records(), lambda: self.subscription_settings,
+            get_health=lambda: self.runtime_alerts(),
         ) if notifications_file else None
         self.audit = RequestLog(audit_file) if audit_file else None
+        # Member keys for small-team attribution; absent file -> no members,
+        # and the gateway behaves exactly as before.
+        self.keys = KeyStore(keys_file) if keys_file else None
         # Vendor-reported free quota from the last alignment sweep. Kept next
         # to the config so a restart keeps showing real numbers, and so the
         # free-quota gate can see consumption the gateway itself did not make.
@@ -554,10 +748,11 @@ class App:
 
     def record_usage(self, channel: str, success: bool, tokens: int = 0,
                      model: str = "", input_tokens: int = 0,
-                     cached_tokens: int = 0) -> None:
+                     cached_tokens: int = 0, h=None) -> None:
         if self.usage:
             self.usage.record(channel, success, tokens, model=model,
-                              input_tokens=input_tokens, cached_tokens=cached_tokens)
+                              input_tokens=input_tokens, cached_tokens=cached_tokens,
+                              user=getattr(h, "user_key", ""))
 
     def apply_quota(self, name: str, headers) -> None:
         """Observe upstream quota headers; cool early when the window is empty."""
@@ -593,7 +788,7 @@ class App:
         if self.usage:
             with self.usage.lock:
                 days = {day: dict(buckets) for day, buckets in self.usage.data["days"].items()}
-        return build_report(self.subscriptions, days, month)
+        return build_report(self._sub_records(), days, month)
 
     def blocked_channels(self) -> dict[str, str]:
         """Channels whose every linked subscription has expired."""
@@ -603,10 +798,15 @@ class App:
         usable: set[str] = set()
         for record in self.subscriptions:
             status = subs.enrich(record)["status"]
-            for name in record.get("channels") or []:
+            label = self.subscription_label(record)
+            for ref in record.get("channels") or []:
+                channel = self.config.channel_by_ref(str(ref))
+                # Downstream routing indexes channels by name, so every
+                # reference is resolved before it leaves this method.
+                name = channel.name if channel else str(ref)
                 if status == "expired":
                     expired[name] = (
-                        f"订阅已过期：{record['vendor']} / "
+                        f"订阅已过期：{label} / "
                         f"{record['account'] or '—'} / {record['plan']}"
                     )
                 else:
@@ -671,33 +871,36 @@ class App:
     def _plan_creds_for(self, record: dict) -> tuple[str, str, str]:
         """(kind, ak, sk) for a subscription row: bound channel first.
 
-        The first channel linked to the row supplies the account: its own
-        creds when present, else the vendor-level config.credentials for
-        that channel's provider. Kind follows the vendor text — rows named
-        agentplan query AgentPlan, everything else CodingPlan.
+        Both the vendor gate and the plan kind come from the linked channel
+        (its provider plus business line / billing mode), never from free text
+        on the subscription: a subscription has no vendor of its own.
+
+        Plan endpoints are Volcengine-only, so a Bailian/OpenRouter row must
+        not get decorated with (or fail on) an Ark management-plane call.
+
+        If the record has an explicit `account_id`, we look up the account
+        by id from config.accounts and use its credentials; otherwise the
+        channel credential chain applies.
         """
-        vendor = str(record.get("vendor") or "").lower()
-        # Plan endpoints are Volcengine-only: a Bailian/OpenRouter row must
-        # not get decorated with (or fail on) an Ark management-plane call.
-        if not any(hint in vendor for hint in
-                   ("volc", "火山", "方舟", "codingplan", "agentplan")):
+        linked = self._linked_channels(record)
+        volc = next((c for c in linked if c.provider == "volcengine"), None)
+        if not volc:
             return "", "", ""
-        kind = "agent" if "agentplan" in vendor else "coding"
-        channel = None
-        for name in (record.get("channels") or []):
-            channel = self.config.channel(str(name))
-            if channel:
-                break
-        creds: dict = dict(getattr(channel, "creds", None) or {}) \
-            if channel else {}
-        if not creds:
-            provider = str(getattr(channel, "provider", "") or "") \
-                if channel else ""
-            if not provider:
-                # No bound channel: fall back to the volcengine vendor slot.
-                provider = "volcengine"
-            creds = (getattr(self.config, "credentials", None) or {}).get(
-                provider) or {}
+        line = (volc.business_line or volc.mode or "").strip().lower()
+        kind = "agent" if line == "agent" else "coding"
+
+        # Check for explicit account_id first (new model)
+        account_id = str(record.get("account_id") or "").strip()
+        if account_id:
+            account = self._find_account(account_id)
+            if account and account.get("credentials"):
+                ak = str(account["credentials"].get(ark_quota.AK_ENV) or "")
+                sk = str(account["credentials"].get(ark_quota.SK_ENV) or "")
+                return kind, ak, sk
+
+        # Full chain: channel.creds > account.credentials > vendor slot.
+        from .accounts import resolve_creds
+        creds: dict = resolve_creds(volc, self.config)
         ak = str(creds.get(ark_quota.AK_ENV) or "")
         sk = str(creds.get(ark_quota.SK_ENV) or "")
         return kind, ak, sk
@@ -741,6 +944,46 @@ class App:
                                       "ts": now}
             self._save_vendor_quota()
             return snapshot
+
+    def _plan_reset_cooldown(self, channel, now: float) -> tuple[float, str]:
+        """Cooldown seconds + reason when a linked plan window is exhausted.
+
+        Reads the TTL-cached vendor snapshot (at most one management-plane
+        call per PLAN_TTL), so a 429 on a plan whose window already reads
+        used >= quota cools the whole channel until that window resets
+        instead of the fixed cooldown_minutes — no more probing a dead plan
+        every five hours. Returns (0.0, "") when nothing is exhausted or no
+        future reset is scheduled, keeping the parse_cooldown verdict.
+        """
+        ref = channel_ref(channel)
+        best, level = 0.0, ""
+        for record in self.subscriptions:
+            refs = record.get("channels") or []
+            if ref not in refs and channel.name not in refs:
+                continue
+            plan = self.plan_for(record) or {}
+            for window in plan.get("windows") or []:
+                if not isinstance(window, dict):
+                    continue
+                quota, used = window.get("quota"), window.get("used")
+                percent = window.get("percent")
+                exhausted = (
+                    isinstance(quota, (int, float)) and isinstance(used, (int, float))
+                    and quota > 0 and used >= quota
+                ) or (isinstance(percent, (int, float)) and percent >= 100)
+                if not exhausted:
+                    continue
+                try:
+                    reset = float(window.get("reset_ts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if reset <= now:
+                    continue  # no reset scheduled: the fixed cooldown stands
+                best = max(best, reset - now)
+                level = str(window.get("level") or "plan")
+        if best <= 0.0:
+            return 0.0, ""
+        return min(best, PLAN_RESET_CAP_HOURS * 3600.0), f"plan_{level}_exhausted"
 
     def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
         """Resolved free-tier allowance for one model on this channel.
@@ -827,6 +1070,69 @@ class App:
         status = self.free_quota_status(channel, wire, exposed)
         return bool(status and status["exhausted"])
 
+    def runtime_alerts(self) -> list[dict]:
+        """Live conditions worth alarming about (P1-2 runtime alerts).
+
+        Three families: a route chain whose every usable channel is cooling or
+        blocked, a free-tier model whose allowance is exhausted, and a channel
+        failing repeatedly. Config gaps (no key, everything disabled) stay
+        silent — those are console hints, not runtime alarms.
+        """
+        now = time.time()
+        alerts: list[dict] = []
+        blocked = self.blocked_channels()
+        for key, route in self.config.routes.items():
+            down: list[str] = []
+            usable = 0
+            for name in route.channels:
+                channel = self.config.channel(name)
+                if channel is None or not channel.enabled or not channel.api_key:
+                    continue  # config gaps are not runtime alarms
+                if name in blocked:
+                    down.append(f"{name}：{blocked[name]}")
+                    continue
+                state = self.store.states[name]
+                if state.cooldown_until > now and not state.half_open:
+                    down.append(f"{name}：cooling:{state.reason or 'unknown'}")
+                else:
+                    usable += 1
+            if down and not usable:
+                alerts.append({
+                    "kind": "route_all_cooling",
+                    "key": f"route:{key}",
+                    "title": f"渠道链全冷却：{key}",
+                    "message": ("[PlanRouter 运行告警] 渠道链全冷却\n"
+                                f"路由：{key}\n渠道状态：\n"
+                                + "\n".join(f"- {item}" for item in down)),
+                })
+        for channel in self.config.channels:
+            if not channel.enabled:
+                continue
+            state = self.store.states[channel.name]
+            if state.consecutive_errors >= RUNTIME_ALERT_ERROR_THRESHOLD:
+                alerts.append({
+                    "kind": "probe_failing",
+                    "key": f"probe:{channel.name}",
+                    "title": f"渠道连续失败：{channel.name}",
+                    "message": ("[PlanRouter 运行告警] 渠道连续失败\n"
+                                f"渠道：{channel.name}\n"
+                                f"连续失败：{state.consecutive_errors} 次\n"
+                                f"最近错误：{(state.last_error or '—')[:160]}"),
+                })
+            wires = sorted({str(w) for w in channel.models.values()
+                            if w and str(w) != "*"})
+            for wire in wires:
+                if self.free_quota_exhausted(channel, wire):
+                    alerts.append({
+                        "kind": "free_quota_exhausted",
+                        "key": f"freequota:{channel.name}:{wire}",
+                        "title": f"免费额度已用尽：{channel.name}/{wire}",
+                        "message": ("[PlanRouter 运行告警] 免费额度已用尽\n"
+                                    f"渠道：{channel.name}\n模型：{wire}\n"
+                                    "已停止路由该模型以避免按量计费。"),
+                    })
+        return alerts
+
     def _read_raw(self) -> dict:
         if self.config_path and self.config_path.is_file():
             try:
@@ -836,13 +1142,74 @@ class App:
         return {}
 
     # -------------------------------------------------- subscription management
+    def _linked_channels(self, record: dict):
+        """Channels a subscription points at, resolving ids (or legacy names)."""
+        resolved = []
+        for ref in record.get("channels") or []:
+            channel = self.config.channel_by_ref(str(ref))
+            if channel:
+                resolved.append(channel)
+        return resolved
+
+    def subscription_channels(self, record: dict) -> list[str]:
+        """Linked channel names, for rows that join usage/report data by name."""
+        return [channel.name for channel in self._linked_channels(record)]
+
+    def subscription_label(self, record: dict) -> str:
+        """Vendor line derived from the linked channel's provider.
+
+        A subscription stores no vendor of its own: the vendor belongs to the
+        channel, so this falls back to the plan name when nothing is linked.
+        """
+        for channel in self._linked_channels(record):
+            provider = str(channel.provider or "")
+            if not provider:
+                continue
+            for entry in self.providers:
+                if str(entry.get("id") or "") == provider:
+                    return str(entry.get("name") or provider)
+            return provider
+        return str(record.get("plan") or "")
+
+    def _sub_records(self) -> list[dict]:
+        """Subscription rows in the shape report/notifier/CLI already consume.
+
+        Those modules join by channel name and group by vendor; the stored
+        record has neither (ids only, no vendor), so each row is copied with
+        the ids resolved to names and the vendor derived from the channel.
+        """
+        rows = []
+        for record in self.subscriptions:
+            row = dict(record)
+            row["channels"] = self.subscription_channels(record)
+            row["vendor"] = self.subscription_label(record)
+            rows.append(row)
+        return rows
+
+    def _migrate_subscription_channels(self, records: list[dict]) -> bool:
+        """Rewrite legacy name references to channel ids; True when changed."""
+        changed = False
+        for record in records:
+            refs = [str(ref) for ref in record.get("channels") or []]
+            updated = []
+            for ref in refs:
+                channel = self.config.channel_by_ref(ref)
+                ident = channel_ref(channel) if channel else ref
+                if ident != ref:
+                    changed = True
+                updated.append(ident)
+            record["channels"] = updated
+        return changed
+
     def subscription_summary(self) -> dict:
-        return subs.summarize(self.subscriptions)
+        return subs.summarize(self.subscriptions, label=self.subscription_label)
 
     def subscriptions_payload(self) -> dict:
         rows = []
         for record in self.subscriptions:
             row = subs.enrich(record)
+            row["channel_names"] = self.subscription_channels(record)
+            row["vendor"] = self.subscription_label(record)
             plan = self.plan_for(record)
             if plan:
                 row["vendor_plan"] = plan
@@ -859,9 +1226,12 @@ class App:
         if isinstance(raw, dict) and "settings" in raw:
             settings = subs.normalize_settings(raw["settings"])
         records = subs.normalize_all(raw)
-        if self.subscriptions_path:
-            subs.save_file(self.subscriptions_path, records, settings)
+        # The editor may still send legacy names (an old console tab); store
+        # ids so the next rename cannot break the link.
         self.subscriptions = records
+        self._migrate_subscription_channels(self.subscriptions)
+        if self.subscriptions_path:
+            subs.save_file(self.subscriptions_path, self.subscriptions, settings)
         self.subscription_settings = settings
         return records
 
@@ -932,6 +1302,48 @@ class App:
         return report
 
     # ------------------------------------------------------- config management
+    def _compute_config_version(self, raw: dict) -> str:
+        """Compute a stable hash of the visible config (excluding secrets).
+
+        Used for optimistic locking: the console sends the version it saw on GET,
+        and POST fails with 409 if the server version has changed.
+        """
+        import hashlib
+        visible = copy.deepcopy(raw)
+        # Mask secrets before hashing
+        for channel in (visible.get("channels") or []):
+            key = channel.get("api_key")
+            if key and not str(key).startswith("env:"):
+                channel["api_key"] = "***"
+            own_creds = channel.get("creds")
+            if isinstance(own_creds, dict):
+                for env_name, value in own_creds.items():
+                    if value and not str(value).startswith("env:"):
+                        own_creds[env_name] = "***"
+        listen = visible.get("listen") or {}
+        for field in ("api_key", "admin_key"):
+            if listen.get(field) and not str(listen[field]).startswith("env:"):
+                listen[field] = "***"
+        creds = visible.get("credentials")
+        if isinstance(creds, dict):
+            for vendor_map in creds.values():
+                if not isinstance(vendor_map, dict):
+                    continue
+                for env_name, value in vendor_map.items():
+                    if value and not str(value).startswith("env:"):
+                        vendor_map[env_name] = "***"
+        for account in (visible.get("accounts") or []):
+            if not isinstance(account, dict):
+                continue
+            acc_creds = account.get("credentials")
+            if isinstance(acc_creds, dict):
+                for env_name, value in acc_creds.items():
+                    if value and not str(value).startswith("env:"):
+                        acc_creds[env_name] = "***"
+        # Stable JSON representation for hashing
+        serialized = json.dumps(visible, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
     def public_config(self) -> dict:
         visible = copy.deepcopy(self.raw)
         for channel in (visible.get("channels") or []):
@@ -963,10 +1375,36 @@ class App:
             "fallback_unknown": policy.fallback_unknown,
             "fallback_route": policy.fallback_route,
         }
+        # Account management-plane creds mask exactly like the vendor slot.
+        for account in (visible.get("accounts") or []):
+            if not isinstance(account, dict):
+                continue
+            acc_creds = account.get("credentials")
+            if isinstance(acc_creds, dict):
+                for env_name, value in acc_creds.items():
+                    if value and not str(value).startswith("env:"):
+                        acc_creds[env_name] = "***"
+        # Include version for optimistic locking
+        visible["_version"] = self._compute_config_version(self.raw)
         return visible
 
-    def apply_config(self, raw: dict, persist: bool = True) -> Config:
+    def _find_account(self, account_id: str) -> dict | None:
+        """Lookup account by id in config.accounts (Account or dict)."""
+        from .accounts import account_lookup
+        return account_lookup(self.config, str(account_id))
+
+    def apply_config(self, raw: dict, persist: bool = True, expected_version: str | None = None) -> Config:
+        # Optimistic locking: check version before applying
+        if expected_version is not None:
+            current_version = self._compute_config_version(self.raw)
+            if current_version != expected_version:
+                raise ValueError(
+                    f"config version mismatch: expected {expected_version}, "
+                    f"current {current_version} — the config has been modified by another user; "
+                    f"please refresh and re-apply your changes"
+                )
         merged = merge_secrets(raw, self.raw)
+        ensure_channel_ids(merged)
         config = parse_config(merged)  # validate before touching the file
         self._check_vendor_binding(config)
         if persist and self.config_path:
@@ -975,6 +1413,15 @@ class App:
             os.replace(tmp, self.config_path)
         self.raw = merged
         self._swap(config)
+        # A channel renamed through the console keeps its id, so records stay
+        # linked; records still carrying a name are migrated here.
+        if self._migrate_subscription_channels(self.subscriptions) \
+                and self.subscriptions_path:
+            try:
+                subs.save_file(self.subscriptions_path, self.subscriptions,
+                               self.subscription_settings)
+            except OSError:
+                pass
         return config
 
     def duplicate_channel(self, name: str) -> dict:
@@ -1001,6 +1448,9 @@ class App:
             n += 1
         clone = copy.deepcopy(channels[index])
         clone["name"] = new_name
+        # A clone is a new entity: keeping the source id would make two
+        # channels share one subscription reference.
+        clone.pop("id", None)
         channels.insert(index + 1, clone)
         self.apply_config({**self.raw, "channels": channels})
         return {"ok": True, "name": new_name}
@@ -2035,6 +2485,24 @@ class App:
             kept.append((channel, wire))
         return kept, skipped
 
+    def _apply_vision_filter(self, candidates) -> tuple[list, list]:
+        """Keep only channels that can take an image/document/audio request.
+
+        Capability is config-declared: `vision: false` excludes a channel,
+        `vision: [wire, ...]` restricts it to listed models, `vision_model`
+        implies capable (the wire was already re-pointed). Unmarked channels
+        stay in — an unconfigured gateway forwards as before, and the
+        upstream remains the final judge.
+        """
+        kept, skipped = [], []
+        for channel, wire in candidates:
+            if not channel_takes_images(channel, wire):
+                skipped.append({"channel": channel.name, "wire_model": wire,
+                                "reason": "channel_text_only"})
+                continue
+            kept.append((channel, wire))
+        return kept, skipped
+
     def ui_state(self) -> dict:
         snap = self.store.snapshot()
         blocked = self.blocked_channels()
@@ -2181,14 +2649,32 @@ class App:
         }
 
     # ------------------------------------------------------------------ auth
-    def _authorized(self, h: BaseHTTPRequestHandler) -> bool:
-        expected = self.config.listen.api_key
-        if not expected:
-            return True
+    def _provided_key(self, h: BaseHTTPRequestHandler) -> str:
         provided = h.headers.get("x-api-key")
         if not provided:
             auth = h.headers.get("Authorization") or ""
             provided = auth[7:] if auth.lower().startswith("bearer ") else ""
+        return provided or ""
+
+    def _authorized(self, h: BaseHTTPRequestHandler) -> bool:
+        """Gateway auth: the master key, or any active member key.
+
+        Member keys exist so several people can share one gateway without
+        passing a single secret around; they attribute usage to a person,
+        they do not gate routes or models. With no master key configured the
+        gateway stays LAN-open exactly as before (usage of keyless callers
+        lands in the anonymous bucket).
+        """
+        provided = self._provided_key(h)
+        member = self.keys.match(provided) if self.keys else None
+        # Resolved once here; handlers thread it into usage records as
+        # `getattr(h, "user_key", "")` (tests pass h=None, default covers it).
+        h.user_key = member or ""
+        if member:
+            return True
+        expected = self.config.listen.api_key
+        if not expected:
+            return True
         return hmac.compare_digest(provided, expected)
 
     def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
@@ -2252,6 +2738,24 @@ class App:
         if method == "POST" and path == "/v1/chat/completions":
             self._completion(h, OPENAI, raw)
             return
+        if method == "POST" and path == "/v1/completions":
+            self._completion(h, OPENAI, raw, legacy=True)
+            return
+        if method == "POST" and path == "/v1/embeddings":
+            self._embeddings(h, raw)
+            return
+        if method == "POST" and path == "/v1/rerank":
+            self._rerank(h, raw)
+            return
+        if method == "POST" and path == "/v1/audio/speech":
+            self._audio_speech(h, raw)
+            return
+        if method == "POST" and path == "/v1/audio/transcriptions":
+            self._audio_transcriptions(h, raw, endpoint="transcriptions")
+            return
+        if method == "POST" and path == "/v1/audio/translations":
+            self._audio_transcriptions(h, raw, endpoint="translations")
+            return
         if method == "POST" and path == "/v1/messages/count_tokens":
             self._count_tokens(h, raw)
             return
@@ -2282,6 +2786,1175 @@ class App:
             "X-Routed-Via": "local",
         })
 
+    # ----------------------------------------------------------- embeddings
+    def _embeddings(self, h: BaseHTTPRequestHandler, raw: bytes) -> None:
+        """Handle POST /v1/embeddings — OpenAI-compatible embeddings endpoint."""
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return
+        if not isinstance(body, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return
+
+        requested_model = str(body.get("model") or "").strip() or AUTO_MODEL
+        _log_inbound_shape(body, len(raw))
+
+        blocked = self.blocked_channels()
+        decision = resolve_model(
+            self.config, OPENAI, requested_model, h.headers.get("X-Route"), blocked,
+        )
+        audit = _audit_headers(decision)
+        log_base = {
+            "api": "embeddings",
+            "protocol": OPENAI,
+            "model": decision.requested,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "route": decision.hint,
+            "stream": False,
+            "sticky": False,
+        }
+
+        if decision.mode == "rejected":
+            self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
+            _json(h, 400, {
+                "error": {
+                    "message": "unknown model; internal scheduling is disabled",
+                    "model": requested_model,
+                    "hint": "use a branded model name or add the model to a channel's models mapping",
+                },
+                "models": [item["id"] for item in self.model_list()["data"]],
+            }, audit)
+            return
+
+        candidates, _ = self.store.pick(
+            OPENAI, decision.hint, decision.exposed, None,
+            decision=decision, blocked=blocked,
+            agent_candidates=None,
+        )
+        candidates = [(channel, wire) for channel, wire in candidates
+                      if channel.name not in blocked]
+
+        # Embeddings are text-only; no vision filtering needed.
+        candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        candidates, dead_skipped = self._apply_dead_filter(candidates)
+        candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        catalog_skipped = list(catalog_skipped) + dead_skipped
+
+        if not candidates:
+            self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            route = self.config.route(OPENAI, decision.hint)
+            status_map: dict[str, str] = {}
+            for name in (route.channels if route else []):
+                channel = self.config.channel(name)
+                if channel is None:
+                    status_map[name] = "missing"
+                elif not channel.enabled:
+                    status_map[name] = "disabled"
+                elif name in blocked:
+                    status_map[name] = "blocked"
+                else:
+                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    status_map[name] = "ok" if ok else why
+            message = "no healthy channel for this route/model"
+            if status_map and all(
+                    s in ("disabled", "missing") for s in status_map.values()):
+                message = ("no enabled channel for this route — enable a channel in "
+                           "the console or add one that speaks this protocol")
+            if quota_skipped:
+                message = ("free quota exhausted for this model — routing stopped "
+                           "to avoid per-call billing")
+            error = {
+                "message": message,
+                "route": f"{OPENAI}:{decision.hint}",
+                "model": requested_model,
+                "blocked_channels": blocked,
+                "channel_status": status_map,
+            }
+            if catalog_skipped:
+                error["catalog_skipped"] = catalog_skipped
+            if quota_skipped:
+                error["free_quota_skipped"] = quota_skipped
+            _json(h, 503, {
+                "error": error,
+                "channels": self.store.snapshot()["channels"],
+            }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
+            return
+
+        attempt = 0
+        failures: list[dict] = []
+        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+            for try_no in range(self.config.defaults.network_retries + 1):
+                now = time.time()
+                with self.store.lock:
+                    ok, why = self.store.states[channel.name].available(now, channel.rate)
+                    if not ok:
+                        failures.append({"channel": channel.name, "reason": why})
+                        break
+                    self.store.states[channel.name].note_attempt(now)
+
+                started = time.perf_counter()
+                error = self._forward_embeddings(h, channel, wire, body, attempt, audit)
+                entry = {
+                    **log_base, "channel": channel.name, "wire_model": wire,
+                    "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                }
+                if error is None:
+                    self.log_request(**entry, status="ok", http_status=200,
+                                     tokens=0)  # embeddings usage not tracked yet
+                    return
+
+                reason = error[1]
+                entry["reason"] = reason
+                self.log_request(
+                    **entry,
+                    status="network_error" if reason.startswith("transient_") else "upstream_error",
+                    http_status=error[0], cooldown_seconds=round(error[2], 1),
+                )
+                attempt += 1
+                failures.append({
+                    "channel": channel.name,
+                    "status": error[0],
+                    "reason": reason,
+                    "cooldown_seconds": round(error[2], 1),
+                })
+                if reason != "transient_network":
+                    break
+
+        _json(h, 503, {
+            "error": {"message": "all channels failed for this request", "failures": failures},
+            "channels": self.store.snapshot()["channels"],
+        }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
+
+    def _forward_embeddings(self, h, channel, wire, body, attempt, audit):
+        """Relay one embeddings attempt. Return None on success, else (status, reason, seconds)."""
+        payload = {
+            "model": wire,
+            "input": body.get("input"),
+        }
+        # Optional parameters passed through to upstream
+        if "encoding_format" in body:
+            payload["encoding_format"] = body["encoding_format"]
+        if "dimensions" in body:
+            payload["dimensions"] = body["dimensions"]
+        if "user" in body:
+            payload["user"] = body["user"]
+
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, OPENAI, endpoint="embeddings")
+        headers = {"Content-Type": "application/json"}
+        if channel.api_key:
+            headers["Authorization"] = f"Bearer {channel.api_key}"
+
+        req = Request(
+            channel.base_url + upstream_path,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        now = time.time()
+        try:
+            resp = open_with_proxy(req, channel.timeout, channel.proxy)
+        except HTTPError as exc:
+            raw_resp = exc.read()
+            quota, seconds, reason = parse_cooldown(
+                exc.code, exc.headers, raw_resp,
+                channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                daily_hours=self.config.defaults.daily_429_cooldown_hours,
+            )
+            excerpt = raw_resp.decode("utf-8", "replace")[:300]
+            low = excerpt.lower()
+            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            per_model = quota and not account_scoped
+            if quota:
+                plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                if plan_seconds > seconds:
+                    seconds, reason = plan_seconds, plan_reason
+                    per_model = False
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = f"HTTP {exc.code}: {excerpt}"
+                state.mark_cooldown(
+                    seconds, reason, now, per_model=per_model, wire=wire,
+                    half_open=not quota,
+                )
+            self.record_usage(channel.name, False, model=wire, h=h)
+            if not quota:
+                self.store.record_score(channel.name, wire, -5)
+            return (exc.code, reason, seconds)
+        except (URLError, TimeoutError, OSError) as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = str(exc)[:300]
+                state.mark_cooldown(30.0, "transient_network", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_network", 30.0)
+        except Exception as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = repr(exc)[:300]
+                state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_internal", 30.0)
+        else:
+            try:
+                with resp:
+                    return self._relay_embeddings(h, resp, channel, wire, attempt, audit)
+            except (BrokenPipeError, ConnectionResetError):
+                with self.store.lock:
+                    self.store.states[channel.name].mark_success(0, time.time(), wire)
+                self.store.record_score(channel.name, wire, 1)
+                return None
+            except Exception as exc:
+                with self.store.lock:
+                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                return None
+
+    def _relay_embeddings(self, h, resp, channel, wire, attempt, audit):
+        """Relay successful embeddings response to client."""
+        extra = {
+            **dict(audit or {}),
+            "X-Routed-Via": _header_safe(f"{channel.name}/{wire}"),
+            "X-Failover-Count": str(attempt),
+        }
+        data = resp.read()
+        h.send_response(200)
+        h.send_header("Content-Type", resp.headers.get("Content-Type") or "application/json")
+        h.send_header("Content-Length", str(len(data)))
+        for key, value in extra.items():
+            h.send_header(key, value)
+        h.end_headers()
+        h.wfile.write(data)
+        with self.store.lock:
+            self.store.states[channel.name].mark_success(0, time.time(), wire)
+        self.store.record_score(channel.name, wire, 1)
+        self.record_usage(channel.name, True, 0, model=wire, h=h)
+        self.apply_quota(channel.name, resp.headers)
+        return None
+
+    # ---------------------------------------------------------------- rerank
+    def _rerank(self, h: BaseHTTPRequestHandler, raw: bytes) -> None:
+        """Handle POST /v1/rerank — OpenAI-compatible rerank endpoint.
+
+        Request shape (OpenAI rerank API):
+        {
+            "model": "rerank-model-name",
+            "query": "text to rank against",
+            "documents": ["doc1", "doc2", ...],
+            "top_n": 3,
+            "return_documents": true
+        }
+
+        Only routes to channels that expose a rerank-capable model.
+        """
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return
+        if not isinstance(body, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return
+
+        requested_model = str(body.get("model") or "").strip() or AUTO_MODEL
+        _log_inbound_shape(body, len(raw))
+
+        blocked = self.blocked_channels()
+        decision = resolve_model(
+            self.config, OPENAI, requested_model, h.headers.get("X-Route"), blocked,
+        )
+        audit = _audit_headers(decision)
+        log_base = {
+            "api": "rerank",
+            "protocol": OPENAI,
+            "model": decision.requested,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "route": decision.hint,
+            "stream": False,
+            "sticky": False,
+        }
+
+        if decision.mode == "rejected":
+            self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
+            _json(h, 400, {
+                "error": {
+                    "message": "unknown model; internal scheduling is disabled",
+                    "model": requested_model,
+                    "hint": "use a branded model name or add the model to a channel's models mapping",
+                },
+                "models": [item["id"] for item in self.model_list()["data"]],
+            }, audit)
+            return
+
+        # Filter candidates: only channels that have a rerank model
+        candidates, _ = self.store.pick(
+            OPENAI, decision.hint, decision.exposed, None,
+            decision=decision, blocked=blocked,
+            agent_candidates=None,
+        )
+        # Rerank is text-only; no vision filtering needed.
+        candidates = [(channel, wire) for channel, wire in candidates
+                      if channel.name not in blocked]
+        # Apply catalog filter to find channels that actually have rerank models
+        candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        candidates, dead_skipped = self._apply_dead_filter(candidates)
+        candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        catalog_skipped = list(catalog_skipped) + dead_skipped
+
+        if not candidates:
+            self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            route = self.config.route(OPENAI, decision.hint)
+            status_map: dict[str, str] = {}
+            for name in (route.channels if route else []):
+                channel = self.config.channel(name)
+                if channel is None:
+                    status_map[name] = "missing"
+                elif not channel.enabled:
+                    status_map[name] = "disabled"
+                elif name in blocked:
+                    status_map[name] = "blocked"
+                else:
+                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    status_map[name] = "ok" if ok else why
+            message = "no healthy channel with rerank capability for this route/model"
+            if status_map and all(
+                    s in ("disabled", "missing") for s in status_map.values()):
+                message = ("no enabled channel for this route — enable a channel in "
+                           "the console or add one that speaks this protocol")
+            if quota_skipped:
+                message = ("free quota exhausted for this model — routing stopped "
+                           "to avoid per-call billing")
+            error = {
+                "message": message,
+                "route": f"{OPENAI}:{decision.hint}",
+                "model": requested_model,
+                "blocked_channels": blocked,
+                "channel_status": status_map,
+            }
+            if catalog_skipped:
+                error["catalog_skipped"] = catalog_skipped
+            if quota_skipped:
+                error["free_quota_skipped"] = quota_skipped
+            _json(h, 503, {
+                "error": error,
+                "channels": self.store.snapshot()["channels"],
+            }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
+            return
+
+        attempt = 0
+        failures: list[dict] = []
+        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+            for try_no in range(self.config.defaults.network_retries + 1):
+                now = time.time()
+                with self.store.lock:
+                    ok, why = self.store.states[channel.name].available(now, channel.rate)
+                    if not ok:
+                        failures.append({"channel": channel.name, "reason": why})
+                        break
+                    self.store.states[channel.name].note_attempt(now)
+
+                started = time.perf_counter()
+                error = self._forward_rerank(h, channel, wire, body, attempt, audit)
+                entry = {
+                    **log_base, "channel": channel.name, "wire_model": wire,
+                    "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                }
+                if error is None:
+                    self.log_request(**entry, status="ok", http_status=200,
+                                     tokens=0)  # rerank usage not tracked in tokens
+                    return
+
+                reason = error[1]
+                entry["reason"] = reason
+                self.log_request(
+                    **entry,
+                    status="network_error" if reason.startswith("transient_") else "upstream_error",
+                    http_status=error[0], cooldown_seconds=round(error[2], 1),
+                )
+                attempt += 1
+                failures.append({
+                    "channel": channel.name,
+                    "status": error[0],
+                    "reason": reason,
+                    "cooldown_seconds": round(error[2], 1),
+                })
+                if reason != "transient_network":
+                    break
+
+        _json(h, 503, {
+            "error": {"message": "all channels failed for this request", "failures": failures},
+            "channels": self.store.snapshot()["channels"],
+        }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
+
+    def _forward_rerank(self, h, channel, wire, body, attempt, audit):
+        """Relay one rerank attempt. Return None on success, else (status, reason, seconds)."""
+        payload = {
+            "model": wire,
+            "query": body.get("query"),
+            "documents": body.get("documents"),
+        }
+        # Optional parameters passed through to upstream
+        if "top_n" in body:
+            payload["top_n"] = body["top_n"]
+        if "return_documents" in body:
+            payload["return_documents"] = body["return_documents"]
+        if "user" in body:
+            payload["user"] = body["user"]
+
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, OPENAI, endpoint="rerank")
+        headers = {"Content-Type": "application/json"}
+        if channel.api_key:
+            headers["Authorization"] = f"Bearer {channel.api_key}"
+
+        req = Request(
+            channel.base_url + upstream_path,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        now = time.time()
+        try:
+            resp = open_with_proxy(req, channel.timeout, channel.proxy)
+        except HTTPError as exc:
+            raw_resp = exc.read()
+            quota, seconds, reason = parse_cooldown(
+                exc.code, exc.headers, raw_resp,
+                channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                daily_hours=self.config.defaults.daily_429_cooldown_hours,
+            )
+            excerpt = raw_resp.decode("utf-8", "replace")[:300]
+            low = excerpt.lower()
+            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            per_model = quota and not account_scoped
+            if quota:
+                plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                if plan_seconds > seconds:
+                    seconds, reason = plan_seconds, plan_reason
+                    per_model = False
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = f"HTTP {exc.code}: {excerpt}"
+                state.mark_cooldown(
+                    seconds, reason, now, per_model=per_model, wire=wire,
+                    half_open=not quota,
+                )
+            self.record_usage(channel.name, False, model=wire, h=h)
+            if not quota:
+                self.store.record_score(channel.name, wire, -5)
+            return (exc.code, reason, seconds)
+        except (URLError, TimeoutError, OSError) as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = str(exc)[:300]
+                state.mark_cooldown(30.0, "transient_network", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_network", 30.0)
+        except Exception as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = repr(exc)[:300]
+                state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_internal", 30.0)
+        else:
+            try:
+                with resp:
+                    return self._relay_rerank(h, resp, channel, wire, attempt, audit)
+            except HTTPError as exc:
+                # Should not happen for 2xx responses, but handle just in case
+                raw_resp = exc.read()
+                quota, seconds, reason = parse_cooldown(
+                    exc.code, exc.headers, raw_resp,
+                    channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                    not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                    daily_hours=self.config.defaults.daily_429_cooldown_hours,
+                )
+                excerpt = raw_resp.decode("utf-8", "replace")[:300]
+                low = excerpt.lower()
+                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                per_model = quota and not account_scoped
+                if quota:
+                    plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                    if plan_seconds > seconds:
+                        seconds, reason = plan_seconds, plan_reason
+                        per_model = False
+                with self.store.lock:
+                    state = self.store.states[channel.name]
+                    state.last_error = f"HTTP {exc.code}: {excerpt}"
+                    state.mark_cooldown(
+                        seconds, reason, now, per_model=per_model, wire=wire,
+                        half_open=not quota,
+                    )
+                self.record_usage(channel.name, False, model=wire, h=h)
+                if not quota:
+                    self.store.record_score(channel.name, wire, -5)
+                return (exc.code, reason, seconds)
+            except (BrokenPipeError, ConnectionResetError):
+                with self.store.lock:
+                    self.store.states[channel.name].mark_success(0, time.time(), wire)
+                self.store.record_score(channel.name, wire, 1)
+                return None
+            except Exception as exc:
+                with self.store.lock:
+                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                return None
+
+    def _relay_rerank(self, h, resp, channel, wire, attempt, audit):
+        """Relay successful rerank response to client."""
+        extra = {
+            **dict(audit or {}),
+            "X-Routed-Via": _header_safe(f"{channel.name}/{wire}"),
+            "X-Failover-Count": str(attempt),
+        }
+        data = resp.read()
+        h.send_response(200)
+        h.send_header("Content-Type", resp.headers.get("Content-Type") or "application/json")
+        h.send_header("Content-Length", str(len(data)))
+        for key, value in extra.items():
+            h.send_header(key, value)
+        h.end_headers()
+        h.wfile.write(data)
+        with self.store.lock:
+            self.store.states[channel.name].mark_success(0, time.time(), wire)
+        self.store.record_score(channel.name, wire, 1)
+        self.record_usage(channel.name, True, 0, model=wire, h=h)
+
+    # --------------------------------------------------------------- audio endpoints
+    def _audio_speech(self, h: BaseHTTPRequestHandler, raw: bytes) -> None:
+        """Handle POST /v1/audio/speech — OpenAI-compatible TTS endpoint.
+
+        Request shape (OpenAI audio speech API):
+        {
+            "model": "tts-model-name",
+            "input": "text to synthesize",
+            "voice": "alloy",
+            "response_format": "mp3",
+            "speed": 1.0
+        }
+
+        Returns binary audio data (not JSON). Routes to channels with TTS capability.
+        """
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return
+        if not isinstance(body, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return
+
+        requested_model = str(body.get("model") or "").strip() or AUTO_MODEL
+        _log_inbound_shape(body, len(raw))
+
+        blocked = self.blocked_channels()
+        decision = resolve_model(
+            self.config, OPENAI, requested_model, h.headers.get("X-Route"), blocked,
+        )
+        audit = _audit_headers(decision)
+        log_base = {
+            "api": "audio_speech",
+            "protocol": OPENAI,
+            "model": decision.requested,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "route": decision.hint,
+            "stream": False,
+            "sticky": False,
+        }
+
+        if decision.mode == "rejected":
+            self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
+            _json(h, 400, {
+                "error": {
+                    "message": "unknown model; internal scheduling is disabled",
+                    "model": requested_model,
+                    "hint": "use a branded model name or add the model to a channel's models mapping",
+                },
+                "models": [item["id"] for item in self.model_list()["data"]],
+            }, audit)
+            return
+
+        # Filter candidates for TTS capability
+        candidates, _ = self.store.pick(
+            OPENAI, decision.hint, decision.exposed, None,
+            decision=decision, blocked=blocked,
+            agent_candidates=None,
+        )
+        candidates = [(channel, wire) for channel, wire in candidates
+                      if channel.name not in blocked]
+        # Apply catalog filter
+        candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        candidates, dead_skipped = self._apply_dead_filter(candidates)
+        candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        catalog_skipped = list(catalog_skipped) + dead_skipped
+
+        if not candidates:
+            self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            route = self.config.route(OPENAI, decision.hint)
+            status_map: dict[str, str] = {}
+            for name in (route.channels if route else []):
+                channel = self.config.channel(name)
+                if channel is None:
+                    status_map[name] = "missing"
+                elif not channel.enabled:
+                    status_map[name] = "disabled"
+                elif name in blocked:
+                    status_map[name] = "blocked"
+                else:
+                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    status_map[name] = "ok" if ok else why
+            message = "no healthy channel with TTS capability for this route/model"
+            if status_map and all(
+                    s in ("disabled", "missing") for s in status_map.values()):
+                message = ("no enabled channel for this route — enable a channel in "
+                           "the console or add one that speaks this protocol")
+            if quota_skipped:
+                message = ("free quota exhausted for this model — routing stopped "
+                           "to avoid per-call billing")
+            error = {
+                "message": message,
+                "route": f"{OPENAI}:{decision.hint}",
+                "model": requested_model,
+                "blocked_channels": blocked,
+                "channel_status": status_map,
+            }
+            if catalog_skipped:
+                error["catalog_skipped"] = catalog_skipped
+            if quota_skipped:
+                error["free_quota_skipped"] = quota_skipped
+            _json(h, 503, {
+                "error": error,
+                "channels": self.store.snapshot()["channels"],
+            }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
+            return
+
+        attempt = 0
+        failures: list[dict] = []
+        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+            for try_no in range(self.config.defaults.network_retries + 1):
+                now = time.time()
+                with self.store.lock:
+                    ok, why = self.store.states[channel.name].available(now, channel.rate)
+                    if not ok:
+                        failures.append({"channel": channel.name, "reason": why})
+                        break
+                    self.store.states[channel.name].note_attempt(now)
+
+                started = time.perf_counter()
+                error = self._forward_audio_speech(h, channel, wire, body, attempt, audit)
+                entry = {
+                    **log_base, "channel": channel.name, "wire_model": wire,
+                    "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                }
+                if error is None:
+                    self.log_request(**entry, status="ok", http_status=200, tokens=0)
+                    return
+
+                reason = error[1]
+                entry["reason"] = reason
+                self.log_request(
+                    **entry,
+                    status="network_error" if reason.startswith("transient_") else "upstream_error",
+                    http_status=error[0], cooldown_seconds=round(error[2], 1),
+                )
+                attempt += 1
+                failures.append({
+                    "channel": channel.name,
+                    "status": error[0],
+                    "reason": reason,
+                    "cooldown_seconds": round(error[2], 1),
+                })
+                if reason != "transient_network":
+                    break
+
+        _json(h, 503, {
+            "error": {"message": "all channels failed for this request", "failures": failures},
+            "channels": self.store.snapshot()["channels"],
+        }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
+
+    def _forward_audio_speech(self, h, channel, wire, body, attempt, audit):
+        """Relay one TTS attempt. Return None on success, else (status, reason, seconds)."""
+        payload = {
+            "model": wire,
+            "input": body.get("input"),
+        }
+        # Optional parameters passed through to upstream
+        if "voice" in body:
+            payload["voice"] = body["voice"]
+        if "response_format" in body:
+            payload["response_format"] = body["response_format"]
+        if "speed" in body:
+            payload["speed"] = body["speed"]
+        if "user" in body:
+            payload["user"] = body["user"]
+
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, OPENAI, endpoint="speech")
+        headers = {"Content-Type": "application/json"}
+        if channel.api_key:
+            headers["Authorization"] = f"Bearer {channel.api_key}"
+
+        req = Request(
+            channel.base_url + upstream_path,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        now = time.time()
+        try:
+            resp = open_with_proxy(req, channel.timeout, channel.proxy)
+        except HTTPError as exc:
+            raw_resp = exc.read()
+            quota, seconds, reason = parse_cooldown(
+                exc.code, exc.headers, raw_resp,
+                channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                daily_hours=self.config.defaults.daily_429_cooldown_hours,
+            )
+            excerpt = raw_resp.decode("utf-8", "replace")[:300]
+            low = excerpt.lower()
+            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            per_model = quota and not account_scoped
+            if quota:
+                plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                if plan_seconds > seconds:
+                    seconds, reason = plan_seconds, plan_reason
+                    per_model = False
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = f"HTTP {exc.code}: {excerpt}"
+                state.mark_cooldown(
+                    seconds, reason, now, per_model=per_model, wire=wire,
+                    half_open=not quota,
+                )
+            self.record_usage(channel.name, False, model=wire, h=h)
+            if not quota:
+                self.store.record_score(channel.name, wire, -5)
+            return (exc.code, reason, seconds)
+        except (URLError, TimeoutError, OSError) as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = str(exc)[:300]
+                state.mark_cooldown(30.0, "transient_network", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_network", 30.0)
+        except Exception as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = repr(exc)[:300]
+                state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_internal", 30.0)
+        else:
+            try:
+                with resp:
+                    return self._relay_audio_binary(h, resp, channel, wire, attempt, audit)
+            except HTTPError as exc:
+                raw_resp = exc.read()
+                quota, seconds, reason = parse_cooldown(
+                    exc.code, exc.headers, raw_resp,
+                    channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                    not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                    daily_hours=self.config.defaults.daily_429_cooldown_hours,
+                )
+                excerpt = raw_resp.decode("utf-8", "replace")[:300]
+                low = excerpt.lower()
+                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                per_model = quota and not account_scoped
+                if quota:
+                    plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                    if plan_seconds > seconds:
+                        seconds, reason = plan_seconds, plan_reason
+                        per_model = False
+                with self.store.lock:
+                    state = self.store.states[channel.name]
+                    state.last_error = f"HTTP {exc.code}: {excerpt}"
+                    state.mark_cooldown(
+                        seconds, reason, now, per_model=per_model, wire=wire,
+                        half_open=not quota,
+                    )
+                self.record_usage(channel.name, False, model=wire, h=h)
+                if not quota:
+                    self.store.record_score(channel.name, wire, -5)
+                return (exc.code, reason, seconds)
+            except (BrokenPipeError, ConnectionResetError):
+                with self.store.lock:
+                    self.store.states[channel.name].mark_success(0, time.time(), wire)
+                self.store.record_score(channel.name, wire, 1)
+                return None
+            except Exception as exc:
+                with self.store.lock:
+                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                return None
+
+    def _relay_audio_binary(self, h, resp, channel, wire, attempt, audit):
+        """Relay successful binary audio response to client."""
+        extra = {
+            **dict(audit or {}),
+            "X-Routed-Via": _header_safe(f"{channel.name}/{wire}"),
+            "X-Failover-Count": str(attempt),
+        }
+        # For binary responses, stream directly without loading all into memory
+        content_type = resp.headers.get("Content-Type") or "audio/mpeg"
+        h.send_response(200)
+        h.send_header("Content-Type", content_type)
+        # Don't set Content-Length for streaming
+        for key, value in extra.items():
+            h.send_header(key, value)
+        h.end_headers()
+        
+        total_bytes = 0
+        try:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                h.wfile.write(chunk)
+                total_bytes += len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected - still mark success for upstream
+            pass
+        
+        with self.store.lock:
+            self.store.states[channel.name].mark_success(0, time.time(), wire)
+        self.store.record_score(channel.name, wire, 1)
+        self.record_usage(channel.name, True, 0, model=wire, h=h)
+
+    def _audio_transcriptions(self, h: BaseHTTPRequestHandler, raw: bytes, endpoint: str = "transcriptions") -> None:
+        """Handle POST /v1/audio/transcriptions and /v1/audio/translations — OpenAI-compatible STT endpoints.
+
+        Request shape (multipart/form-data):
+        - file: (required) audio file
+        - model: (required) model name
+        - language: (optional) ISO-639-1 language code
+        - prompt: (optional) text to guide the model
+        - response_format: (optional) json, text, srt, verbose_json, vtt
+        - temperature: (optional) sampling temperature
+        - timestamp_granularities: (optional) ["word", "segment"]
+
+        Returns JSON transcription result. Routes to channels with STT capability.
+        """
+        # Parse multipart form data
+        try:
+            parsed = _parse_multipart(dict(h.headers), raw)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": f"invalid multipart body: {exc}"}})
+            return
+        except Exception as exc:
+            _json(h, 400, {"error": {"message": f"multipart parse error: {exc}"}})
+            return
+
+        fields = parsed["fields"]
+        files = parsed["files"]
+
+        # Extract required fields
+        model = fields.get("model") or ""
+        if not model:
+            _json(h, 400, {"error": {"message": "model is required"}})
+            return
+
+        file_info = files.get("file")
+        if not file_info:
+            _json(h, 400, {"error": {"message": "file is required"}})
+            return
+
+        filename, file_content, file_content_type = file_info
+        requested_model = str(model).strip() or AUTO_MODEL
+        _log_inbound_shape({"model": requested_model, "file": filename}, len(raw))
+
+        blocked = self.blocked_channels()
+        decision = resolve_model(
+            self.config, OPENAI, requested_model, h.headers.get("X-Route"), blocked,
+        )
+        audit = _audit_headers(decision)
+        log_base = {
+            "api": f"audio_{endpoint}",
+            "protocol": OPENAI,
+            "model": decision.requested,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "route": decision.hint,
+            "stream": False,
+            "sticky": False,
+        }
+
+        if decision.mode == "rejected":
+            self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
+            _json(h, 400, {
+                "error": {
+                    "message": "unknown model; internal scheduling is disabled",
+                    "model": requested_model,
+                    "hint": "use a branded model name or add the model to a channel's models mapping",
+                },
+                "models": [item["id"] for item in self.model_list()["data"]],
+            }, audit)
+            return
+
+        # Filter candidates for STT capability
+        candidates, _ = self.store.pick(
+            OPENAI, decision.hint, decision.exposed, None,
+            decision=decision, blocked=blocked,
+            agent_candidates=None,
+        )
+        candidates = [(channel, wire) for channel, wire in candidates
+                      if channel.name not in blocked]
+        # Apply catalog filter
+        candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
+        candidates, dead_skipped = self._apply_dead_filter(candidates)
+        candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        catalog_skipped = list(catalog_skipped) + dead_skipped
+
+        if not candidates:
+            self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
+            route = self.config.route(OPENAI, decision.hint)
+            status_map: dict[str, str] = {}
+            for name in (route.channels if route else []):
+                channel = self.config.channel(name)
+                if channel is None:
+                    status_map[name] = "missing"
+                elif not channel.enabled:
+                    status_map[name] = "disabled"
+                elif name in blocked:
+                    status_map[name] = "blocked"
+                else:
+                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    status_map[name] = "ok" if ok else why
+            message = f"no healthy channel with {endpoint} capability for this route/model"
+            if status_map and all(
+                    s in ("disabled", "missing") for s in status_map.values()):
+                message = ("no enabled channel for this route — enable a channel in "
+                           "the console or add one that speaks this protocol")
+            if quota_skipped:
+                message = ("free quota exhausted for this model — routing stopped "
+                           "to avoid per-call billing")
+            error = {
+                "message": message,
+                "route": f"{OPENAI}:{decision.hint}",
+                "model": requested_model,
+                "blocked_channels": blocked,
+                "channel_status": status_map,
+            }
+            if catalog_skipped:
+                error["catalog_skipped"] = catalog_skipped
+            if quota_skipped:
+                error["free_quota_skipped"] = quota_skipped
+            _json(h, 503, {
+                "error": error,
+                "channels": self.store.snapshot()["channels"],
+            }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
+            return
+
+        attempt = 0
+        failures: list[dict] = []
+        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+            for try_no in range(self.config.defaults.network_retries + 1):
+                now = time.time()
+                with self.store.lock:
+                    ok, why = self.store.states[channel.name].available(now, channel.rate)
+                    if not ok:
+                        failures.append({"channel": channel.name, "reason": why})
+                        break
+                    self.store.states[channel.name].note_attempt(now)
+
+                started = time.perf_counter()
+                error = self._forward_audio_transcriptions(h, channel, wire, fields, file_info, endpoint, attempt, audit)
+                entry = {
+                    **log_base, "channel": channel.name, "wire_model": wire,
+                    "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                }
+                if error is None:
+                    self.log_request(**entry, status="ok", http_status=200, tokens=0)
+                    return
+
+                reason = error[1]
+                entry["reason"] = reason
+                self.log_request(
+                    **entry,
+                    status="network_error" if reason.startswith("transient_") else "upstream_error",
+                    http_status=error[0], cooldown_seconds=round(error[2], 1),
+                )
+                attempt += 1
+                failures.append({
+                    "channel": channel.name,
+                    "status": error[0],
+                    "reason": reason,
+                    "cooldown_seconds": round(error[2], 1),
+                })
+                if reason != "transient_network":
+                    break
+
+        _json(h, 503, {
+            "error": {"message": "all channels failed for this request", "failures": failures},
+            "channels": self.store.snapshot()["channels"],
+        }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": str(attempt)})
+
+    def _forward_audio_transcriptions(self, h, channel, wire, fields, file_info, endpoint, attempt, audit):
+        """Relay one STT/translation attempt. Return None on success, else (status, reason, seconds)."""
+        filename, file_content, file_content_type = file_info
+
+        # Build multipart request for upstream
+        import uuid
+        boundary = uuid.uuid4().hex
+        body_parts = []
+
+        def add_field(name, value):
+            body_parts.append(f'--{boundary}')
+            body_parts.append(f'Content-Disposition: form-data; name="{name}"')
+            body_parts.append('')
+            body_parts.append(str(value))
+
+        # Add model
+        add_field("model", wire)
+
+        # Add optional fields
+        for key in ("language", "prompt", "response_format", "temperature", "timestamp_granularities"):
+            if key in fields and fields[key] is not None:
+                add_field(key, fields[key])
+
+        # Add file
+        body_parts.append(f'--{boundary}')
+        body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{filename}"')
+        body_parts.append(f'Content-Type: {file_content_type}')
+        body_parts.append('')
+        body_parts.append('')  # placeholder for file content
+
+        # Build the body with file content inserted
+        prefix = "\r\n".join(body_parts[:-1]) + "\r\n"  # everything before file content
+        suffix = "\r\n" + f"--{boundary}--\r\n"
+        
+        body_bytes = prefix.encode("utf-8") + file_content + suffix.encode("utf-8")
+
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, OPENAI, endpoint=endpoint)
+        headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        }
+        if channel.api_key:
+            headers["Authorization"] = f"Bearer {channel.api_key}"
+
+        req = Request(
+            channel.base_url + upstream_path,
+            data=body_bytes,
+            headers=headers,
+            method="POST",
+        )
+        now = time.time()
+        try:
+            resp = open_with_proxy(req, channel.timeout, channel.proxy)
+        except HTTPError as exc:
+            raw_resp = exc.read()
+            quota, seconds, reason = parse_cooldown(
+                exc.code, exc.headers, raw_resp,
+                channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                daily_hours=self.config.defaults.daily_429_cooldown_hours,
+            )
+            excerpt = raw_resp.decode("utf-8", "replace")[:300]
+            low = excerpt.lower()
+            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            per_model = quota and not account_scoped
+            if quota:
+                plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                if plan_seconds > seconds:
+                    seconds, reason = plan_seconds, plan_reason
+                    per_model = False
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = f"HTTP {exc.code}: {excerpt}"
+                state.mark_cooldown(
+                    seconds, reason, now, per_model=per_model, wire=wire,
+                    half_open=not quota,
+                )
+            self.record_usage(channel.name, False, model=wire, h=h)
+            if not quota:
+                self.store.record_score(channel.name, wire, -5)
+            return (exc.code, reason, seconds)
+        except (URLError, TimeoutError, OSError) as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = str(exc)[:300]
+                state.mark_cooldown(30.0, "transient_network", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_network", 30.0)
+        except Exception as exc:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = repr(exc)[:300]
+                state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
+            self.record_usage(channel.name, False, model=wire, h=h)
+            self.store.record_score(channel.name, wire, -5)
+            return (502, "transient_internal", 30.0)
+        else:
+            try:
+                with resp:
+                    return self._relay_audio_json(h, resp, channel, wire, attempt, audit)
+            except HTTPError as exc:
+                raw_resp = exc.read()
+                quota, seconds, reason = parse_cooldown(
+                    exc.code, exc.headers, raw_resp,
+                    channel.cooldown_minutes, self.config.defaults.max_cooldown_hours, now,
+                    not_found_hours=self.config.defaults.not_found_cooldown_hours,
+                    daily_hours=self.config.defaults.daily_429_cooldown_hours,
+                )
+                excerpt = raw_resp.decode("utf-8", "replace")[:300]
+                low = excerpt.lower()
+                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                per_model = quota and not account_scoped
+                if quota:
+                    plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                    if plan_seconds > seconds:
+                        seconds, reason = plan_seconds, plan_reason
+                        per_model = False
+                with self.store.lock:
+                    state = self.store.states[channel.name]
+                    state.last_error = f"HTTP {exc.code}: {excerpt}"
+                    state.mark_cooldown(
+                        seconds, reason, now, per_model=per_model, wire=wire,
+                        half_open=not quota,
+                    )
+                self.record_usage(channel.name, False, model=wire, h=h)
+                if not quota:
+                    self.store.record_score(channel.name, wire, -5)
+                return (exc.code, reason, seconds)
+            except (BrokenPipeError, ConnectionResetError):
+                with self.store.lock:
+                    self.store.states[channel.name].mark_success(0, time.time(), wire)
+                self.store.record_score(channel.name, wire, 1)
+                return None
+            except Exception as exc:
+                with self.store.lock:
+                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                return None
+
+    def _relay_audio_json(self, h, resp, channel, wire, attempt, audit):
+        """Relay successful JSON response (transcription/translation) to client."""
+        extra = {
+            **dict(audit or {}),
+            "X-Routed-Via": _header_safe(f"{channel.name}/{wire}"),
+            "X-Failover-Count": str(attempt),
+        }
+        data = resp.read()
+        h.send_response(200)
+        h.send_header("Content-Type", resp.headers.get("Content-Type") or "application/json")
+        h.send_header("Content-Length", str(len(data)))
+        for key, value in extra.items():
+            h.send_header(key, value)
+        h.end_headers()
+        h.wfile.write(data)
+        with self.store.lock:
+            self.store.states[channel.name].mark_success(0, time.time(), wire)
+        self.store.record_score(channel.name, wire, 1)
+        self.record_usage(channel.name, True, 0, model=wire, h=h)
+
     # --------------------------------------------------------------- models
     def model_list(self) -> dict:
         """Advertise our own ids first, then every explicitly declared model."""
@@ -2290,29 +3963,71 @@ class App:
         data: list[dict] = []
         seen: set[str] = set()
 
-        def add(name: str, owned_by: str, mode: str, route: str | None = None) -> None:
+        # Capability sets per protocol (router-level endpoints the protocol can serve).
+        # OpenAI protocol channels can serve all router endpoints; Anthropic serves
+        # chat/messages and embeddings via conversion. This is a conservative baseline;
+        # actual upstream capability may vary and is discovered via catalog/maintenance.
+        PROTOCOL_CAPABILITIES: dict[str, list[str]] = {
+            OPENAI: [
+                "chat", "completions", "embeddings", "rerank",
+                "speech", "transcriptions", "translations", "responses",
+            ],
+            ANTHROPIC: ["chat", "embeddings"],
+        }
+
+        def route_capabilities(route_name: str) -> list[str]:
+            """Aggregate capabilities from all enabled channels in a route."""
+            route_key = f"openai:{route_name}"  # internal models use openai protocol
+            route = self.config.routes.get(route_key)
+            if not route:
+                return []
+            caps: set[str] = set()
+            for ch_name in route.channels:
+                ch = self.config.channel(ch_name)
+                if ch and ch.enabled and ch.name not in blocked:
+                    caps.update(PROTOCOL_CAPABILITIES.get(ch.protocol, []))
+            return sorted(caps)
+
+        def add(
+            name: str,
+            owned_by: str,
+            mode: str,
+            route: str | None = None,
+            capabilities: list[str] | None = None,
+        ) -> None:
             if not name or name in seen:
                 return
             seen.add(name)
-            item = {"id": name, "object": "model", "owned_by": owned_by, "mode": mode}
+            item: dict = {
+                "id": name,
+                "object": "model",
+                "owned_by": owned_by,
+                "mode": mode,
+            }
             if route:
                 item["route"] = route
+            if capabilities:
+                item["capabilities"] = capabilities
             data.append(item)
 
+        # Branded models (facet-*) inherit capabilities from their target route
         for name, hint in policy.branded.items():
-            add(name, "facet", "auto", hint)
-        add(AUTO_MODEL, "planrouter", "auto", "default")
+            add(name, "facet", "auto", hint, route_capabilities(hint))
+        # Internal auto models
+        add(AUTO_MODEL, "planrouter", "auto", "default", route_capabilities("default"))
         for key in sorted(self.config.routes):
             name = key.split(":", 1)[1]
             if name == "default":
                 continue
-            add(f"auto:{name}", "planrouter", "auto", name)
-            add(f"facet:{name}", "facet", "auto", name)
+            add(f"auto:{name}", "planrouter", "auto", name, route_capabilities(name))
+            add(f"facet:{name}", "facet", "auto", name, route_capabilities(name))
+        # Explicit channel models: capabilities from the channel's protocol
         for channel in self.config.channels:
             if not channel.enabled or channel.name in blocked:
                 continue
+            proto_caps = PROTOCOL_CAPABILITIES.get(channel.protocol, [])
             for name in sorted(explicit_models(channel)):
-                add(name, channel.name, "exact", channel.protocol)
+                add(name, channel.name, "exact", channel.protocol, proto_caps)
         return {
             "object": "list",
             "data": data,
@@ -2325,7 +4040,7 @@ class App:
 
     # ------------------------------------------------------------- completion
     def _completion(self, h: BaseHTTPRequestHandler, protocol: str, raw: bytes,
-                    responses: bool = False) -> None:
+                    responses: bool = False, legacy: bool = False) -> None:
         try:
             body = json.loads(raw)
         except ValueError:
@@ -2339,7 +4054,11 @@ class App:
         if responses:
             body = to_chat_request(body)
             adapter = ResponsesAdapter(requested_model, bool(body.get("stream")))
+        elif legacy:
+            body = legacy_to_chat_request(body)
+            adapter = CompletionsAdapter(requested_model, bool(body.get("stream")))
         model = str(body.get("model") or "").strip() or AUTO_MODEL
+        _log_inbound_shape(body, len(raw))
         metadata = body.get("metadata")
         session = (
             h.headers.get("X-Session-Id")
@@ -2353,9 +4072,13 @@ class App:
         decision = resolve_model(
             self.config, protocol, model, h.headers.get("X-Route"), blocked,
         )
+        route = self.config.route(protocol, decision.hint)
+        if route is not None and route.system_prompt:
+            body = inject_system(body, route.system_prompt)
         audit = _audit_headers(decision)
         log_base = {
-            "api": "responses" if responses else ("chat" if protocol == OPENAI else "messages"),
+            "api": "responses" if responses else ("completions" if legacy else
+                                                 ("chat" if protocol == OPENAI else "messages")),
             "protocol": protocol,
             "model": decision.requested,
             "mode": decision.mode,
@@ -2387,9 +4110,23 @@ class App:
         )
         candidates = [(channel, wire) for channel, wire in candidates
                       if channel.name not in blocked]
+        # Multimodal requests only go to channels that can take them. A
+        # channel with `vision_model` gets its wire re-pointed before the
+        # capability filters run, so every filter sees the final model;
+        # exact requests keep the client's model and are only filtered.
+        needs_vision = body_has_vision(body)
+        if needs_vision:
+            audit["X-Routed-Vision"] = "1"
+            log_base["vision"] = True
+            if decision.mode != "exact":
+                candidates = [(channel, vision_wire(channel, wire))
+                              for channel, wire in candidates]
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        vision_skipped: list = []
+        if needs_vision:
+            candidates, vision_skipped = self._apply_vision_filter(candidates)
         catalog_skipped = list(catalog_skipped) + dead_skipped
         if decision.mode == "fallback":
             log_base["model_unverified"] = not self.store.catalog_knows(decision.requested)
@@ -2427,6 +4164,10 @@ class App:
             if quota_skipped:
                 message = ("free quota exhausted for this model — routing stopped "
                            "to avoid per-call billing")
+            if vision_skipped:
+                message = ("no image-capable channel for this route — every "
+                           "candidate is text-only; give one channel a "
+                           "'vision_model' or drop its 'vision': false")
             error = {
                 "message": message,
                 "route": f"{protocol}:{decision.hint}",
@@ -2438,6 +4179,8 @@ class App:
                 error["catalog_skipped"] = catalog_skipped
             if quota_skipped:
                 error["free_quota_skipped"] = quota_skipped
+            if vision_skipped:
+                error["vision_skipped"] = vision_skipped
             _json(h, 503, {
                 "error": error,
                 "channels": self.store.snapshot()["channels"],
@@ -2512,18 +4255,25 @@ class App:
         payload["model"] = wire
         normalize_kimi_temperature(payload)
         stream = bool(payload.get("stream"))
-        if (stream and protocol == OPENAI and self.config.defaults.track_stream_usage
+        # The channel speaks its own wire protocol; when that differs from the
+        # client's, the payload is converted right here at the boundary (P1-3).
+        wire_proto = channel.protocol
+        if wire_proto != protocol:
+            payload = convert_request(payload, protocol, wire_proto)
+        if (stream and wire_proto == OPENAI and self.config.defaults.track_stream_usage
                 and "stream_options" not in payload):
             payload["stream_options"] = {"include_usage": True}
-        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, protocol)
+        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, wire_proto)
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
-            if protocol == OPENAI:
+            if wire_proto == OPENAI:
                 headers["Authorization"] = f"Bearer {channel.api_key}"
             else:
                 headers["x-api-key"] = channel.api_key
-        if protocol == ANTHROPIC:
-            headers["anthropic-version"] = h.headers.get("anthropic-version") or "2023-06-01"
+        if wire_proto == ANTHROPIC:
+            headers["anthropic-version"] = (
+                h.headers.get("anthropic-version") if h is not None else None
+            ) or "2023-06-01"
         req = Request(
             channel.base_url + upstream_path,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -2542,11 +4292,24 @@ class App:
                 daily_hours=self.config.defaults.daily_429_cooldown_hours,
             )
             excerpt = raw.decode("utf-8", "replace")[:300]
+            low = excerpt.lower()
+            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            per_model = quota and not account_scoped
+            if quota:
+                # A vendor plan window that already reads exhausted means the
+                # 429 is the monthly/weekly allowance being out, not rate
+                # limiting: cool the channel until the window resets (falls
+                # back to the parse_cooldown verdict when nothing matches).
+                plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
+                if plan_seconds > seconds:
+                    seconds, reason = plan_seconds, plan_reason
+                    per_model = False  # a plan window binds every model on it
             with self.store.lock:
                 state = self.store.states[channel.name]
                 state.last_error = f"HTTP {exc.code}: {excerpt}"
                 state.mark_cooldown(
-                    seconds, reason, now, half_open=not quota,
+                    seconds, reason, now, per_model=per_model, wire=wire,
+                    half_open=not quota,
                 )
             self.record_usage(channel.name, False, model=wire)
             # Quota exhaustion is the plan running out, not instability:
@@ -2559,7 +4322,7 @@ class App:
                 state = self.store.states[channel.name]
                 state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_network", now, half_open=True)
-            self.record_usage(channel.name, False, model=wire)
+            self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
             return (502, "transient_network", 30.0)
         except Exception as exc:  # keep the gateway alive on unexpected upstream shapes
@@ -2567,7 +4330,7 @@ class App:
                 state = self.store.states[channel.name]
                 state.last_error = repr(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
-            self.record_usage(channel.name, False, model=wire)
+            self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
             return (502, "transient_internal", 30.0)
         else:
@@ -2578,7 +4341,7 @@ class App:
                                        handoff, stream, audit, delivery)
             except (BrokenPipeError, ConnectionResetError):
                 with self.store.lock:
-                    self.store.states[channel.name].mark_success(0, time.time())
+                    self.store.states[channel.name].mark_success(0, time.time(), wire)
                 self.store.record_score(channel.name, wire, 1)
                 return None
             except Exception as exc:
@@ -2597,21 +4360,28 @@ class App:
         if handoff:
             extra["X-Session-Handoff"] = "1"
         if stream:
-            h.send_response(200)
-            h.send_header("Content-Type", resp.headers.get("Content-Type") or "text/event-stream")
-            h.send_header("Cache-Control", "no-cache")
-            h.send_header("Connection", "close")
-            for key, value in extra.items():
-                h.send_header(key, value)
-            h.end_headers()
+            # Cross-protocol streaming (P1-3): the upstream speaks the
+            # channel's protocol, so the SSE is converted incrementally into
+            # the client's before (optionally) the responses adapter runs.
+            converter = stream_converter(channel.protocol, protocol, model=wire)
             stream_tokens = stream_input = stream_cached = 0
             buffer = b""
+            stopped = False
             try:
+                h.send_response(200)
+                h.send_header("Content-Type", resp.headers.get("Content-Type") or "text/event-stream")
+                h.send_header("Cache-Control", "no-cache")
+                h.send_header("Connection", "close")
+                for key, value in extra.items():
+                    h.send_header(key, value)
+                h.end_headers()
                 while True:
                     chunk = resp.read(4096)
                     if not chunk:
                         break
-                    outgoing = adapter.feed(chunk) if adapter is not None else chunk
+                    outgoing = converter.feed(chunk) if converter is not None else chunk
+                    if adapter is not None:
+                        outgoing = adapter.feed(outgoing)
                     if outgoing:
                         h.wfile.write(outgoing)
                         h.wfile.flush()
@@ -2625,20 +4395,35 @@ class App:
                     if len(buffer) > 65536:  # never parse an unbounded non-SSE line
                         buffer = b""
             except (BrokenPipeError, ConnectionResetError):
-                pass
+                # The client hung up mid-stream: drop the upstream connection
+                # right away so the vendor stops generating instead of billing
+                # a stream nobody reads. Tokens already relayed are still
+                # recorded below; only the tail write is skipped.
+                stopped = True
+                try:
+                    resp.close()
+                except Exception:
+                    pass
             add_total, add_input, add_cached = _stream_tokens(buffer, protocol)
             stream_tokens += add_total
             stream_input += add_input
             stream_cached += add_cached
-            if adapter is not None:
-                tail = adapter.finish()
+            if not stopped:
+                tail = b""
+                if converter is not None:
+                    tail = converter.finish()
+                if adapter is not None:
+                    tail = adapter.feed(tail) + adapter.finish()
                 if tail:
-                    h.wfile.write(tail)
-                    h.wfile.flush()
+                    try:
+                        h.wfile.write(tail)
+                        h.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
             with self.store.lock:
-                self.store.states[channel.name].mark_success(stream_tokens, time.time())
+                self.store.states[channel.name].mark_success(stream_tokens, time.time(), wire)
             self.store.record_score(channel.name, wire, 1)
-            self.record_usage(channel.name, True, stream_tokens, model=wire,
+            self.record_usage(channel.name, True, stream_tokens, model=wire, h=h,
                               input_tokens=stream_input, cached_tokens=stream_cached)
             self.apply_quota(channel.name, resp.headers)
             if delivery is not None:
@@ -2646,13 +4431,22 @@ class App:
             return None
 
         data = resp.read()
+        if channel.protocol != protocol:
+            # Answer came back in the channel's protocol: convert it back to
+            # the client's before relaying (P1-3).
+            try:
+                data = json.dumps(
+                    convert_response(json.loads(data), channel.protocol, protocol),
+                    ensure_ascii=False).encode("utf-8")
+            except ValueError:
+                pass  # a non-JSON body is relayed untouched
         tokens, input_tokens, cached_tokens = _usage(data, protocol)
         if delivery is not None:
             delivery["tokens"] = tokens
         with self.store.lock:
-            self.store.states[channel.name].mark_success(tokens, time.time())
+            self.store.states[channel.name].mark_success(tokens, time.time(), wire)
         self.store.record_score(channel.name, wire, 1)
-        self.record_usage(channel.name, True, tokens, model=wire,
+        self.record_usage(channel.name, True, tokens, model=wire, h=h,
                           input_tokens=input_tokens, cached_tokens=cached_tokens)
         self.apply_quota(channel.name, resp.headers)
         if adapter is not None:
@@ -2706,6 +4500,7 @@ def make_server(
     usage_file: str | Path | None = None,
     notifications_file: str | Path | None = None,
     audit_file: str | Path | None = None,
+    keys_file: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     httpd = ThreadingHTTPServer(
         (host or config.listen.host, port or config.listen.port), Handler,
@@ -2719,6 +4514,7 @@ def make_server(
         usage_file=usage_file,
         notifications_file=notifications_file,
         audit_file=audit_file,
+        keys_file=keys_file,
     )
     app.start_background()
     httpd.app = app  # type: ignore[attr-defined]

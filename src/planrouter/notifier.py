@@ -1,8 +1,10 @@
-"""Periodic renewal reminders through a webhook (WeCom / DingTalk / custom JSON).
+"""Periodic renewal reminders and runtime alerts through a webhook.
 
 Local-first: the service only posts a short text to a URL you configure. It
-never sends prompts, keys or model outputs. Sent alerts are de-duplicated by
-(subscription id, expiry, status) and kept in a local notifications.json.
+never sends prompts, keys or model outputs. Renewal alerts are de-duplicated by
+(subscription id, expiry, status); runtime alerts (route chains down, free
+quota exhausted, channels failing repeatedly) are throttled per cause. Both
+are kept in a local notifications.json so the console can show them.
 """
 from __future__ import annotations
 
@@ -17,6 +19,9 @@ from . import subscriptions as subs
 from .core import resolve_secret
 
 MAX_HISTORY = 20
+# A persistent runtime condition repeats its alert at most once per window;
+# transitions (alarm raised / condition resolved) always record once.
+RUNTIME_THROTTLE_SECONDS = 3600
 
 
 def alert_key(alert: dict) -> str:
@@ -39,12 +44,16 @@ def alert_message(alert: dict) -> str:
 
 
 class ReminderService:
-    def __init__(self, subscriptions_path, state_path, get_records, get_settings, sender=None):
+    def __init__(self, subscriptions_path, state_path, get_records, get_settings,
+                 sender=None, get_health=None):
         self.subscriptions_path = Path(subscriptions_path) if subscriptions_path else None
         self.state_path = Path(state_path) if state_path else None
         self.get_records = get_records
         self.get_settings = get_settings
         self.sender = sender
+        # Live runtime conditions as [{kind, key, title, message}]; see
+        # App.runtime_alerts. None keeps the service renewal-only.
+        self.get_health = get_health
         self.lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -57,12 +66,13 @@ class ReminderService:
                     return {
                         "sent": data.get("sent") or {},
                         "history": data.get("history") or [],
+                        "runtime": data.get("runtime") or {},
                         "last_check": data.get("last_check") or 0,
                         "last_error": data.get("last_error") or "",
                     }
             except (OSError, ValueError):
                 pass
-        return {"sent": {}, "history": [], "last_check": 0, "last_error": ""}
+        return {"sent": {}, "history": [], "runtime": {}, "last_check": 0, "last_error": ""}
 
     def _write_state(self, state: dict) -> None:
         if not self.state_path:
@@ -101,6 +111,7 @@ class ReminderService:
             "last_check": state["last_check"],
             "last_error": state["last_error"],
             "history": state["history"][:MAX_HISTORY],
+            "runtime": state["runtime"],
             "enabled": bool(settings["notify_enabled"] and settings["webhook_url"]),
         }
 
@@ -117,6 +128,30 @@ class ReminderService:
             raise ValueError("请先填写 webhook_url（或 env:VAR）")
         self._post(url, "[PlanRouter] 通知测试：如果你收到这条消息，说明续费提醒配置正确。")
         return {"ok": True, "at": time.time()}
+
+    def _deliver(self, message: str) -> tuple[bool, str]:
+        settings = self.get_settings()
+        url = resolve_secret(settings.get("webhook_url"))
+        try:
+            self._post(url, message)
+            return True, ""
+        except Exception as exc:  # a broken webhook must not break the router
+            return False, str(exc)[:200]
+
+    def _history(self, state: dict, key: str, title: str, ok: bool, error: str,
+                 resolved: bool = False) -> None:
+        entry = {
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "key": key,
+            "ok": ok,
+            "error": error,
+            "title": title,
+        }
+        if resolved:
+            entry["resolved"] = True
+        state["history"].insert(0, entry)
+        state["history"] = state["history"][:MAX_HISTORY]
+        state["last_error"] = "" if ok else error
 
     def check(self, force: bool = False) -> dict:
         settings = self.get_settings()
@@ -135,27 +170,64 @@ class ReminderService:
                 key = alert_key(alert)
                 if not force and key in state["sent"]:
                     continue
-                message = alert_message(alert)
-                try:
-                    self._post(url, message)
-                    ok, error = True, ""
-                except Exception as exc:  # a broken webhook must not break the router
-                    ok, error = False, str(exc)[:200]
-                entry = {
-                    "at": datetime.now().isoformat(timespec="seconds"),
-                    "key": key,
-                    "ok": ok,
-                    "error": error,
-                    "title": f"{alert['vendor']} / {alert['account'] or '—'} / {alert['plan']}",
-                }
-                state["history"].insert(0, entry)
-                state["history"] = state["history"][:MAX_HISTORY]
-                state["last_error"] = "" if ok else error
+                ok, error = self._deliver(alert_message(alert))
+                self._history(state, key,
+                              f"{alert['vendor']} / {alert['account'] or '—'} / {alert['plan']}",
+                              ok, error)
                 if ok:
                     state["sent"][key] = time.time()
                     sent += 1
         self._write_state(state)
         return {"sent": sent, "history": state["history"], "last_error": state["last_error"]}
+
+    def check_runtime(self) -> dict:
+        """Alarm on live runtime conditions, throttled per cause.
+
+        Conditions come from `get_health` as [{kind, key, title, message}].
+        While one persists it re-alerts at most once per
+        RUNTIME_THROTTLE_SECONDS; when it clears, a single resolved entry
+        closes it out. The console history records transitions even with the
+        webhook disabled.
+        """
+        try:
+            conditions = list((self.get_health or (lambda: []))())
+        except Exception:  # a broken condition probe must not kill the loop
+            return {"sent": 0, "resolved": 0}
+        active = {str(c["key"]): c for c in conditions if isinstance(c, dict)}
+        settings = self.get_settings()
+        url = resolve_secret(settings.get("webhook_url"))
+        enabled = bool(settings["notify_enabled"] and url)
+        state = self._read_state()
+        now = time.time()
+        sent = resolved = 0
+        with self.lock:
+            runtime = state.setdefault("runtime", {})
+            for key, cond in active.items():
+                entry = runtime.setdefault(key, {"active": False, "last_sent": 0.0, "title": ""})
+                fresh = not entry.get("active")
+                entry["title"] = str(cond.get("title") or key)
+                if not fresh and now - float(entry.get("last_sent") or 0) < RUNTIME_THROTTLE_SECONDS:
+                    continue  # same cause already alarmed inside the window
+                entry["active"] = True
+                entry["last_sent"] = now
+                if enabled:
+                    ok, error = self._deliver(str(cond.get("message") or entry["title"]))
+                    self._history(state, key, entry["title"], ok, error)
+                    if ok:
+                        sent += 1
+                elif fresh:
+                    self._history(state, key, entry["title"], True, "")
+            for key, entry in list(runtime.items()):
+                if entry.get("active") and key not in active:
+                    entry["active"] = False
+                    resolved += 1
+                    title = str(entry.get("title") or key)
+                    ok, error = True, ""
+                    if enabled:
+                        ok, error = self._deliver(f"[PlanRouter 运行告警恢复] {title}")
+                    self._history(state, key, title, ok, error, resolved=True)
+        self._write_state(state)
+        return {"sent": sent, "resolved": resolved, "active": sorted(active)}
 
     def start(self) -> None:
         def loop():
@@ -163,12 +235,19 @@ class ReminderService:
             if self._stop.wait(10):
                 return
             self.check()
+            self.check_runtime()
+            last_full = time.time()
             while True:
+                # runtime conditions are cheap to scan and deserve a quick
+                # verdict; renewal checks keep their configurable cadence and
                 # pick up interval changes without restarting the router
-                interval = max(1, int(self.get_settings()["interval_minutes"])) * 60
-                if self._stop.wait(interval):
+                if self._stop.wait(60):
                     return
-                self.check()
+                self.check_runtime()
+                interval = max(1, int(self.get_settings()["interval_minutes"])) * 60
+                if time.time() - last_full >= interval:
+                    self.check()
+                    last_full = time.time()
 
         self._thread = threading.Thread(target=loop, daemon=True, name="planrouter-reminder")
         self._thread.start()
