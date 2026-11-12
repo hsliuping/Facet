@@ -54,14 +54,18 @@
   - [VS Code / Cursor / Zed（通用 OpenAI SDK）](#72vs-code--cursor--zed通用-openai-sdk)
   - [Python SDK 快速示例](#73python-sdk-快速示例)
   - [Docker 里也要用？](#74docker-里也要用)
-  - [三种内置别名：facet-auto / facet-cheap / facet-agent](#741-三种内置别名facet-auto--facet-cheap--facet-agent)
-  - [Claude Code（CLI Agent）](#75claude-codecli-agent)
-  - [Cline / Roo Code（VS Code 插件 Agent）](#76cline--roo-codevs-code-插件 agent)
-  - [OpenHands / Devika / Devin（开源 DevAgent）](#77openhands--devika--devin开源 devagent)
-  - [Windsurf / Zed / Cursor（AI 原生编辑器）](#78windsurf--zed--cursorai-原生编辑器)
-  - [LangChain / LlamaIndex（Python Agent 框架）](#79langchain--llamaindexpython-agent-框架)
-  - [LangGraph / AutoGen / CrewAI（多 Agent 框架）](#710langgraph--autogen--crewaimulti-agent-框架)
-  - [故障排查](#711-故障排查)
+  - [内置别名：facet-auto / facet-cheap / facet-free / facet-agent](#741-内置别名facet-auto--facet-cheap--facet-free--facet-agent)
+  - [DSH（DeepSeek CLI）PlanRouter 集成](#75-dshdeepseek-cli-planrouter-集成)
+  - [OpenCode（AI coding CLI）自定义模型配置](#76-opencodeai-coding-cli自定义模型配置)
+  - [CodeBuddy Code CLI 自定义模型配置](#77-codebuddy-code-cli-自定义模型配置)
+  - [CodeBuddy（插件/IDE）自定义模型配置](#78-codebuddy插件ide自定义模型配置)
+  - [Claude Code（CLI Agent）](#79claude-codecli-agent)
+  - [Cline / Roo Code（VS Code 插件 Agent）](#710cline--roo-codevs-code-插件-agent)
+  - [OpenHands / Devika / Devin（开源 DevAgent）](#711openhands--devika--devin开源-devagent)
+  - [Windsurf / Zed / Cursor（AI 原生编辑器）](#712windsurf--zed--cursorai-原生编辑器)
+  - [LangChain / LlamaIndex（Python Agent 框架）](#713langchain--llamaindexpython-agent-框架)
+  - [LangGraph / AutoGen / CrewAI（多 Agent 框架）](#714langgraph--autogen--crewaimulti-agent-框架)
+  - [故障排查](#715-故障排查)
 - [八、附录：端点与协议速查表](#八附录端点与协议速查表)
 - [九、控制台观测：免费池与缓存率](#九控制台观测免费池与缓存率)
   - [免费池：哪些模型真的会被调用](#91-免费池哪些模型真的会被调用)
@@ -725,7 +729,7 @@ Claude Code / Codex 的订阅额度转成 API 供网关调用。它们不填官�
 3. 保存后点 **测试**（或发一条只问两个字的短消息），应能看到回复。
 
 **注意**：
-- 选 `facet-auto` 时会落到任意健康渠道，我刚才实测落到只会输出 `reasoning`、内容空白的免费模型；如果看到 Trae 不回答，请把模型名改成**具体渠道模型**，如 `deepseek-flash`。
+- `facet-auto` 按 `default` 链顺序调度（付费优先、`$free` 免费兜底）；如果看到 Trae 不回答（链上模型能力不匹配），请把模型名改成**具体渠道模型**（如 `deepseek-flash`）或 `facet-agent`。
 - Trae 的 Agent 模式强依赖 tool calling；不少免费上游不支持 tools → 会 400。建议把支持 tools 的渠道模型（例如 DeepSeek 组、GPT-5 等）作为首选。
 - 远程/容器部署时，Base URL 的 IP 要换成宿主机 LAN IP，并确保 8787 可访问。
 
@@ -780,15 +784,25 @@ print(chat.choices[0].message.content)
 
 然后在代码里把 `base_url` 改为 `http://host.docker.internal:8787/v1`。
 
-### 7.4.1 三种内置别名：`facet-auto` / `facet-cheap` / `facet-agent`
+### 7.4.1 内置别名：`facet-auto` / `facet-cheap` / `facet-free` / `facet-agent`
 
-Facet 网关提供三个可直接填进工具「模型名」框的内置别名：
+Facet 网关提供四个可直接填进工具「模型名」框的内置别名：
 
 | 模型名 | 含义 | 适用场景 |
 |--------|------|----------|
-| `facet-auto` | 在 `default` 链上挑任意健康渠道 | 普通对话、单轮问答 |
+| `facet-auto` | 在 `default` 链上按链序挑健康渠道（当前默认部署：火山两个付费套餐 → deepseek → `$free` 免费兜底，即**付费优先**） | 普通对话、单轮问答 |
 | `facet-cheap` | 在 `cheap` 链上挑最便宜的（通常全是免费） | 大批量补全、闲聊 |
+| `facet-free` | 只走 `free` 链——`$free` 宏自动展开的全部启用免费渠道，**付费渠道永远不会被调用** | 免费额度优先的批量任务 |
 | **`facet-agent`** | **只挑「支持 tool calling」的模型**（免费优先，自动剔除已冷却）；具体落到哪个由网关运行时决定 | **Cline / Claude Code / OpenHands / LangGraph / 任意需要 function calling 的 Agent 工具** |
+
+**别名 = 路由链的快捷方式**
+
+内置别名只是「别名 → 链名」的映射：`facet-auto`→`default`、`facet-cheap`→`cheap`、`facet-free`→`free`、`facet-agent`→`default`（agent 模式挑选）。**链的排列顺序决定别名行为**：在控制台「渠道配置 → 路由链」重排 `default` 链，就能切换 `facet-auto` 的付费/免费优先级；想「纯免费、不碰付费」，直接用 `facet-free`，无需改链。
+
+两点注意：
+
+- 请求走 Anthropic 端点（`/v1/messages`）时，`facet-free` 找的是 Anthropic 协议的 `free` 链，没有则回退该协议的 `default` 链。`$free` 宏只在协议下确实存在启用的免费渠道时才有意义，因此 Facet 不会创建空的 Anthropic 免费链；
+- 想要自己的别名，在控制台 `models.branded` 里加 `名字=链名` 即可（如 `fast=cheap`）；也可直接写 `auto:链名` / `facet:链名` 形式的临时别名（如 `auto:cheap`）。
 
 **为什么要有 `facet-agent`？**
 
@@ -808,6 +822,193 @@ curl -H "Authorization: Bearer $ROUTER_API_KEY" \
   http://127.0.0.1:8787/v1/chat/completions -i
 ```
 
+---
+
+### 7.5 DSH（DeepSeek CLI）PlanRouter 集成
+
+访问地址：[planrouter-dsh-integration.md](planrouter-dsh-integration.md) 详细文档。
+
+**配置入口**：DSH 的配置分三层：bundle 默认 → `cordis.yml` → 用户的 `cordis.patch.yml`（顶层 YAML 数组，id 定向 patch）。我们只需写 patch 层，模板升级时不会被冲。
+
+**配置步骤**：
+
+1. **安装**：`npm install -g @deepseek-ai/dsh@latest --registry=https://registry.npmjs.org`
+2. **创建两个 profile**（跑命令行 headless 和 Web UI 两种场景）：
+
+   ```bash
+   dsh --profile planrouter     --from-default-profile web
+   dsh --profile planrouter-web --from-default-profile web
+   ```
+
+   生成在 `~/.dsh/profiles/<name>/`，各含 `package.json`、`cordis.yml`、`cordis.patch.yml`。
+
+3. **换 bundle（headline profile）**：编辑 `~/.dsh/profiles/planrouter/package.json`：
+
+   ```json
+   {
+     "name": "dsh-profile-planrouter",
+     "private": true,
+     "dependencies": {},
+     "dsh": {
+       "profile": {
+         "bundles": [
+           "@deepseek-ai/dsh-base",
+           "@deepseek-ai/dsh-headless"
+         ]
+       }
+     }
+   }
+   ```
+
+4. **写 patch 层**：两个 profile 的 `cordis.patch.yml` 内容相同（实测可用）：
+
+   ```yaml
+   # Your patch layer for this dsh profile, applied after every bundle layer:
+   # a top-level YAML array of loader patch entries (id-targeted config
+   # overrides, disables, and insert lists; `!!js` expressions allowed).
+   
+   # PlanRouter gateway integration:
+   # - provider "planrouter" points at the local gateway (OpenAI Chat Completions).
+   # - apiKeyEnv reuses the same ROUTER_API_KEY the gateway itself authenticates
+   #   with; no secret is copied into this file.
+   # - compat flags request the most conservative wire shape (system role,
+   #   max_tokens) so heterogeneous free-tier upstreams all accept the request.
+   # - agent-default-model makes every new session default to facet-auto.
+   - id: agent-default-model
+     config:
+       provider: planrouter
+       model: facet-auto
+   - id: llm-pi-ai
+     config:
+       providers:
+         planrouter:
+           apiKeyEnv: ROUTER_API_KEY
+           api: openai-completions
+           baseURL: http://127.0.0.1:8787/v1
+           compat:
+             supportsDeveloperRole: false
+             maxTokensField: max_tokens
+           models:
+             - id: facet-auto
+             - id: facet-cheap
+   ```
+
+5. **启动与验证**：
+
+   - Headless：`dsh --profile planrouter "只输出 PLANROUTER_OK 五个字母，不要做任何别的事"`
+   - Web UI：`dsh --profile planrouter-web`，启动后打开浏览器访问日志里的一次性 token 地址。
+
+   **验证要点**：
+   - 网关侧必须检查：free-tier 渠道的 `auto` 映射不能是占位符 `REPLACE_WITH_A_FREE_MODEL_ID`，建议实测用 `nvidia/nemotron-3.5-lightning:free`；`defaults.max_failover` 建议至少 5。
+   - DSH 与网关共用环境变量 `ROUTER_API_KEY`，密钥不落任何文件。
+   - 两个 Windows 特有坑：用 `dsh.cmd` 而不是 `dsh`；受限后台进程启动会 `EPERM`，建议先前台验证再按 `Start-Process` 脱离。
+
+---
+
+### 7.6 OpenCode（AI coding CLI）自定义模型配置
+
+**配置文件**：项目根目录 `opencode.json`（或 `~/.config/opencode/opencode.json`）。
+
+**配置示例**（可直接复制到 `providers` 区块）：
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "planrouter": {
+      "name": "PlanRouter",
+      "env": ["ROUTER_API_KEY"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "http://127.0.0.1:8787/v1" },
+      "models": {
+        "deepseek-flash": { "name": "deepseek-flash" },
+        "facet-auto":     { "name": "facet-auto" }
+      }
+    }
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 显示名称，在 `/models` 时可见 |
+| `env` | 提供凭据的环境变量名；`ROUTER_API_KEY` 与网关 key 共用，不落文件 |
+| `package` | 运行时提供包，固定为 `@opencode/ai/providers/openai-compatible` |
+| `settings.baseURL` | 网关根路径，带 `/v1`，如 `http://127.0.0.1:8787/v1` |
+| `models.<id>` | 可用模型列表，任意 ID 皆可，会在 `/models` 列表中出现 |
+
+**使用方法**：
+
+1. 保存上述 JSON 到 `opencode.json`；
+2. 启动 OpenCode：`opencode`；
+3. 通过 `/models` 查看可选模型，或直接 `/model deepseek-flash` 切换；
+4. 会话内 `/model` 可随时切换。
+
+**注意**：凭据通过 `env` 读取环境变量，切记不要在 `opencode.json` 写明文 Key，改用 `env:ROUTER_API_KEY` 并在操作系统层面设置 `set ROUTER_API_KEY=<value>`（Windows）或 `export ROUTER_API_KEY=<value>`（macOS/Linux）。
+
+---
+
+### 7.7 CodeBuddy Code CLI 自定义模型配置
+
+**配置文件**：`~/.codebuddy/models.json`（用户级）或项目根目录 `.codebuddy/models.json`（项目级，优先级高于用户级）。
+
+**配置示例**（以大模型 `hy3` 为例，可直接复制并修改 id/name/url/apiKey）：
+
+```json
+{
+  "models": [{
+    "id": "hy3",
+    "name": "hy3 (PlanRouter)",
+    "vendor": "Custom",
+    "url": "http://127.0.0.1:8787/v1",
+    "apiKey": "<网关密钥>",
+    "supportsToolCall": true,
+    "supportsImages": false
+  }],
+  "availableModels": ["hy3"]
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 大模型 ID，在模型选择器中引用 |
+| `name` | 模型显示名称 |
+| `vendor` | 厂商标识，`Custom` 表示自定义 |
+| `url` | Base URL，PlanRouter 网关固定为 `http://127.0.0.1:8787/v1` |
+| `apiKey` | 调用密钥，建议通过操作系统环境变量 `ROUTER_API_KEY` 注入，不落文件 |
+| `supportsToolCall` | 是否支持函数调用（建议设为 `true`，兼容 Agent 工具） |
+| `supportsImages` | 是否支持多模odal（按实际情况填写） |
+
+**使用方法**：
+
+1. 保存上述 JSON 到 `~/.codebuddy/models.json`（或项目根 `.codebuddy/models.json`）；
+2. 启动 CodeBuddy Code：`codebuddy`；
+3. 通过 `/model hy3` 切换到对应模型，或在交互中使用 `/model` 命令；
+4. 也可直接启动：`codebuddy --model hy3`。
+
+**常见错误**：
+
+| 报错 | 解决方法 |
+|------|----------|
+| `404`：未找到模型 | 检查 `url` 字段是否正确，PlanRouter 网关固定 `http://127.0.0.1:8787/v1` |
+| `401`：认证失败 | `apiKey` 错误或未设置环境变量 `ROUTER_API_KEY`，确保已设置且不为空 |
+| 模型列表中看不到 | 确认 `availableModels` 数组中包含该模型 ID，且已保存文件 |
+
+---
+
+### 7.8 CodeBuddy（插件/IDE）自定义模型配置
+
+> 此节参见 [CodeBuddy 插件/IDE 配置文档](https://docs.cloudbase.net/ai/ai-tools/codebuddy) 中的「通过配置文件配置」章节。核心步骤与 CodeBuddy Code 一致，配置文件路径为：
+> - Windows：`C:\Users\<你的用户名>\.codebuddy\models.json`
+> - Mac/Linux：`~/.codebuddy/models.json`
+> 格式同上（`id`/`name`/`vendor`/`url`/`apiKey` 三选二即可），但 `availableModels` 建议保留以利模型列表展示。
+
+> **快捷方式**：界面中选择「配置自定义模型」→ 填写 AI 控制台复制的 Base URL / API Key / 模型名，保存后重启 CodeBuddy 面板即可生效。
+
 响应头里应该能看到：
 
 ```
@@ -823,7 +1024,7 @@ X-Routed-Via: <某个渠道>/<具体模型>
 
 > 旧说明里曾建议「手动指定 deepseek-v4-pro / GPT-5 等具体名字」。现在直接用 `facet-agent` 即可——只有当你想锁定一个特定付费模型时才需要写具体名。
 
-### 7.5 Claude Code（CLI Agent）
+### 7.9 Claude Code（CLI Agent）
 
 Claude Code 本身支持订阅桥，如果你想让它通过 Facet 路由：
 
@@ -843,7 +1044,7 @@ claude --model facet-agent
 
 📷 **截图 7-2**｜拍什么：终端运行 Claude Code + 输出显示调用成功｜存为：`claude-code-01-run.png`
 
-### 7.6 Cline / Roo Code（VS Code 插件 Agent）
+### 7.10 Cline / Roo Code（VS Code 插件 Agent）
 
 Cline 和 Roo Code 都是 VS Code 里最火的 Agent 插件，都支持自定义 OpenAI 兼容端点：
 
@@ -879,7 +1080,7 @@ Cline 和 Roo Code 都是 VS Code 里最火的 Agent 插件，都支持自定义
 
 📷 **截图 7-3**｜拍什么：Cline/Roo Code 设置页面（端点与模型名清晰可见）｜存为：`cline-01-config.png`
 
-### 7.7 OpenHands / Devika / Devin（开源 DevAgent）
+### 7.11 OpenHands / Devika / Devin（开源 DevAgent）
 
 这类 DevAgent 通常需要：
 
@@ -904,7 +1105,7 @@ llm:
   function_calling: true   # 一定要开
 ```
 
-### 7.8 Windsurf / Zed / Cursor（AI 原生编辑器）
+### 7.12 Windsurf / Zed / Cursor（AI 原生编辑器）
 
 这些新一代编辑器都有内置 AI，配置类似 Trae：
 
@@ -933,7 +1134,7 @@ llm:
 
 📷 **截图 7-4**｜拍什么：Cursor 的 AI 配置页｜存为：`cursor-01-config.png`
 
-### 7.9 LangChain / LlamaIndex（Python Agent 框架）
+### 7.13 LangChain / LlamaIndex（Python Agent 框架）
 
 如果你用自己的 Agent 代码，Facet 可以作为后端统一切换上游：
 
@@ -991,7 +1192,7 @@ response = llm.chat([ChatMessage(role="user", content="hi")])
 print(response.message.content)
 ```
 
-### 7.10 LangGraph / AutoGen / CrewAI（多 Agent 框架）
+### 7.14 LangGraph / AutoGen / CrewAI（多 Agent 框架）
 
 多 Agent 框架对 tool calling 的要求更高。**直接用 `facet-agent`**——网关会自动从所有渠道目录里挑一个 registry 标记为「支持工具调用」的模型（免费优先，已冷却的自动剔除）。只有当 `facet-agent` 返回 tool_call 失败时，才需要退一步填具体模型名。
 
@@ -1025,7 +1226,7 @@ user_proxy = ConversableAgent("user", human_input_mode="NEVER")
 user_proxy.initiate_chat(assistant, message="Write a hello world python")
 ```
 
-### 7.11 故障排查
+### 7.15 故障排查
 
 | 症状 | 可能原因 | 处置 |
 |---|---|---|
@@ -1134,6 +1335,7 @@ user_proxy.initiate_chat(assistant, message="Write a hello world python")
 
 | 日期 | 变动 |
 |---|---|
+| 2026-11-11 | 7.4.1 扩为「内置别名」四种：新增 **`facet-free`**（`free` 链，纯免费不碰付费渠道）；说明 `facet-auto` 语义由链序决定（当前默认部署付费优先：火山 Agent/Coding 套餐 → deepseek → `$free` 免费兜底）；配置新增 `openai:free` 路由链；新增 7.5–7.8（DSH / OpenCode / CodeBuddy Code CLI / CodeBuddy 插件），原 7.5–7.11 顺延为 7.9–7.15 |
 | 2026-11-10 | 新增第七章「在 Trae / IDE 里使用 Facet」及第八章端点速查；补充容器 host 与常见 401/200 空白问题；**扩充分支**：Claude Code、Cline/Roo Code、OpenHands/Devika、Windsurf/Zed/Cursor、LangChain/LlamaIndex、LangGraph/AutoGen/CrewAI 共 9 个流行框架的配置示例，并强化 Agent tool calling 注意事项 |
 | 2026-11-10 | 新增 7.4.1 「三种内置别名」章节，说明 `facet-auto` / `facet-cheap` / **`facet-agent`** 的区别与适用场景；同步把 Claude Code / Cline / Roo Code / LangChain / OpenHands 的示例模型名统一改为 `facet-agent`，并说明响应头 `X-Routed-Model-Mode: agent` 的验证方式 |
 | 2026-11-10 | 新增 2.1「密钥为什么填在渠道上」与 2.2「同一账号开通多个套餐怎么配」，讲清「账号 × 套餐 = 一个渠道」与订阅只记账号/套餐/到期；4.1 补火山 Agent 套餐双协议端点（`/api/plan/v3`、`/api/plan`）与专属 Key 说明；附录同步；新增第九章「控制台观测：免费池与缓存率」，解释 `routable` 判定、`skip_reason` 与缓存率口径，消除「测验通过≠被调用」「无缓存字段≠0%」等误会 |
