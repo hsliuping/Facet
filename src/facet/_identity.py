@@ -23,7 +23,9 @@ def build_lookup(table: dict) -> dict[str, str]:
     """normalized name -> table key. Canonical keys first, then aliases."""
     lookup: dict[str, str] = {}
     for key, rec in table["models"].items():
-        bare = key.split("/", 1)[1]
+        # Some keys (e.g. embedding models) carry no "provider/" prefix;
+        # [-1] keeps those resolving instead of raising IndexError.
+        bare = key.split("/", 1)[-1]
         lookup.setdefault(identity(bare), key)
         for alias in rec.get("aliases", []):
             lookup.setdefault(identity(alias), key)
