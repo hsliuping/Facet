@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit
 from . import facts as facts_mod
 from . import providers as providers_mod
 from . import dsh as dsh_mod
+from . import keys as keys_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -409,8 +410,31 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
 
     if path == "/api/keys" and method == "GET":
         rows = app.keys.list() if app.keys else []
-        # Reuse the per-channel usage shape for a compact recent-activity hint.
-        _json(h, 200, {"keys": rows})
+        _json(h, 200, {"keys": rows,
+                       "master": app.config.listen.api_key,
+                       "master_enabled": bool(app.config.listen.api_key_enabled)})
+        return True
+
+    if path == "/api/master-key" and method == "POST":
+        try:
+            body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+            action = str(body.get("action") or "rotate")
+            admin = str(body.get("admin_key") or "")
+            if action == "pause":
+                app.set_master_key_enabled(False, admin)
+            elif action == "enable":
+                app.set_master_key_enabled(True, admin)
+            elif action == "rotate":
+                app.rotate_master_key(str(body.get("key") or ""), admin)
+            else:
+                raise ValueError("action must be pause, enable or rotate")
+        except (ValueError, OSError) as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, {"api_key": app.config.listen.api_key,
+                           "enabled": bool(app.config.listen.api_key_enabled)})
         return True
 
     if path == "/api/keys" and method == "POST":
@@ -425,14 +449,25 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 200, record)
         return True
 
-    if path == "/api/keys/revoke" and method == "POST":
+    if path in ("/api/keys/enable", "/api/keys/revoke", "/api/keys/delete", "/api/keys/pause") and method == "POST":
+        action = path.rsplit("/", 1)[-1]
         try:
             incoming = json.loads(raw) if raw else {}
-            done = app.keys.revoke(str(incoming.get("key") or "")) if app.keys else False
+            target = str(incoming.get("key") or "")
+            if not app.keys:
+                done = False
+            elif action == "enable":
+                done = app.keys.enable(target)
+            elif action == "delete":
+                done = app.keys.delete(target)
+            elif action == "pause":
+                done = app.keys.pause(target)
+            else:
+                done = app.keys.revoke(target)
         except (ValueError, OSError) as exc:
             _json(h, 400, {"error": {"message": str(exc)}})
         else:
-            _json(h, 200, {"revoked": bool(done)})
+            _json(h, 200, {action + "d": bool(done)})
         return True
 
     if path == "/api/notifications" and method == "GET":
@@ -586,7 +621,8 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise ValueError("body must be an object")
-            key = app.rotate_admin_key(str(body.get("key") or ""))
+            key = app.rotate_admin_key(str(body.get("key") or ""),
+                                       str(body.get("old_key") or ""))
         except ValueError as exc:
             _json(h, 400, {"error": {"message": str(exc)}})
             return True
@@ -759,6 +795,33 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             return True
         removed = app.reset_scores(channel, wire)
         _json(h, 200, {"ok": True, "removed": removed})
+        return True
+
+    if path == "/api/setup/wizard" and method == "POST":
+        incoming = {}
+        if raw:
+            try:
+                incoming = json.loads(raw)
+            except ValueError:
+                incoming = {}
+        if not isinstance(incoming, dict):
+            incoming = {}
+        done = incoming.get("done")
+        router_path = Path(app.config_path or "router.json")
+        router_path.parent.mkdir(parents=True, exist_ok=True)
+        if router_path.exists():
+            existing = json.loads(router_path.read_text(encoding="utf-8"))
+        else:
+            existing = {}
+        # Ensure setup dict exists and mark wizard_done
+        existing.setdefault("setup", {})
+        if done is True:
+            existing["setup"]["wizard_done"] = True
+        router_path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _json(h, 200, {"ok": True, "wizard_done": existing["setup"].get("wizard_done")})
         return True
 
     if path == "/api/cu-credentials" and method in ("GET", "POST"):

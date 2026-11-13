@@ -68,6 +68,40 @@ class KeyStore:
                     return True
         return False
 
+    def enable(self, key: str) -> bool:
+        """Re-enable a paused key; True only when it flipped this call."""
+        with self.lock:
+            for record in self.records:
+                if hmac.compare_digest(record["key"], str(key or "")):
+                    if record.get("enabled"):
+                        return False
+                    record["enabled"] = True
+                    self._write()
+                    return True
+        return False
+
+    def delete(self, key: str) -> bool:
+        """Remove a key record permanently; True when one was removed."""
+        with self.lock:
+            for index, record in enumerate(self.records):
+                if hmac.compare_digest(record["key"], str(key or "")):
+                    del self.records[index]
+                    self._write()
+                    return True
+        return False
+
+    def pause(self, key: str) -> bool:
+        """Pause a key (set enabled=False); True only when it flipped this call."""
+        with self.lock:
+            for record in self.records:
+                if hmac.compare_digest(record["key"], str(key or "")):
+                    if not record.get("enabled"):
+                        return False
+                    record["enabled"] = False
+                    self._write()
+                    return True
+        return False
+
     def match(self, provided: str) -> str | None:
         """Member name when `provided` is an active key, else None."""
         if not provided or not provided.startswith(KEY_PREFIX):
