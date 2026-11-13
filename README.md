@@ -1,333 +1,304 @@
-﻿# Facet
+# Facet
 
-**English** | [绠€浣撲腑鏂嘳(https://github.com/hsliuping/Facet/blob/main/README.zh-CN.md)
+**Facet 是一个自维护的 LLM 免费额度聚合网关：把你手里各家厂商的免费额度聚合成一个 OpenAI / Anthropic 兼容端点，并每天自己探测、修复、汇报。**
 
-**Facet is a self-maintaining LLM gateway over free-tier quotas 鈥?with a model facts table as its data layer.**
+> Facet 最初是一张"模型事实表"。它现在长成了完整的产品：**网关是主体**，事实表退居为配套的数据层（见文末）。
 
-**Facet 鍥炵瓟涓や釜闂锛?杩欎釜浠诲姟璇ョ敤鍝釜妯″瀷锛?锛堜簨瀹炶〃锛変笌"杩欎釜妯″瀷鐜板湪鑳藉厤璐硅窇鍚楋紵"锛堣嚜缁存姢缃戝叧锛夈€?*
+## 为什么需要它
 
-`facet serve` starts a local OpenAI-compatible gateway that aggregates free-tier
-quotas from major vendors and keeps its channel directory fresh on its own 鈥?probes, repairs, reports; an AI SRE for your LLM infrastructure. Alongside it
-ships the **facts table** it is named after: one JSON file describing the
-capabilities, limits, and prices of ~2,400 models across 217 providers
-(`pip install facet-models`, zero dependencies). Your project reads the table,
-applies its own business rules, and picks a model.
+免费额度很散：智谱、火山引擎、阿里百炼、魔搭、NVIDIA NIM、OpenRouter `:free`、Pollinations……每家协议不同、密钥不同、限额规则不同，逐家接入、逐家盯梢的成本远超额度本身的价值。
 
-```
-models.dev (primary, 217 providers)   OpenRouter /api/v1/models (secondary)
-        鈹?                                       鈹?        鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ weekly sync 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?                        鈹? tools/sync_models_dev.py
-                        鈻?registry/model-registry.json   鈫?the deliverable: one file, < 1 MB, zero deps
-        鈹?        鈹溾攢鈹€ your service (fetch the JSON, filter, decide)
-        鈹斺攢鈹€ examples/pick_model.py (reference consumer / demo)
-```
+这尤其是个人和小团队的日常：额度自己申请、agent 自己写、没有平台团队替你
+盯渠道。企业级网关（要配数据库、集群、专职运维）在这个量级上是杀鸡用牛刀。
 
-## One wheel, two layers
+Facet 把它们收敛成三件事：
 
-The package ships both layers; there is one command family.
+- **一个端点、一把密钥**——下游 agent 只接 Facet，不必逐家对接；
+- **一个控制台**——渠道、路由、请求日志、配额、维护，全在浏览器里；
+- **一套自动运维**——探测、冷却、目录修复、维护报告，按周期自动跑。
 
-| Layer | Owns | Lives in |
-|---|---|---|
-| **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` 鈫?bundled snapshot |
-| **Gateway** (runtime) | channels, routes, the free pool, daily self-maintenance | `src/facet/gateway/` |
+## 特点
 
-The bridge between them:
+- **适合个人和小团队**——单进程、单配置文件、状态与日志全部落盘为普通
+  文件：无数据库、无外部中间件，一个 Python 进程或一个容器就是全部部署，
+  一台最小的机器即可自托管。
+- **零依赖**——纯 Python 标准库实现，`pip` 装完即用，不拖任何第三方运行时包。
+- **零配置可跑**——没有 `router.json` 也能启动：自动种子化匿名渠道 + 免费层
+  模板渠道，进控制台填 key 就能用。
+- **双协议全兼容**——OpenAI 与 Anthropic 两套 API 同端口并存，下游改个
+  `base_url` 就完成迁移。
+- **品牌模型名**——`facet-auto` / `facet-cheap` / `facet-free` / `facet-agent`
+  / `facet-embedding`，语义即路由，下游不感知任何上游模型 id。
+- **自维护**——每天自动探测冷却渠道、修复目录漂移、刷新厂家清单，产出
+  「已应用 / 建议 / 告警」三桶报告，绝不自动应用未经目录确认的变更。
+- **免费优先**——免费池答题验证队列、`$free` 宏、免费渠道轮转；维护调用
+  绝不烧付费额度。
+- **全程可追溯**——每次选型打印一行 `[route]` 日志：mode / reason / sticky /
+  rotate / lb / picked，决策过程完整可复盘。
+- **状态可恢复**——冷却、粘滞、负载均衡打分与按天用量全部落盘，重启不丢。
 
-- **Name resolution** 鈥?`facet/gateway/facts.py` maps well-known names to
-  canonical keys, read-only, stdlib-only, and degrades to "unavailable" if
-  the snapshot is missing. The gateway's *routing* still runs purely on what
-  its maintenance layer observes; routing never depends on table freshness.
-- **`quota_tier`** 鈥?manual annotations (`registry/manual-overrides.json`)
-  seed onboarding (`facet --free`). Zero-key start is built in: `facet serve`
-  with no `router.json` auto-generates a seed config (anonymous Pollinations
-  plus disabled free-tier templates) and starts serving. Maintenance
-  probe results only ever *suggest* updates to this file; the sync never
-  auto-fills it.
+## 功能清单
 
-```
-facet "glm-5.3"            # facts: resolve + show one model
-facet --free --tools ...   # facts: filter the table
-facet serve                # gateway: start the self-maintaining proxy
-facet.gateway                 # deprecated alias of `facet serve`
-```
+| 类别 | 功能 |
+|---|---|
+| API 端点 | OpenAI 兼容：`/v1/chat/completions`、`/v1/completions`、`/v1/responses`、`/v1/embeddings`、`/v1/rerank`、`/v1/audio/speech`、`/v1/audio/transcriptions`、`/v1/audio/translations`；Anthropic 兼容：`/v1/messages`、`/v1/messages/count_tokens`（本地估算，不调上游）；`GET /v1/models` |
+| 流式 | SSE 流式透传（chat 与 messages） |
+| 路由 | `(protocol, hint) → 渠道链`；品牌名映射；`default` 回退；`$free` 宏；同优先级轮转 |
+| 负载均衡 | `order` 链式 / `weighted` 打分（成功率 + 错误 + 延迟 EWMA）；会话粘滞 30 分钟 |
+| 容错 | 配额/错误触发冷却；HealthProber 指数退避探活（30s → 300s）；额度恢复自动复活 |
+| 自我维护 | 每日目录刷新、自动修复（先备份）、订阅/厂家清单刷新、LLM 顾问意见、三桶报告、维护 API |
+| 免费池 | tier=free 渠道捐候选、合成测验验证、复验除名、冷却兜底 |
+| 控制台 | 渠道/路由编辑、API Key 与管理员密钥管理、请求日志、维护日志、接入文档、热加载 |
+| 认证 | 多成员 API Key、管理员密钥、`env:VAR` 密钥引用（明文不落配置） |
+| 运营 | 按天用量统计、订阅到期提醒、通知投递、请求审计日志（`requests.jsonl`）、渠道出站代理 |
 
-## Why a facts table under the gateway?
+## 安装
 
-- The gateway's routing policy is ours and visible; your selection rules are
-  still yours. A JSON file is data 鈥?fetch it, vendor it, or copy the fields
-  you need.
-- Facts change weekly (prices, limits, new models). Policy changes daily. We
-  ship the part that changes weekly; the gateway adapts on its own.
-- The same table powers name resolution 鈥?what `gpt-4o` actually resolves to
-  among today's free tiers. `quota_tier` is the join key between layers.
-
-## The table
-
-`registry/model-registry.json` 鈥?keyed `provider/model_id`, one record per
-model identity, deduped across providers (aggregator copies lose to
-first-party ones; ties prefer richer records).
-
-| Field | Meaning | Notes |
-|---|---|---|
-| `provider` | endpoint owner (e.g. `openai`, `volcengine`) | the only mandatory field |
-| `aliases` | other names for the same model, incl. aggregator spellings | name matching ignores case, dots, hyphens: `glm-5.3` = `glm5.3` = `GLM5.3` |
-| `context_window`, `max_output` | token limits | |
-| `tool_call`, `reasoning`, `structured_output`, `attachment` | capability booleans | |
-| `modalities` | `{"input": [...], "output": [...]}` | |
-| `open_weights` | weights publicly available | |
-| `cost` | `{"input_per_mtok", "output_per_mtok", "cache_read_per_mtok"}` | **USD per MTok, always** |
-| `quota_tier` | `free_forever` / `free_daily` / `paid` | manual, never auto-filled (major free-tier vendors pre-seeded) |
-| `release_date`, `last_updated` | `YYYY-MM-DD` or `YYYY-MM` | freshness hints |
-| `family` | model family | |
-| `quality_hint` | 1-5 subjective prior | the ONLY subjective field, manual |
-
-### Hard rules
-
-1. **Single file < 1 MB.**
-2. **ABSENT == null.** Unknown facts are omitted (never `null` in the file,
-   never a default). Consumers use `.get()` and treat absence as unknown.
-3. **Facts only** 鈥?except `quality_hint`, which is clearly marked subjective
-   and ignorable.
-4. **USD per MTok, always.** Any other currency/unit never enters the table.
-5. **Fields are append-only.** Semantics never change within a
-   `schema_version`; breaking changes bump it. Consumers ignore unknown
-   fields.
-
-The full standard: [schema/model-registry.schema.json](https://github.com/hsliuping/Facet/blob/main/schema/model-registry.schema.json).
-
-## Consume it
-
-Fetch the JSON from this repo (raw URL / CDN) at whatever cadence you like,
-then decide with your own rules:
-
-```python
-import json, urllib.request
-
-table = json.load(urllib.request.urlopen(
-    "https://raw.githubusercontent.com/hsliuping/Facet/main/registry/model-registry.json"))
-
-candidates = [
-    (key, rec) for key, rec in table["models"].items()
-    if (rec.get("context_window") or 0) >= 200_000          # absent == unknown
-    and rec.get("tool_call") is True
-    and "image" in (rec.get("modalities") or {}).get("input", [])
-    and (rec.get("cost") or {}).get("output_per_mtok", 1e9) <= 2.0
-]
-```
-
-Or try the demo (stdlib only):
+需要 Python 3.10+。网关与事实表都是纯标准库实现，**零第三方依赖**。
 
 ```bash
-python examples/pick_model.py --min-context 200000 --tools --image-input --limit 5
-python examples/pick_model.py claude-sonnet-4.5      # resolve one model + aliases
+pip install facet-models     # PyPI 包名沿用历史名，装出来的命令是 facet
 ```
 
-## Install (pip)
-
-The same read 鈫?resolve 鈫?find logic ships as a tiny package with **zero
-runtime dependencies** (stdlib only):
+或从源码安装：
 
 ```bash
-pip install facet-models
+git clone https://github.com/hsliuping/Facet && cd Facet
+pip install -e .
 ```
+
+容器部署见下文[「Docker 部署」](#docker-部署)。
+
+## 快速开始
+
+```bash
+facet serve                  # 默认监听 127.0.0.1:8787
+```
+
+- **零密钥首启**：没有 `router.json` 时自动生成种子配置（匿名 Pollinations
+  渠道 + 一组禁用的免费层模板渠道）并直接启动。
+- 浏览器打开 `http://127.0.0.1:8787/` 进入控制台；管理员密钥默认 `admin`，
+  首次登录后在「管理密钥」里换掉。
+- 在渠道页给模板渠道填入各厂家的 key 并启用，保存后即可路由。
+
+用 curl 验证（`facet-free` 只走免费渠道，同优先级轮转）：
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H "Authorization: Bearer <listen.api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "facet-free", "messages": [{"role": "user", "content": "你好"}]}'
+```
+
+常用检查：
+
+```bash
+curl http://127.0.0.1:8787/health        # 健康与渠道冷却状态
+curl http://127.0.0.1:8787/stats         # 用量统计
+curl http://127.0.0.1:8787/v1/models     # 网关侧模型清单
+facet serve --check                      # 校验配置、打印路由链，不启动服务
+```
+
+## Docker 部署
+
+```bash
+docker compose up -d         # 控制台 http://localhost:8787（ROUTER_PORT 可改）
+```
+
+- 首次运行自带一个 mock 假上游做冒烟测试（`ROUTER_SEED=example`）。真实使用
+  时：停掉服务 → 删除 `./data/router.json` → 去掉该环境变量，下次启动会
+  种子化厂家预置渠道，随后删掉 compose 里的 `mock` 服务即可。
+- 配置、状态、日志都落在宿主机 `./data/`（bind mount）。改了
+  `./data/router.json` 后 `POST /api/reload` 热加载，或直接在控制台编辑。
+- 密钥经环境变量注入：`ROUTER_API_KEY`、`ROUTER_ADMIN_KEY`；火山引擎 IAM
+  AK/SK 用 `VOLC_ACCESSKEY` / `VOLC_SECRETKEY`（也可在控制台渠道编辑器里填，
+  UI 配置优先）。
+
+## 服务化运行
+
+`facet serve` 的完整参数：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--config` | `router.json` | 渠道配置文件路径 |
+| `--host` / `--port` | `127.0.0.1:8787` | 监听地址；绑非回环地址必须配 `listen.api_key` |
+| `--check` | — | 校验配置并打印路由链后退出，不启动服务 |
+| `--keys-file` | 配置旁 `keys.json` | 成员 API key 存储 |
+| `--state-file` | 配置旁 `router.state.json` | 冷却与负载均衡状态（重启恢复） |
+| `--usage-file` | 配置旁 `usage.json` | 按天用量 |
+| `--audit-file` | 配置旁 `requests.jsonl` | 请求路由审计日志 |
+| `--subscriptions` | 配置旁 `subscriptions.json` | 订阅套餐记录（到期提醒） |
+| `--notifications-file` | 配置旁 `notifications.json` | 提醒投递记录 |
+
+## 认证
+
+- **`listen.api_key`**——调用 `/v1/*` 与 `/api/*` 的成员密钥；支持
+  `env:VAR` 写法从环境变量读取，明文不落配置。控制台「API Keys」可为每个
+  成员签发独立 key。
+- **`listen.admin_key`**——管理面密钥；未设置时默认 `admin`（`--check`
+  会警告），部署后务必在控制台「管理密钥」里轮换。
+
+下游 agent 的完整接入指南（端点、模型命名、错误码、SDK 示例）：
+[docs/agent-integration.md](docs/agent-integration.md)（控制台「数据 → 接入文档」页面可直接阅读）。
+
+## 下游 agent 怎么用
+
+OpenAI 兼容端点族（`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`
+等，见上文功能清单）与 Anthropic 兼容端点族（`/v1/messages` 及
+`count_tokens`）同端口并存，`GET /v1/models` 列出网关侧的可用模型名。
+
+### 品牌模型名
+
+不必记住任何上游 id——用 Facet 的品牌名，语义即路由：
+
+| 模型名 | 语义 |
+|---|---|
+| `facet-auto` | 按路由链自动挑渠道 |
+| `facet-cheap` | 优先低成本渠道 |
+| `facet-free` | 只走免费渠道（`$free` 宏展开的全部 tier=free 渠道，同优先级轮转） |
+| `facet-agent` | agent 任务预排序队列 |
+| `facet-embedding` | 嵌入模型路由 |
+
+也接受上游原始模型名（如 `deepseek-v3.2`）——命中哪个渠道由路由表决定。
+
+### 会话粘滞
+
+请求带 `X-Session-Id` 头（或请求体 `user` / `metadata.user_id` 字段）即启用
+会话亲和：同一会话 30 分钟内粘在同一渠道，避免上下文在不同供应商之间漂移。
+
+## 核心机制
+
+### 路由与选型
+
+- 路由表是 `(protocol, hint) → 渠道链` 的映射；品牌模型名映射为路由提示
+  （`facet-free` → `free`），没命中提示路由时回退到该协议的 `default` 路由。
+- 渠道链按 `priority` 升序排列，跳过禁用与冷却中的渠道；`$free` 宏展开为
+  **所有启用的 tier=free 渠道**（按优先级、名称排序），不用逐个列名。
+- 每次选型打印一行 `[route]` 日志，整个决策过程可追溯：
+
+```
+[route] openai:free model='facet-free' mode=auto reason=internal-model-name sticky=no rotate=1/4 lb=order skipped=- picked=free-tier->nvidia/nemotron-3.5-lightning:free chain=...
+```
+
+### 负载均衡与容错
+
+- `lb_strategy`：`order`（链式顺序）或 `weighted`（按成功率、错误次数、
+  延迟 EWMA 打分排序）；同优先级段内轮转（round-robin）。
+- 配额耗尽 / 上游报错触发冷却；后台 HealthProber 对冷却渠道按指数退避
+  （30s → 300s）探活，额度恢复自动复活。
+- 有会话粘滞时优先粘住的渠道，粘滞过期或渠道冷却后才重新选型。
+
+### 自我维护
+
+启动约 2 分钟后先跑一次，之后每 `defaults.maintenance_hours`（默认 24；
+`0` 关闭）跑一次。一次运行：刷新渠道目录 → 自动应用目录可确认的修复
+（先备份配置）→ 刷新订阅套餐模型与厂家注册表 → 请维护 LLM 写顾问意见 →
+落一份报告。每条发现只落进三个桶之一：
+
+| 桶 | 含义 | 谁来处理 |
+|---|---|---|
+| `applied` | 目录可确认（上游下架模型、`auto` 重指向、套餐/厂家模型清单刷新） | 无人——已自动应用，且有配置备份 |
+| `suggestions` | 值得做但目录无法确认（上游新模型、反复配额冷却、LLM 意见——仅供参考，绝不自动应用） | 你——控制台一键采纳 |
+| `alerts` | 密钥失效、目录为空、抓取失败 | 你，线下处理 |
+
+报告保留在内存（最近 20 份）并追加到配置旁的 `maintenance.jsonl`，重启不丢。
+同样的数据也是普通 HTTP：
+
+```bash
+GET  /api/maintenance              # 当前状态：开关、周期、模型池、上次运行
+GET  /api/maintenance/logs/50      # 运行历史，最新在前
+POST /api/maintenance/run          # 立即手动跑一次
+POST /api/maintenance/test-models  # 重新测验免费池，重建队列
+POST /api/maintenance/apply        # 采纳建议（{"channel", "models"}）
+```
+
+### 免费池
+
+`defaults.maintenance_model` 留空或设为 `auto` 时，所有维护 LLM 调用都跑在
+一个「已验证免费模型队列」上，而不是钉死某个 id：
+
+- 只有显式标记 `tier: "free"` 的渠道捐出候选——探测绝不烧付费额度。
+- 候选要过一道测验：合成的文档页 + 已知标准答案，全对的进队列。队列持久化
+  在配置旁的 `maintenance_models.json`，每次探测都重新复验；真干活时掉链子
+  的模型当场除名。探测有冷却兜底，全灭的免费池不会把维护变成探测风暴。
+
+`defaults.maintenance_model` 写显式 id（逗号/空白分隔）则绕过免费池，原样使用。
+
+### 维护调用走直达，不走路由
+
+维护模型的 id 是上游 id，所以按上游的方式寻址：直接打到第一个在自己的
+models 映射里暴露它的启用渠道（tier-`free` 优先，其余按配置顺序），单轮
+非流式。路由表从不参与；维护不许依赖路由成员。只有没有任何渠道暴露的
+品牌 id（如 `facet-auto`）才回退为经网关自身的 loopback 调用。
+
+### 渠道出站代理
+
+渠道可带 `proxy: "http://..."`（明文 URL 或密钥引用）。该渠道名下的所有
+上游请求——转发流量与维护直达调用——都走它；不填则直连。
+
+## 配置
+
+一切围绕一份 `router.json`（示例见 [data/router.example.json](data/router.example.json)）：
+
+- **channels**——上游渠道：`name`、`protocol`（`openai` / `anthropic`）、
+  `base_url`、`api_key`（支持密钥引用）、`models`（模型映射，`"auto"` 指向
+  目录拉取）、`priority`、`tier`（`free` / `paid`）、`proxy`。
+- **routes**——`(protocol, hint) → 渠道链`；渠道名支持 `$free` 宏。
+- **defaults**——负载均衡策略、探活节奏、粘滞 TTL、维护周期与维护模型等。
+- **listen**——`host`、`port`、`api_key`、`admin_key`。
+
+厂家接入元数据在内置 `src/facet/gateway/providers.json` + 用户覆盖层
+（配置目录下的 `providers.json`，按 id 整体替换内置条目）。给内置表提 PR
+或本地放一条覆盖条目皆可。维护每天刷新厂家模型清单，变更带备份持久化进
+覆盖文件。
+
+## 控制台
+
+与网关同端口（`http://127.0.0.1:8787/`），浏览器即用：渠道与路由管理、
+API Key 与管理员密钥、请求日志、维护日志、接入文档。所有 `/api/*` 接口与
+页面同源，可用同一把管理员密钥脚本化。
+
+## 事实表（配套数据层）
+
+`registry/model-registry.json`——单文件 < 1 MB，覆盖 217 个 provider、
+约 2,400 个模型的能力、限制与价格，每周从
+[models.dev](https://models.dev) + [OpenRouter](https://openrouter.ai/api/v1/models)
+同步（GitHub Action 自动开 PR），质量门与字段标准见
+[schema/model-registry.schema.json](schema/model-registry.schema.json)。
+
+事实表既可以独立使用（读表 → 自己的规则 → 自己决策）：
 
 ```python
 import facet
 
-t = facet.load()                      # bundled snapshot (package version = table date)
-t = facet.load("path/to/table.json")  # explicit local path
-t = facet.load(refresh=True)          # fetch the latest table (see below)
-
-facet.resolve(t, "glm-5.3")           # -> "alibaba-cn/glm-5.3"
-facet.find(t, tool_call=True, min_context=200_000, image_input=True,
-           max_output_price=2.0, provider="zhipuai", limit=10)
+t = facet.load()                    # 包内捆绑快照（包版本号 = 表日期）
+facet.resolve(t, "glm-5.3")         # -> 规范键，容忍拼写漂移
+facet.find(t, tool_call=True, min_context=200_000, free=True, limit=10)
 ```
-
-- The wheel bundles a snapshot of the table; **the package version is the
-  snapshot date** (`2026.9.0` = the September 2026 table). Install and use
-  offline; upgrade the package or `load(refresh=True)` for freshness.
-- Refresh URL resolution: `url=` argument 鈫?`FACET_TABLE_URL` env var 鈫?  built-in default (the raw table on this repo's main). Failures raise 鈥?  never a silent fallback to stale facts.
-- Fetching the JSON directly (below) stays fully supported 鈥?the package is a
-  convenience, not a lock-in.
-
-CLI: `facet "glm-5.3"`, `facet --tools --min-context 200000 --limit 5`.
-
-### Integration contract: three names, three layers
-
-A model carries three different names across your stack. Keep them apart:
-
-| Name | Example | Lives in |
-|---|---|---|
-| facet key | `zhipuai/glm-5.3` | your scheduler: selection, logs, quota, audit |
-| wire name | `rec.model_id` (request body `model`) | the access layer |
-| gateway name | whatever your one-api/new-api deployment lists in `/v1/models` | derived at startup, never configured |
-
-The table record **is the handoff**: pass (key, provider, model_id, aliases)
-from the scheduler to the access layer. The access layer picks the adapter and
-credentials by `provider`, and `model_id` goes into the request body.
-
-Gateway channels need **no mapping config** 鈥?the gateway already knows its
-own names (`GET /v1/models`); derive the mapping at startup with the resolver
-you already have (it tolerates spelling drift by design):
-
-```python
-names = [m["id"] for m in get(f"{GW_URL}/v1/models").json()["data"]]
-wire = {name: facet.resolve(t, name) for name in names}   # gateway name -> facet key
-```
-
-The one convention that makes this work: keep the vendor's original model
-names on the gateway (one-api/new-api do by default). A name that resolves to
-`None` was invented by the gateway admin 鈥?fix it on the gateway side, not
-with config.
-
-## Maintain it
 
 ```bash
-python tools/sync_models_dev.py            # models.dev -> table (weekly, or on demand)
-python tools/validate_registry.py          # quality gate (size, nulls, shapes, counts)
-python -m unittest discover -s tests       # unit tests
+facet "glm-5.3"                     # 解析并显示一个模型的事实
+facet --free --tools --limit 10     # 按条件筛选免费模型
 ```
 
-A GitHub Action (`sync.yml`) refreshes the table weekly and opens a PR.
-Manual annotations (`quota_tier`, `quality_hint`) survive refreshes
-automatically. Sources: [models.dev](https://models.dev) (primary, widest
-provider coverage) + [OpenRouter](https://openrouter.ai/api/v1/models)
-(secondary, fills capability gaps 鈥?notably `structured_output`). Capability
-fields may be borrowed across channels of the same model (fill-only, never
-overwritten); prices are never borrowed since channel pricing differs. No
-benchmark scores 鈥?those are judgments, not facts; add your own via
-`quality_hint`.
+也可以作为网关的配套：网关用它做名字解析与 `--free` 新手指引。网关的**路由
+只看维护层观测到的渠道状态**，绝不依赖表的新鲜度——两层之间只有这一座桥。
 
-## Verify claims (optional)
-
-Everything in the table is an upstream *claim*, never a measurement.
-`tools/verify_claims.py` calls a model for real and checks whether its declared
-capabilities hold 鈥?tool calling, structured output, reasoning traces, and
-image input. Results land in `reports/verify-results.json` (match / mismatch /
-discovery / inconclusive) and are **never written back to the table**: the
-registry stays a pure claims aggregation, and humans decide what to do with
-contradictions.
+## 开发
 
 ```bash
-python tools/verify_claims.py gpt-5 --dry-run        # plan only, no network
-python tools/verify_claims.py gpt-5                  # resolve by name or alias
-python tools/verify_claims.py --provider zhipuai     # cheapest models first
-python tools/verify_claims.py --base-url http://localhost:1234/v1 --api-key ... local-model
+python -m pytest tests/ -q          # 全量回归
+python tools/sync_models_dev.py     # models.dev -> 事实表（每周或按需）
+python tools/validate_registry.py   # 事实表质量门（体积、null、结构、数量）
+python tools/verify_claims.py gpt-5 --dry-run   # 实测验证模型能力声明
 ```
 
-The table keeps ONE record per model identity (the dedup winner), but the
-same model is often served by several vendors 鈥?and capability differs per
-channel. Qualify the vendor to pin the endpoint: `volcengine/glm-5.3`,
-`zhipuai/glm-5.3` and `alibaba-cn/glm-5.3` test the same identity at
-different vendors' endpoints (declared facts come from the table record and
-are traced via `table_key` in the report). A bare name tests the winner's
-channel.
+## 非目标
 
-Bring your own API key (environment variables 鈥?`OPENAI_API_KEY`,
-`ZHIPU_API_KEY`, `ARK_API_KEY`, ...; or `--api-key`). Keys are never stored in
-reports. First-party providers are built in; anything else takes
-`--base-url --protocol`. Probes cost a few hundred tokens per model;
-`--max-models` (default 20) caps `--provider` scans. Found a mismatch? Open an
-issue with the report attached, or fix the row via `manual-overrides.json`.
+事实表不做路由、不管 API key、不采集遥测、不做逐请求排序、不聚合跑分。
+网关层做路由，但只依据维护层观测到的渠道状态，从不依赖表的新鲜度。
 
-## The gateway
+## 治理
 
-The gateway layer (`src/facet/gateway/`) is the runtime half of the package:
-`facet serve` aggregates channels 鈥?upstream vendor endpoints you configure 鈥?routes OpenAI- and Anthropic-compatible traffic across them, and maintains
-itself daily. The console and the `/api/*` endpoints ship on the same port.
-Five things worth knowing when you run it:
-
-### Self-maintenance
-
-Runs ~2 minutes after startup, then every `defaults.maintenance_hours`
-(default 24; `0` disables). One run: refresh channel catalogs 鈫?auto-apply
-catalog-confirmed fixes (config backed up first) 鈫?refresh subscription plan
-models and the vendor registry 鈫?ask the maintenance LLM for advisory notes 鈫?record a report. Every finding lands in exactly one of three buckets:
-
-| Bucket | Meaning | Who acts |
-|---|---|---|
-| `applied` | catalog-confirmed (models removed upstream, `auto` repointed, plan/vendor model lists refreshed) | nobody 鈥?already applied, with a config backup |
-| `suggestions` | worth doing, not provable from the catalog alone (new upstream models, repeated quota cooldowns, advisory LLM notes 鈥?never auto-applied) | you 鈥?one click in the console's 鑷姩杩愮淮 ("auto-ops") card |
-| `alerts` | dead keys, empty catalogs, fetch failures | you, off-band |
-
-Reports are kept in memory (the last 20) and appended to `maintenance.jsonl`
-next to `config.json`, so history survives restarts. The console's 缁存姢鏃ュ織
-("maintenance log") tab reads both; the same data is plain HTTP:
-
-```bash
-GET  /api/maintenance              # current state: enabled, hours, model pool, last run
-GET  /api/maintenance/logs/50      # run history, newest first (default 50)
-POST /api/maintenance/run          # force a run now
-POST /api/maintenance/test-models  # re-quiz the free pool, rebuild the queue
-POST /api/maintenance/apply        # adopt a suggestion ({"channel", "models"})
-```
-
-### The free pool
-
-With `defaults.maintenance_model` empty or `auto`, every maintenance LLM call
-runs on a verified queue of free models instead of a pinned id:
-
-- Only channels explicitly marked `tier: "free"` donate candidates 鈥?probing
-  never burns paid quota.
-- A catalog that mixes `:free`-suffixed and unsuffixed ids (OpenRouter style)
-  donates only its `:free` subset; a catalog without any `:free` id belongs to
-  a wholly-free channel, so all of its models are candidates. Before the first
-  catalog fetch, the channel's own model mapping stands in.
-- Candidates are quizzed against a synthetic doc page with a known answer;
-  perfect scorers join the queue. The queue persists in
-  `maintenance_models.json` next to `config.json`, is re-verified on every
-  probe, and a model that fails real maintenance work is dropped on the spot.
-  Probes are cooldown-bounded so a fully dead free pool cannot turn
-  maintenance into a probe storm.
-
-Explicit ids in `defaults.maintenance_model` (comma/whitespace separated)
-bypass the pool and are used verbatim.
-
-### Maintenance calls go direct, not through routes
-
-A maintenance model id is an upstream id, so it is addressed the way the
-upstream would be: straight to the first enabled channel whose own mapping
-exposes it (tier-`free` channels first, config order otherwise), as one
-non-streaming turn 鈥?Anthropic channels get `x-api-key` +
-`anthropic-version: 2023-06-01`, OpenAI-compatible ones get `Bearer`, and the
-channel's `proxy` applies. Routes are never consulted; maintenance must not
-depend on route membership. Only ids no channel exposes (branded names such
-as `facet-auto`) fall back to a loopback call through the gateway itself 鈥?ordinary routing, normal failover.
-
-### Outbound proxy
-
-A channel may carry `proxy: "http://..."` (a plain URL or a secret
-reference). Every upstream request made on that channel's behalf 鈥?chat
-traffic and maintenance direct calls alike 鈥?goes through it; without it,
-connections are direct.
-
-### Adding a vendor
-
-Two layers, two registries:
-
-| Layer | Registry | How to extend |
-|---|---|---|
-| Gateway | builtin `src/facet/gateway/providers.json` + user overlay `<config dir>/providers.json` | PR a builtin entry, or drop an overlay entry locally |
-| Facts | `registry/model-registry.json` | vendors arrive via `tools/sync_models_dev.py`; manual facts (e.g. `quota_tier`) via `registry/manual-overrides.json` |
-
-A gateway vendor entry needs `id` (`[a-z0-9-]+`), `name`, and at least one
-mode 鈥?`coding`, `agent`, or `payg` 鈥?each with `label`, `protocol`
-(`openai` / `anthropic`), `base_url`, and optional `tier` (`free` / `paid`),
-`docs_url`, `models_url`, `models`. Overlay entries replace builtin entries
-whole, by id. Maintenance refreshes model lists daily: modes with `docs_url`
-are re-extracted (LLM first, deterministic list-line rules as fallback),
-`models_url` is read as a plain JSON catalog 鈥?changes persist into your
-overlay with a backup. On the facts side, tiers stay manual: `quota_tier` is
-never auto-filled.
-
-## Non-goals
-
-The table does no routing, holds no API keys, collects no telemetry, performs
-no per-request ranking, and aggregates no benchmarks 鈥?if you need those,
-build them on the table. The gateway layer does route, but only on what its
-maintenance layer observes (see [The gateway](#the-gateway)); it never
-depends on table freshness.
-
-## Governance
-
-MIT licensed. Contributions under the CLA in [CLA.md](https://github.com/hsliuping/Facet/blob/main/CLA.md). Process in
-[CONTRIBUTING.md](https://github.com/hsliuping/Facet/blob/main/CONTRIBUTING.md).
+MIT 许可。贡献须接受 [docs/CLA.md](docs/CLA.md) 中的协议，流程见
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。

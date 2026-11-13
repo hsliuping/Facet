@@ -1,7 +1,7 @@
 # Facet / PlanRouter 架构与功能总览
 
 日期：2026-11-09。性质：架构与功能基准文档——口径与
-[README.zh-CN.md](../README.zh-CN.md) 对齐，实现细节以代码为准。
+[README.md](../README.md) 对齐，实现细节以代码为准。
 
 ## 1. 一句话定位
 
