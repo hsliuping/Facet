@@ -3289,8 +3289,6 @@ function renderMaintLogs() {
 $('btn-refresh-maintlog').onclick = () =>
   loadMaintLogs().catch((e) => toast(e.message, 'bad'));
 
-// Management pages: the sidebar footer buttons jump to the dedicated panels.
-$('btn-admin-key').onclick = () => switchPage('adminkey');
 $('btn-quickstart').onclick = () => switchPage('quickstart');
 
 $('btn-api-key-create').onclick = async () => {
@@ -4485,7 +4483,6 @@ function bindEvents() {
       toast('已从磁盘重载');
     } catch (err) { toast(err.message, 'bad'); }
   };
-  $('btn-key').onclick = () => switchPage('apikeys');
   $('btn-export').onclick = () => {
     const blob = new Blob([JSON.stringify(state.config, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
