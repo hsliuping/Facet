@@ -1,14 +1,13 @@
-# Facet
+﻿# Facet
 
-**English** | [简体中文](https://github.com/hsliuping/Facet/blob/main/README.zh-CN.md)
+**English** | [绠€浣撲腑鏂嘳(https://github.com/hsliuping/Facet/blob/main/README.zh-CN.md)
 
-**Facet is a self-maintaining LLM gateway over free-tier quotas — with a model facts table as its data layer.**
+**Facet is a self-maintaining LLM gateway over free-tier quotas 鈥?with a model facts table as its data layer.**
 
-**Facet 回答两个问题："这个任务该用哪个模型？"（事实表）与"这个模型现在能免费跑吗？"（自维护网关）。**
+**Facet 鍥炵瓟涓や釜闂锛?杩欎釜浠诲姟璇ョ敤鍝釜妯″瀷锛?锛堜簨瀹炶〃锛変笌"杩欎釜妯″瀷鐜板湪鑳藉厤璐硅窇鍚楋紵"锛堣嚜缁存姢缃戝叧锛夈€?*
 
 `facet serve` starts a local OpenAI-compatible gateway that aggregates free-tier
-quotas from major vendors and keeps its channel directory fresh on its own —
-probes, repairs, reports; an AI SRE for your LLM infrastructure. Alongside it
+quotas from major vendors and keeps its channel directory fresh on its own 鈥?probes, repairs, reports; an AI SRE for your LLM infrastructure. Alongside it
 ships the **facts table** it is named after: one JSON file describing the
 capabilities, limits, and prices of ~2,400 models across 217 providers
 (`pip install facet-models`, zero dependencies). Your project reads the table,
@@ -16,14 +15,10 @@ applies its own business rules, and picks a model.
 
 ```
 models.dev (primary, 217 providers)   OpenRouter /api/v1/models (secondary)
-        │                                        │
-        └──────────── weekly sync ───────────────┘
-                        │  tools/sync_models_dev.py
-                        ▼
-registry/model-registry.json   ← the deliverable: one file, < 1 MB, zero deps
-        │
-        ├── your service (fetch the JSON, filter, decide)
-        └── examples/pick_model.py (reference consumer / demo)
+        鈹?                                       鈹?        鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ weekly sync 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?                        鈹? tools/sync_models_dev.py
+                        鈻?registry/model-registry.json   鈫?the deliverable: one file, < 1 MB, zero deps
+        鈹?        鈹溾攢鈹€ your service (fetch the JSON, filter, decide)
+        鈹斺攢鈹€ examples/pick_model.py (reference consumer / demo)
 ```
 
 ## One wheel, two layers
@@ -32,16 +27,16 @@ The package ships both layers; there is one command family.
 
 | Layer | Owns | Lives in |
 |---|---|---|
-| **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` → bundled snapshot |
+| **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` 鈫?bundled snapshot |
 | **Gateway** (runtime) | channels, routes, the free pool, daily self-maintenance | `src/facet/gateway/` |
 
 The bridge between them:
 
-- **Name resolution** — `facet/gateway/facts.py` maps well-known names to
+- **Name resolution** 鈥?`facet/gateway/facts.py` maps well-known names to
   canonical keys, read-only, stdlib-only, and degrades to "unavailable" if
   the snapshot is missing. The gateway's *routing* still runs purely on what
   its maintenance layer observes; routing never depends on table freshness.
-- **`quota_tier`** — manual annotations (`registry/manual-overrides.json`)
+- **`quota_tier`** 鈥?manual annotations (`registry/manual-overrides.json`)
   seed onboarding (`facet --free`). Zero-key start is built in: `facet serve`
   with no `router.json` auto-generates a seed config (anonymous Pollinations
   plus disabled free-tier templates) and starts serving. Maintenance
@@ -52,22 +47,22 @@ The bridge between them:
 facet "glm-5.3"            # facts: resolve + show one model
 facet --free --tools ...   # facts: filter the table
 facet serve                # gateway: start the self-maintaining proxy
-planrouter                 # deprecated alias of `facet serve`
+facet.gateway                 # deprecated alias of `facet serve`
 ```
 
 ## Why a facts table under the gateway?
 
 - The gateway's routing policy is ours and visible; your selection rules are
-  still yours. A JSON file is data — fetch it, vendor it, or copy the fields
+  still yours. A JSON file is data 鈥?fetch it, vendor it, or copy the fields
   you need.
 - Facts change weekly (prices, limits, new models). Policy changes daily. We
   ship the part that changes weekly; the gateway adapts on its own.
-- The same table powers name resolution — what `gpt-4o` actually resolves to
+- The same table powers name resolution 鈥?what `gpt-4o` actually resolves to
   among today's free tiers. `quota_tier` is the join key between layers.
 
 ## The table
 
-`registry/model-registry.json` — keyed `provider/model_id`, one record per
+`registry/model-registry.json` 鈥?keyed `provider/model_id`, one record per
 model identity, deduped across providers (aggregator copies lose to
 first-party ones; ties prefer richer records).
 
@@ -90,7 +85,7 @@ first-party ones; ties prefer richer records).
 1. **Single file < 1 MB.**
 2. **ABSENT == null.** Unknown facts are omitted (never `null` in the file,
    never a default). Consumers use `.get()` and treat absence as unknown.
-3. **Facts only** — except `quality_hint`, which is clearly marked subjective
+3. **Facts only** 鈥?except `quality_hint`, which is clearly marked subjective
    and ignorable.
 4. **USD per MTok, always.** Any other currency/unit never enters the table.
 5. **Fields are append-only.** Semantics never change within a
@@ -128,7 +123,7 @@ python examples/pick_model.py claude-sonnet-4.5      # resolve one model + alias
 
 ## Install (pip)
 
-The same read → resolve → find logic ships as a tiny package with **zero
+The same read 鈫?resolve 鈫?find logic ships as a tiny package with **zero
 runtime dependencies** (stdlib only):
 
 ```bash
@@ -150,10 +145,8 @@ facet.find(t, tool_call=True, min_context=200_000, image_input=True,
 - The wheel bundles a snapshot of the table; **the package version is the
   snapshot date** (`2026.9.0` = the September 2026 table). Install and use
   offline; upgrade the package or `load(refresh=True)` for freshness.
-- Refresh URL resolution: `url=` argument → `FACET_TABLE_URL` env var →
-  built-in default (the raw table on this repo's main). Failures raise —
-  never a silent fallback to stale facts.
-- Fetching the JSON directly (below) stays fully supported — the package is a
+- Refresh URL resolution: `url=` argument 鈫?`FACET_TABLE_URL` env var 鈫?  built-in default (the raw table on this repo's main). Failures raise 鈥?  never a silent fallback to stale facts.
+- Fetching the JSON directly (below) stays fully supported 鈥?the package is a
   convenience, not a lock-in.
 
 CLI: `facet "glm-5.3"`, `facet --tools --min-context 200000 --limit 5`.
@@ -172,7 +165,7 @@ The table record **is the handoff**: pass (key, provider, model_id, aliases)
 from the scheduler to the access layer. The access layer picks the adapter and
 credentials by `provider`, and `model_id` goes into the request body.
 
-Gateway channels need **no mapping config** — the gateway already knows its
+Gateway channels need **no mapping config** 鈥?the gateway already knows its
 own names (`GET /v1/models`); derive the mapping at startup with the resolver
 you already have (it tolerates spelling drift by design):
 
@@ -183,7 +176,7 @@ wire = {name: facet.resolve(t, name) for name in names}   # gateway name -> face
 
 The one convention that makes this work: keep the vendor's original model
 names on the gateway (one-api/new-api do by default). A name that resolves to
-`None` was invented by the gateway admin — fix it on the gateway side, not
+`None` was invented by the gateway admin 鈥?fix it on the gateway side, not
 with config.
 
 ## Maintain it
@@ -198,17 +191,17 @@ A GitHub Action (`sync.yml`) refreshes the table weekly and opens a PR.
 Manual annotations (`quota_tier`, `quality_hint`) survive refreshes
 automatically. Sources: [models.dev](https://models.dev) (primary, widest
 provider coverage) + [OpenRouter](https://openrouter.ai/api/v1/models)
-(secondary, fills capability gaps — notably `structured_output`). Capability
+(secondary, fills capability gaps 鈥?notably `structured_output`). Capability
 fields may be borrowed across channels of the same model (fill-only, never
 overwritten); prices are never borrowed since channel pricing differs. No
-benchmark scores — those are judgments, not facts; add your own via
+benchmark scores 鈥?those are judgments, not facts; add your own via
 `quality_hint`.
 
 ## Verify claims (optional)
 
 Everything in the table is an upstream *claim*, never a measurement.
 `tools/verify_claims.py` calls a model for real and checks whether its declared
-capabilities hold — tool calling, structured output, reasoning traces, and
+capabilities hold 鈥?tool calling, structured output, reasoning traces, and
 image input. Results land in `reports/verify-results.json` (match / mismatch /
 discovery / inconclusive) and are **never written back to the table**: the
 registry stays a pure claims aggregation, and humans decide what to do with
@@ -222,14 +215,14 @@ python tools/verify_claims.py --base-url http://localhost:1234/v1 --api-key ... 
 ```
 
 The table keeps ONE record per model identity (the dedup winner), but the
-same model is often served by several vendors — and capability differs per
+same model is often served by several vendors 鈥?and capability differs per
 channel. Qualify the vendor to pin the endpoint: `volcengine/glm-5.3`,
 `zhipuai/glm-5.3` and `alibaba-cn/glm-5.3` test the same identity at
 different vendors' endpoints (declared facts come from the table record and
 are traced via `table_key` in the report). A bare name tests the winner's
 channel.
 
-Bring your own API key (environment variables — `OPENAI_API_KEY`,
+Bring your own API key (environment variables 鈥?`OPENAI_API_KEY`,
 `ZHIPU_API_KEY`, `ARK_API_KEY`, ...; or `--api-key`). Keys are never stored in
 reports. First-party providers are built in; anything else takes
 `--base-url --protocol`. Probes cost a few hundred tokens per model;
@@ -239,27 +232,25 @@ issue with the report attached, or fix the row via `manual-overrides.json`.
 ## The gateway
 
 The gateway layer (`src/facet/gateway/`) is the runtime half of the package:
-`facet serve` aggregates channels — upstream vendor endpoints you configure —
-routes OpenAI- and Anthropic-compatible traffic across them, and maintains
+`facet serve` aggregates channels 鈥?upstream vendor endpoints you configure 鈥?routes OpenAI- and Anthropic-compatible traffic across them, and maintains
 itself daily. The console and the `/api/*` endpoints ship on the same port.
 Five things worth knowing when you run it:
 
 ### Self-maintenance
 
 Runs ~2 minutes after startup, then every `defaults.maintenance_hours`
-(default 24; `0` disables). One run: refresh channel catalogs → auto-apply
-catalog-confirmed fixes (config backed up first) → refresh subscription plan
-models and the vendor registry → ask the maintenance LLM for advisory notes →
-record a report. Every finding lands in exactly one of three buckets:
+(default 24; `0` disables). One run: refresh channel catalogs 鈫?auto-apply
+catalog-confirmed fixes (config backed up first) 鈫?refresh subscription plan
+models and the vendor registry 鈫?ask the maintenance LLM for advisory notes 鈫?record a report. Every finding lands in exactly one of three buckets:
 
 | Bucket | Meaning | Who acts |
 |---|---|---|
-| `applied` | catalog-confirmed (models removed upstream, `auto` repointed, plan/vendor model lists refreshed) | nobody — already applied, with a config backup |
-| `suggestions` | worth doing, not provable from the catalog alone (new upstream models, repeated quota cooldowns, advisory LLM notes — never auto-applied) | you — one click in the console's 自动运维 ("auto-ops") card |
+| `applied` | catalog-confirmed (models removed upstream, `auto` repointed, plan/vendor model lists refreshed) | nobody 鈥?already applied, with a config backup |
+| `suggestions` | worth doing, not provable from the catalog alone (new upstream models, repeated quota cooldowns, advisory LLM notes 鈥?never auto-applied) | you 鈥?one click in the console's 鑷姩杩愮淮 ("auto-ops") card |
 | `alerts` | dead keys, empty catalogs, fetch failures | you, off-band |
 
 Reports are kept in memory (the last 20) and appended to `maintenance.jsonl`
-next to `config.json`, so history survives restarts. The console's 维护日志
+next to `config.json`, so history survives restarts. The console's 缁存姢鏃ュ織
 ("maintenance log") tab reads both; the same data is plain HTTP:
 
 ```bash
@@ -275,7 +266,7 @@ POST /api/maintenance/apply        # adopt a suggestion ({"channel", "models"})
 With `defaults.maintenance_model` empty or `auto`, every maintenance LLM call
 runs on a verified queue of free models instead of a pinned id:
 
-- Only channels explicitly marked `tier: "free"` donate candidates — probing
+- Only channels explicitly marked `tier: "free"` donate candidates 鈥?probing
   never burns paid quota.
 - A catalog that mixes `:free`-suffixed and unsuffixed ids (OpenRouter style)
   donates only its `:free` subset; a catalog without any `:free` id belongs to
@@ -296,18 +287,17 @@ bypass the pool and are used verbatim.
 A maintenance model id is an upstream id, so it is addressed the way the
 upstream would be: straight to the first enabled channel whose own mapping
 exposes it (tier-`free` channels first, config order otherwise), as one
-non-streaming turn — Anthropic channels get `x-api-key` +
+non-streaming turn 鈥?Anthropic channels get `x-api-key` +
 `anthropic-version: 2023-06-01`, OpenAI-compatible ones get `Bearer`, and the
 channel's `proxy` applies. Routes are never consulted; maintenance must not
 depend on route membership. Only ids no channel exposes (branded names such
-as `facet-auto`) fall back to a loopback call through the gateway itself —
-ordinary routing, normal failover.
+as `facet-auto`) fall back to a loopback call through the gateway itself 鈥?ordinary routing, normal failover.
 
 ### Outbound proxy
 
 A channel may carry `proxy: "http://..."` (a plain URL or a secret
-reference). Every upstream request made on that channel's behalf — chat
-traffic and maintenance direct calls alike — goes through it; without it,
+reference). Every upstream request made on that channel's behalf 鈥?chat
+traffic and maintenance direct calls alike 鈥?goes through it; without it,
 connections are direct.
 
 ### Adding a vendor
@@ -320,19 +310,19 @@ Two layers, two registries:
 | Facts | `registry/model-registry.json` | vendors arrive via `tools/sync_models_dev.py`; manual facts (e.g. `quota_tier`) via `registry/manual-overrides.json` |
 
 A gateway vendor entry needs `id` (`[a-z0-9-]+`), `name`, and at least one
-mode — `coding`, `agent`, or `payg` — each with `label`, `protocol`
+mode 鈥?`coding`, `agent`, or `payg` 鈥?each with `label`, `protocol`
 (`openai` / `anthropic`), `base_url`, and optional `tier` (`free` / `paid`),
 `docs_url`, `models_url`, `models`. Overlay entries replace builtin entries
 whole, by id. Maintenance refreshes model lists daily: modes with `docs_url`
 are re-extracted (LLM first, deterministic list-line rules as fallback),
-`models_url` is read as a plain JSON catalog — changes persist into your
+`models_url` is read as a plain JSON catalog 鈥?changes persist into your
 overlay with a backup. On the facts side, tiers stay manual: `quota_tier` is
 never auto-filled.
 
 ## Non-goals
 
 The table does no routing, holds no API keys, collects no telemetry, performs
-no per-request ranking, and aggregates no benchmarks — if you need those,
+no per-request ranking, and aggregates no benchmarks 鈥?if you need those,
 build them on the table. The gateway layer does route, but only on what its
 maintenance layer observes (see [The gateway](#the-gateway)); it never
 depends on table freshness.
