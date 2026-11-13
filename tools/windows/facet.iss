@@ -41,6 +41,14 @@ CloseApplications=no
 ; uninstaller follow the data directory it created at runtime.
 UninstallDisplayName={#AppName} 网关
 
+; Simplified Chinese is a community translation (not bundled with Inno Setup);
+; the .isl ships next to this .iss. A single [Languages] entry means the
+; wizard runs in Chinese directly, with no language-picker page.
+; Silent installs can still override with /LANG=chs.
+
+[Languages]
+Name: "chs"; MessagesFile: "ChineseSimplified.isl"
+
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项:"
 Name: "autostart"; Description: "开机自动启动（托盘常驻）"; GroupDescription: "附加选项:"; Flags: unchecked
