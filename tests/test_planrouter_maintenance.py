@@ -999,28 +999,30 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         self.assertEqual(self.app.providers[0]["modes"]["payg"]["models"],
                          ["old-model"])
 
-    def test_docs_url_takes_precedence_over_models_url(self):
+    def test_models_url_takes_precedence_over_docs_url(self):
+        # API 是权威清单且整体替换（顺带清掉历史文档噪声）；docs 抽取只在
+        # 没有 models_url 时兜底，绝不再反超 API。
         original_doc = maint.fetch_plan_doc
         original_api = maint.fetch_models_json
         vendor = self.app.providers[0]
         vendor["modes"]["coding"]["models_url"] = "https://ark.example.com/api/v3/models"
 
         def fake_doc(url, proxy=""):
-            return "<html><body><ul><li>from-doc</li></ul></body></html>"
+            raise AssertionError("docs_url fetch must not run")
 
-        def fake_api(url, proxy="", api_key=""):  # must never be called while docs_url wins
-            raise AssertionError("models_url fetch must not run")
+        def fake_api(url, proxy="", api_key=""):
+            return '{"data": [{"id": "from-api"}]}'
 
         maint.fetch_plan_doc = fake_doc
         maint.fetch_models_json = fake_api
         self.addCleanup(setattr, maint, "fetch_plan_doc", original_doc)
         self.addCleanup(setattr, maint, "fetch_models_json", original_api)
         report = self.refresh()
-        self.assertEqual(vendor["modes"]["coding"]["models"],
-                         ["old-model", "from-doc"])
-        self.assertEqual(vendor["modes"]["payg"]["models"], ["old-model"])
-        self.assertEqual(
-            [e["mode"] for e in report["applied"]], ["coding"])
+        self.assertEqual(vendor["modes"]["coding"]["models"], ["from-api"])
+        # setUp gives payg a models_url too — it also refreshes from the API
+        self.assertEqual(vendor["modes"]["payg"]["models"], ["from-api"])
+        sources = {e["mode"]: e["source"] for e in report["applied"]}
+        self.assertEqual(sources, {"coding": "api", "payg": "api"})
 
     def test_vendor_id_limits_refresh(self):
         second = providers_registry_fixture()

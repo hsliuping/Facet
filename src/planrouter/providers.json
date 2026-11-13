@@ -229,7 +229,7 @@
           "docs_url": "https://modelscope.cn/docs",
           "keys_url": "https://modelscope.cn/my/myaccesstoken",
           "models_url": "https://api-inference.modelscope.cn/v1/models",
-          "free_limits": {"rpd": 250, "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效；按魔粒额度而非 RPM 限速"},
+          "free_limits": {"rpd": 250, "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效"},
           "tier": "free",
           "models": []
         }
@@ -239,6 +239,16 @@
       "id": "hunyuan",
       "name": "腾讯元宝（混元）",
       "modes": {
+        "agent": {
+          "label": "Token Plan 套餐",
+          "billing": "token_plan",
+          "protocol": "openai",
+          "base_url": "https://tokenhub.tencentmaas.com/plan/v3",
+          "docs_url": "https://cloud.tencent.com/document/product/1823/130060",
+          "keys_url": "https://console.cloud.tencent.com/tokenhub/tokenplan/common",
+          "tier": "paid",
+          "models": []
+        },
         "payg": {
           "label": "按量付费",
           "protocol": "openai",
@@ -247,6 +257,7 @@
           "keys_url": "https://console.cloud.tencent.com/hunyuan/start",
           "models_url": "https://api.hunyuan.cloud.tencent.com/v1/models",
           "tier": "paid",
+          "free_quota": {"tokens": 1000000, "period": "total"},
           "models": []
         }
       }
@@ -255,6 +266,16 @@
       "id": "qianfan",
       "name": "百度千帆",
       "modes": {
+        "agent": {
+          "label": "Token Plan 套餐",
+          "billing": "token_plan",
+          "protocol": "openai",
+          "base_url": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+          "docs_url": "https://cloud.baidu.com/product/codingplan.html",
+          "keys_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
+          "tier": "paid",
+          "models": []
+        },
         "payg": {
           "label": "按量付费",
           "protocol": "openai",
@@ -263,6 +284,7 @@
           "keys_url": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
           "models_url": "https://qianfan.baidubce.com/v2/models",
           "tier": "paid",
+          "free_quota": {"tokens": 1000000, "period": "total"},
           "models": []
         }
       }
@@ -330,13 +352,13 @@
       "name": "Pollinations.ai",
       "modes": {
         "payg": {
-          "label": "免费匿名",
+          "label": "免费注册",
           "protocol": "openai",
           "base_url": "https://gen.pollinations.ai/v1",
           "docs_url": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
           "keys_url": "https://enter.pollinations.ai/keys",
           "models_url": "https://gen.pollinations.ai/v1/models",
-          "free_limits": {"rpm": 12, "note": "免费 Seed 档约 12 次/分钟；匿名只能拉模型清单，对话需注册 Key"},
+          "free_limits": {"rpm": 12, "note": "key 免费注册即领：Seed 档约 12 次/分钟；模型清单可匿名查看"},
           "tier": "free",
           "models": []
         }
@@ -347,13 +369,13 @@
       "name": "LLM7",
       "modes": {
         "payg": {
-          "label": "免费匿名",
+          "label": "免费注册",
           "protocol": "openai",
           "base_url": "https://api.llm7.io/v1",
           "docs_url": "https://docs.llm7.io",
           "keys_url": "https://dash.llm7.io",
           "models_url": "https://api.llm7.io/v1/models",
-          "free_limits": {"rpm": 60, "note": "注册后 60 RPM / 250 次/小时 / 10 万 tokens/24h；匿名档未公布"},
+          "free_limits": {"rpm": 60, "note": "key 免费注册即领：60 次/分 · 250 次/时 · 10 万 tokens/24h"},
           "tier": "free",
           "models": []
         }
@@ -369,7 +391,7 @@
           "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
           "docs_url": "https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started",
           "models_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models",
-          "free_limits": {"rpm": 2, "note": "匿名 2 RPM/IP/模型，超限 429"},
+          "free_limits": {"rpm": 2, "note": "匿名免注册：2 次/分/IP/模型，超限 429"},
           "tier": "free",
           "models": []
         }
@@ -386,7 +408,7 @@
           "docs_url": "https://docs.api.nvidia.com/nim/",
           "keys_url": "https://build.nvidia.com/settings/api-keys",
           "models_url": "https://integrate.api.nvidia.com/v1/models",
-          "free_limits": {"rpm": 40, "note": "免费层约 40 RPM"},
+          "free_limits": {"rpm": 40, "note": "免费 1,000 credits（1 次 ≈ 1 credit）+ 约 40 次/分"},
           "tier": "free",
           "models": []
         }
@@ -424,7 +446,7 @@
           "docs_url": "https://ai.google.dev/gemini-api/docs",
           "keys_url": "https://aistudio.google.com/apikey",
           "models_url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
-          "free_limits": {"note": "免费层 5–15 RPM、20–1,500 次/天，随模型不同"},
+          "free_limits": {"note": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天"},
           "tier": "free",
           "models": []
         }

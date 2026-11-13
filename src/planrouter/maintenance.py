@@ -601,13 +601,15 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
                            mode: dict, report: dict) -> bool:
     """Refresh one registry mode's model list in place.
 
-    docs_url takes precedence; when it is absent a models_url JSON endpoint
-    is consulted — with the Bearer key of a configured channel of the same
-    vendor when one exists (Bailian's /api/v1/models needs the user's own
-    key), and following Bailian-style pagination when the payload advertises
-    a larger total. Returns True when the mode was changed; fetch or
-    extraction failures only append to report["alerts"] and keep the old
-    list.
+    When a models_url JSON endpoint exists it is authoritative and runs
+    first — prose extraction from docs pages is noisy (sidebar tokens like
+    "search…" or "content-type"), so the docs path only runs when no
+    models_url is set. The API call borrows the Bearer key of a configured
+    channel of the same vendor when one exists (Bailian's /api/v1/models
+    needs the user's own key), and follows Bailian-style pagination when the
+    payload advertises a larger total. Returns True when the mode was
+    changed; fetch or extraction failures only append to report["alerts"]
+    and keep the old list.
     """
     docs_url = str(mode.get("docs_url") or "").strip()
     models_url = str(mode.get("models_url") or "").strip()
@@ -615,25 +617,10 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
         return False
     label = f"{provider.get('name') or provider.get('id') or '—'} / {mode.get('label') or mode_key}"
 
-    if docs_url:
-        try:
-            text = html_to_text(fetch_plan_doc(docs_url, proxy=app.docs_proxy()))
-        except Exception as exc:  # any fetch failure must keep the old list
-            report["alerts"].append({
-                "channel": "", "kind": "provider_models_fetch",
-                "message": f"抓取厂家文档失败：{label}（{str(exc)[:160]}），保留原模型清单",
-            })
-            return False
-        extracted, source = extract_doc_models(
-            app, text, label, "provider_models_llm", report)
-        if not extracted:
-            report["alerts"].append({
-                "channel": "", "kind": "provider_models_empty",
-                "message": f"未能从厂家文档提取出模型清单：{label}，保留原模型清单",
-            })
-            return False
-        where = "文档"
-    else:
+    extracted = None
+    source = ""
+    where = ""
+    if models_url:
         channel = _channel_for_provider(app, str(provider.get("id") or ""),
                                         str(mode.get("base_url") or ""))
         api_key = channel.api_key if channel else ""
@@ -684,6 +671,28 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
             return False
         source = "api"
         where = "模型接口"
+    if extracted is None and docs_url:
+        try:
+            text = html_to_text(fetch_plan_doc(docs_url, proxy=app.docs_proxy()))
+        except Exception as exc:  # keep the old list
+            text = None
+            report["alerts"].append({
+                "channel": "", "kind": "provider_models_fetch",
+                "message": f"抓取厂家文档失败：{label}（{str(exc)[:160]}），保留原模型清单",
+            })
+        if text is not None:
+            extracted, source = extract_doc_models(
+                app, text, label, "provider_models_llm", report)
+            if not extracted:
+                report["alerts"].append({
+                    "channel": "", "kind": "provider_models_empty",
+                    "message": f"未能从厂家文档提取出模型清单：{label}，保留原模型清单",
+                })
+                extracted = None
+            else:
+                where = "文档"
+    if extracted is None:  # no models_url and docs failed — keep the old list
+        return False
 
     old = [str(m) for m in mode.get("models") or []]
     new = [str(m).strip() for m in extracted if str(m).strip()]
@@ -726,8 +735,9 @@ def refresh_providers(app, report: dict, vendor_id=None) -> None:
 
     For every vendor mode that exposes a docs_url the LLM extraction runs
     first when defaults.maintenance_model is set, with the deterministic
-    list-line rules as fallback; otherwise a models_url JSON endpoint is
-    consulted. A changed list is written onto the in-memory registry entry
+    list-line rules as fallback; when the docs yield nothing and a
+    models_url JSON endpoint exists it is consulted as a fallback. A changed
+    list is written onto the in-memory registry entry
     and persisted into the user overlay file (with a backup); failures only
     raise alerts and never touch the data. When vendor_id is given only
     the vendor with that id is refreshed.

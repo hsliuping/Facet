@@ -80,6 +80,7 @@ def build_seed() -> dict:
             {"name": "default", "protocol": "anthropic",
              "channels": ["anthropic-template"]},
         ],
+        "setup": {"wizard_done": False},
     }
 
 
