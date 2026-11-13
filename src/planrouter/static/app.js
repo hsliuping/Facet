@@ -21,6 +21,16 @@ function storeKey(kind, value, remember) {
   } catch (_) { /* private mode */ }
 }
 
+const PAGE_TITLES = {
+  dashboard: '仪表板', free: '免费模型',
+  channels: '渠道配置', routes: '路由链', models: '模型接入',
+  subscriptions: '套餐订阅', vendors: '厂家管理',
+  apikeys: 'API Keys', adminkey: '管理密钥',
+  status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
+  members: '成员用量',
+  quickstart: '快速开始',
+};
+
 const state = {
   config: null,
   snapshot: null,
@@ -130,8 +140,8 @@ function promptForAuth(isApi) {
     authPrompts[kind] = askText({
       title: isApi ? '需要管理密钥' : '需要 API Key',
       message: isApi
-        ? '管理接口返回 401。首次登录默认填 admin；登录后可用右上角「管理密钥」重设或随机生成新的密钥。'
-        : '网关接口返回 401。填写 listen.api_key（API Key），也可点右上角「API Key」。',
+        ? '管理接口返回 401。首次登录默认填 admin；登录后可在「管理密钥」页验证旧密钥后替换。'
+        : '网关接口返回 401。填写 listen.api_key（API Key），也可在「API Keys」页复制或生成。',
       password: true,
       remember: true,
     }).finally(() => { authPrompts[kind] = null; });
@@ -613,15 +623,6 @@ function renderBanner() {
   $('banner-view').onclick = () => switchPage('subscriptions');
 }
 
-// One sidebar entry per page; the menu and every panel share this key space.
-const PAGE_TITLES = {
-  dashboard: '仪表板', free: '免费模型',
-  channels: '渠道配置', routes: '路由链', models: '模型接入',
-  subscriptions: '套餐订阅', vendors: '厂家管理',
-  status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
-  members: '成员用量',
-};
-
 // The sidebar selection is mirrored in the URL hash ("#/vendors"), so a
 // reload or a bookmark reopens the page that was open instead of falling back
 // to the dashboard.
@@ -662,6 +663,12 @@ function switchPage(name) {
   }
   if (name === 'requests') loadRequests().catch(() => {});
   if (name === 'members') loadMembers().catch((e) => toast(e.message, 'bad'));
+  if (name === 'quickstart') {
+    const open = $('btn-open-wizard');
+    if (open) open.onclick = () => renderWizard('welcome').catch(() => {});
+    renderWizard('welcome').catch(() => {});
+  }
+  if (name === 'apikeys') loadApiKeys().catch((e) => toast(e.message, 'bad'));
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -1791,56 +1798,86 @@ async function loadNotifications() {
 }
 
 // ---------------------------------------------------------------- members
-// Member keys + per-member usage. One page, two tables; keys are shown in
-// full so the admin can copy them straight to the member (same as One-API).
+// Per-member usage only; the keys themselves live on the "API Keys" page.
 
 async function loadMembers(range) {
   if (range) state.memberRange = range;
-  const [keys, usage] = await Promise.all([
-    api('/api/keys'),
-    api('/api/usage/users/' + state.memberRange),
-  ]);
+  const usage = await api('/api/usage/users/' + state.memberRange);
   document.querySelectorAll('[data-member-range]').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.memberRange) === state.memberRange));
-  renderMemberKeys(keys.keys || []);
   renderMemberUsage(usage);
 }
 
-function renderMemberKeys(rows) {
-  const body = $('member-keys-body');
+async function loadApiKeys() {
+  renderApiKeys(await api('/api/keys'));
+}
+
+function renderApiKeys(payload) {
+  const master = (payload && payload.master) || '';
+  const enabled = payload ? payload.master_enabled !== false : true;
+  const masterEl = $('master-key-value');
+  masterEl.textContent = master || '未设置（当前网关不校验主密钥）';
+  masterEl.dataset.copy = master;
+  masterEl.dataset.enabled = enabled && master ? '1' : '0';
+  masterEl.onclick = () => { if (master) copyText(master); };
+
+  const statusEl = $('master-key-status');
+  const toggleEl = $('btn-toggle-master');
+  if (!master) {
+    statusEl.textContent = '未设置';
+    statusEl.className = 'tag unknown';
+    toggleEl.textContent = '暂停主密钥';
+    toggleEl.disabled = true;
+  } else if (enabled) {
+    statusEl.textContent = '启用';
+    statusEl.className = 'tag active';
+    toggleEl.textContent = '暂停主密钥';
+    toggleEl.disabled = false;
+  } else {
+    statusEl.textContent = '已暂停';
+    statusEl.className = 'tag unknown';
+    toggleEl.textContent = '启用主密钥';
+    toggleEl.disabled = false;
+  }
+
+  const rows = (payload && payload.keys) || [];
+  const body = $('api-keys-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有成员 key。上方输入名称点「新建 Key」即可签发。</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有 API Key。点右上角「生成新 Key」即可签发。</td></tr>';
     return;
   }
   body.innerHTML = rows.map((r) => {
     const when = r.created ? new Date(r.created * 1000).toLocaleString() : '—';
+    const active = r.enabled !== false;
     return `<tr>
       <td>${esc(r.name)}</td>
-      <td><code class="member-key" data-copy="${esc(r.key)}" title="点击复制">${esc(r.key)}</code></td>
-      <td>${r.enabled !== false ? '<span class="tag active">有效</span>' : '<span class="tag unknown">已吊销</span>'}</td>
+      <td><code data-copy="${esc(r.key)}" title="点击复制">${esc(r.key)}</code></td>
+      <td>${active ? '<span class="tag active">启用</span>' : '<span class="tag unknown">已暂停</span>'}</td>
       <td>${when}</td>
-      <td>${r.enabled !== false
-        ? `<button class="btn small ghost" data-revoke="${esc(r.key)}">吊销</button>`
-        : '<span class="sub-note">—</span>'}</td>
+      <td>${active
+        ? `<button class="btn small ghost" data-pause="${esc(r.key)}">暂停</button>`
+        : `<button class="btn small" data-enable="${esc(r.key)}">启用</button>`}
+        <button class="btn small ghost" data-delete="${esc(r.key)}">删除</button></td>
     </tr>`;
   }).join('');
   body.querySelectorAll('[data-copy]').forEach((el) => {
-    el.onclick = () => {
-      navigator.clipboard.writeText(el.dataset.copy)
-        .then(() => toast('Key 已复制到剪贴板'))
-        .catch(() => toast('复制失败，请手动选择', 'bad'));
-    };
+    el.onclick = () => copyText(el.dataset.copy);
   });
-  body.querySelectorAll('[data-revoke]').forEach((el) => {
-    el.onclick = async () => {
-      if (!confirm('吊销后该 key 立即失效，确定？')) return;
-      try {
-        await api('/api/keys/revoke', { method: 'POST', body: { key: el.dataset.revoke } });
-        toast('已吊销');
-        loadMembers().catch(() => {});
-      } catch (e) { toast(e.message, 'bad'); }
-    };
-  });
+  const bindAction = (selector, datasetKey, path, doneText, confirmText) => {
+    body.querySelectorAll(selector).forEach((button) => {
+      button.onclick = async () => {
+        if (confirmText && !(await askConfirm('确认操作', confirmText))) return;
+        try {
+          await api(path, { method: 'POST', body: { key: button.dataset[datasetKey] } });
+          toast(doneText);
+          loadApiKeys().catch(() => {});
+        } catch (e) { toast(e.message, 'bad'); }
+      };
+    });
+  };
+  bindAction('[data-pause]', 'pause', '/api/keys/pause', '已暂停', '暂停后该 Key 立即失效，可随时重新启用，确定？');
+  bindAction('[data-enable]', 'enable', '/api/keys/enable', '已启用');
+  bindAction('[data-delete]', 'delete', '/api/keys/delete', '已删除', '删除后不可恢复，确定删除这个 Key？');
 }
 
 function renderMemberUsage(usage) {
@@ -3252,27 +3289,92 @@ function renderMaintLogs() {
 $('btn-refresh-maintlog').onclick = () =>
   loadMaintLogs().catch((e) => toast(e.message, 'bad'));
 
-// The admin key is server-side state: "admin" until the operator rotates it.
-// The dialog both writes it to router.json (live immediately) and remembers it
-// locally, so the console keeps working with the new value after a reload.
-$('btn-admin-key').onclick = async () => {
+// Management pages: the sidebar footer buttons jump to the dedicated panels.
+$('btn-admin-key').onclick = () => switchPage('adminkey');
+$('btn-quickstart').onclick = () => switchPage('quickstart');
+
+$('btn-api-key-create').onclick = async () => {
   const answer = await askText({
-    title: '管理密钥',
-    message: '管理密钥用于登录控制台和调用管理 API（listen.admin_key）。首次登录默认是 admin。输入新密钥并写入 router.json（立即生效）；留空则随机生成。',
-    password: true, remember: false, confirmText: '保存',
+    title: '生成新 API Key',
+    message: '给这个 Key 起个名字（工具名或成员名），方便之后暂停或删除。',
+    confirmText: '生成',
   });
-  if (!answer) return;
+  if (!answer || !answer.value.trim()) return;
+  try {
+    await api('/api/keys', { method: 'POST', body: { name: answer.value.trim() } });
+    await loadApiKeys();
+    toast('已生成新 Key，点击表格中的 Key 即可复制');
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+};
+
+$('btn-copy-master').onclick = () => {
+  const value = $('master-key-value').dataset.copy || '';
+  if (value) copyText(value); else toast('当前没有配置主密钥', 'warn');
+};
+
+$('btn-toggle-master').onclick = async () => {
+  const pass = $('master-admin-pass').value.trim();
+  if (!pass) { toast('请先填写管理密码', 'bad'); return; }
+  const enabled = $('master-key-value').dataset.enabled === '1';
+  if (enabled && !(await askConfirm('暂停主密钥',
+    '暂停后，用主密钥发起的调用会立即返回 401；已签发的成员 API Key 不受影响。确定暂停？'))) return;
+  try {
+    await api('/api/master-key', {
+      method: 'POST', body: { action: enabled ? 'pause' : 'enable', admin_key: pass },
+    });
+    $('master-admin-pass').value = '';
+    toast(enabled ? '主密钥已暂停' : '主密钥已启用');
+    await loadApiKeys();
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+};
+
+$('btn-rotate-master').onclick = async () => {
+  const pass = $('master-admin-pass').value.trim();
+  const newKey = $('master-new-key').value.trim();
+  if (!pass) { toast('请先填写管理密码', 'bad'); return; }
+  if (newKey && newKey.length < 8) { toast('新主密钥至少 8 个字符', 'bad'); return; }
+  if (!(await askConfirm('更换主密钥', newKey
+    ? '旧主密钥将立即失效，仍在用旧密钥的工具需要改用新密钥。确定更换？'
+    : '留空将随机生成一个新主密钥，旧主密钥立即失效。确定更换？'))) return;
+  const oldMaster = $('master-key-value').dataset.copy || '';
+  try {
+    const res = await api('/api/master-key', {
+      method: 'POST', body: { action: 'rotate', key: newKey, admin_key: pass },
+    });
+    // Only follow the rotation when this browser itself signs in with the
+    // master key; a member key keeps its own identity and attribution.
+    if (!state.key || state.key === oldMaster) {
+      state.key = res.api_key;
+      storeKey('gateway', state.key, true);
+    }
+    $('master-admin-pass').value = '';
+    $('master-new-key').value = '';
+    toast('主密钥已更换');
+    await loadApiKeys();
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+};
+
+$('btn-admin-key-save').onclick = async () => {
+  const oldKey = $('admin-old-key').value.trim();
+  const newKey = $('admin-new-key').value.trim();
+  const again = $('admin-new-key2').value.trim();
+  if (!oldKey) { toast('请填写当前管理密钥', 'bad'); return; }
+  if (!newKey) { toast('请填写新管理密钥', 'bad'); return; }
+  if (newKey !== again) { toast('两次输入的新密钥不一致', 'bad'); return; }
   try {
     const res = await api('/api/admin/key', {
-      method: 'POST', body: answer.value ? { key: answer.value } : {},
+      method: 'POST', body: { key: newKey, old_key: oldKey },
     });
     state.adminKey = res.admin_key;
     storeKey('admin', res.admin_key, true);
-    await askText({
-      title: '新的管理密钥已生效',
-      message: '请复制保存；本机浏览器已记住，下次打开免填。',
-      value: res.admin_key, password: false, confirmText: '知道了',
-    });
+    ['admin-old-key', 'admin-new-key', 'admin-new-key2'].forEach((id) => { $(id).value = ''; });
+    toast('管理密钥已更新，本浏览器已自动切换');
     loadState().catch(() => {});
   } catch (e) {
     toast(e.message, 'bad');
@@ -4383,17 +4485,7 @@ function bindEvents() {
       toast('已从磁盘重载');
     } catch (err) { toast(err.message, 'bad'); }
   };
-  $('btn-key').onclick = async () => {
-    const answer = await askText({
-      title: 'API Key',
-      message: 'API Key（listen.api_key）用于工具/客户端调用网关。留空表示清除。密钥只保存在本机浏览器。',
-      value: state.key, password: true, remember: true,
-    });
-    if (!answer) return;
-    state.key = answer.value;
-    storeKey('gateway', state.key, answer.remember);
-    loadState().then(() => toast('密钥已更新')).catch((e) => toast(e.message, 'bad'));
-  };
+  $('btn-key').onclick = () => switchPage('apikeys');
   $('btn-export').onclick = () => {
     const blob = new Blob([JSON.stringify(state.config, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -4562,16 +4654,6 @@ function bindEvents() {
   document.querySelectorAll('[data-member-range]').forEach((button) => {
     button.onclick = () => loadMembers(Number(button.dataset.memberRange)).catch((e) => toast(e.message, 'bad'));
   });
-  $('btn-member-create').onclick = async () => {
-    const name = $('member-name').value.trim();
-    if (!name) { toast('请先填写成员名称', 'bad'); return; }
-    try {
-      const record = await api('/api/keys', { method: 'POST', body: { name } });
-      $('member-name').value = '';
-      toast(`已为 ${record.name} 创建 key：${record.key}`);
-      loadMembers().catch(() => {});
-    } catch (e) { toast(e.message, 'bad'); }
-  };
 
   $('btn-save-settings').onclick = () => saveSettings(false);
   $('btn-test-notify').onclick = () => saveSettings(true);

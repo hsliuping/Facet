@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PlanRouter · 渠道调度控制台</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20261113-3">
 </head>
 <body>
   <div class="shell">
@@ -19,6 +19,7 @@
       <span class="badge" id="conn-badge">连接中</span>
       <nav class="menu">
         <button class="menu-item active" data-tab="dashboard">仪表板</button>
+        <button class="menu-item" data-tab="quickstart">快速开始</button>
         <button class="menu-item" data-tab="free">免费模型</button>
         <div class="menu-group">渠道与路由</div>
         <button class="menu-item" data-tab="channels">渠道配置</button>
@@ -27,6 +28,9 @@
         <div class="menu-group">商务与厂家</div>
         <button class="menu-item" data-tab="subscriptions">套餐订阅</button>
         <button class="menu-item" data-tab="vendors">厂家管理</button>
+        <div class="menu-group">访问与安全</div>
+        <button class="menu-item" data-tab="apikeys">API Keys</button>
+        <button class="menu-item" data-tab="adminkey">管理密钥</button>
         <div class="menu-group">运行与维护</div>
         <button class="menu-item" data-tab="status">运行状态</button>
         <button class="menu-item" data-tab="maintenance">自维护</button>
@@ -36,8 +40,8 @@
         <button class="menu-item" data-tab="requests">请求日志</button>
       </nav>
       <div class="sidebar-foot">
-        <button class="btn ghost" id="btn-key" title="API Key：给工具/客户端调用网关用的，对应 listen.api_key">API Key</button>
-        <button class="btn ghost" id="btn-admin-key" title="管理密钥：登录控制台用的，对应 listen.admin_key，默认 admin">管理密钥</button>
+        <button class="btn ghost" id="btn-key" title="打开 API Keys 页：生成、暂停、删除、复制调用网关用的 Key">API Keys</button>
+        <button class="btn ghost" id="btn-admin-key" title="打开管理密钥页：验证当前密钥后替换">管理密钥</button>
       </div>
     </aside>
 
@@ -45,6 +49,7 @@
       <header class="pagehead">
         <h2 id="page-title">仪表板</h2>
         <div class="pagehead-right">
+          <button class="btn ghost" id="btn-quickstart" title="重新运行新手配置向导">快速开始</button>
           <button class="btn ghost" id="btn-export">导出配置</button>
           <button class="btn primary" id="btn-save">立即保存</button>
         </div>
@@ -219,7 +224,7 @@
             <div class="card-top">
               <div>
                 <h3>接入配置生成</h3>
-                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code><API Key></code> 占位，请到「API Key」页创建后替换。</p>
+                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code><API Key></code> 占位，请到「API Keys」页创建后替换。</p>
               </div>
             </div>
             <div class="form-grid">
@@ -681,30 +686,10 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
           <div class="panel-head">
             <div>
               <h2>成员用量</h2>
-              <p>给每个人发一个独立 key（sk-pr- 前缀），用量按人分开统计。用户 key 与主密钥等同网关凭证，仅用于归属，不区分可用模型。</p>
+              <p>按人分开统计用量。成员使用的 Key 在「API Keys」页统一生成、暂停或删除；key 仅用于归属，不区分可用模型。</p>
             </div>
             <div class="actions">
-              <input id="member-name" type="text" placeholder="成员名称，如 alice">
-              <button class="btn" id="btn-member-create">新建 Key</button>
-            </div>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>成员 Key</h3>
-                <p class="sub-note">吊销后该 key 立即失效，历史统计中的名称保留</p>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table class="status-table">
-                <thead>
-                  <tr>
-                    <th>成员</th><th>Key</th><th>状态</th><th>创建时间</th><th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="member-keys-body"></tbody>
-              </table>
+              <button class="btn ghost" data-goto-tab="apikeys">管理 API Keys</button>
             </div>
           </div>
 
@@ -729,6 +714,122 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
                 <tbody id="member-usage-body"></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-apikeys">
+          <div class="panel-head">
+            <div>
+              <h2>API Keys</h2>
+              <p>工具/客户端调用本网关时使用的密钥。主密钥来自网关配置；下面的 Key 可随时生成、暂停或删除，多个 Key 可同时使用。</p>
+            </div>
+            <div class="actions">
+              <button class="btn" id="btn-api-key-create">生成新 Key</button>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>主密钥</h3>
+                <p class="sub-note">对应 <code>listen.api_key</code>；可暂停、启用或更换，操作前需填写管理密码</p>
+              </div>
+              <div class="actions">
+                <span id="master-key-status" class="tag active">加载中</span>
+                <button class="btn small" id="btn-copy-master">复制</button>
+              </div>
+            </div>
+            <div id="master-key-line" style="margin-top:4px"><code id="master-key-value">加载中…</code></div>
+            <div class="form-grid" style="margin-top:14px">
+              <div class="field">
+                <label for="master-admin-pass">管理密码</label>
+                <input id="master-admin-pass" type="password" autocomplete="current-password"
+                  placeholder="填写当前管理密码后才能操作">
+              </div>
+              <div class="field">
+                <label for="master-new-key">新主密钥</label>
+                <input id="master-new-key" type="password" autocomplete="new-password"
+                  placeholder="留空则自动生成，至少 8 个字符">
+              </div>
+            </div>
+            <div class="actions" style="margin-top:14px">
+              <button class="btn" id="btn-toggle-master">暂停主密钥</button>
+              <button class="btn primary" id="btn-rotate-master">更换主密钥</button>
+            </div>
+            <p class="hint">暂停后主密钥立即失效，使用主密钥的工具会收到 401，已签发的 API Key 不受影响；更换后请同步更新所有使用主密钥的工具。</p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>已生成的 Key</h3>
+                <p class="sub-note">暂停后立即失效、记录保留，可随时启用；删除后不可恢复</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>名称</th><th>Key</th><th>状态</th><th>创建时间</th><th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="api-keys-body">
+                  <tr><td colspan="5" class="sub-note">加载中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="hint">在工具里把网关地址指向本控制台，API Key 填上表中的任意一个即可。停用或删除的 Key 会立即被网关拒绝。</p>
+        </section>
+
+        <section class="panel" id="panel-adminkey">
+          <div class="panel-head">
+            <div>
+              <h2>管理密钥</h2>
+              <p>登录控制台、执行管理操作时使用的密码，对应 <code>listen.admin_key</code>。修改前必须验证当前管理密钥。</p>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>修改管理密钥</h3>
+                <p class="sub-note">先填写当前密钥，再输入新密钥；替换成功后立即生效，本浏览器会自动改用新密钥</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="field wide">
+                <label for="admin-old-key">当前管理密钥</label>
+                <input id="admin-old-key" type="password" autocomplete="current-password"
+                  placeholder="输入当前管理密钥">
+              </div>
+              <div class="field">
+                <label for="admin-new-key">新管理密钥</label>
+                <input id="admin-new-key" type="password" autocomplete="new-password"
+                  placeholder="至少 4 个字符">
+              </div>
+              <div class="field">
+                <label for="admin-new-key2">确认新密钥</label>
+                <input id="admin-new-key2" type="password" autocomplete="new-password"
+                  placeholder="再输入一次新密钥">
+              </div>
+            </div>
+            <div class="actions" style="margin-top:14px">
+              <button class="btn primary" id="btn-admin-key-save">验证并替换</button>
+            </div>
+          </div>
+          <p class="hint">忘记管理密钥时，可在数据目录的 <code>router.json</code> 中修改 <code>listen.admin_key</code>，再重载网关。</p>
+        </section>
+
+        <section class="panel" id="panel-quickstart" hidden>
+          <div class="panel-head">
+            <div>
+              <h2>快速开始</h2>
+              <p>新手配置向导以弹窗形式打开：点击右上角「快速开始」或本页按钮即可。向导会带您设置保护键、选择厂家、测试连通并生成调用密钥。</p>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="btn-open-wizard">打开配置向导</button>
           </div>
         </section>
 
@@ -772,7 +873,8 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261113-3"></script>
+  <script src="/static/setup.js?v=20261113-7"></script>
 </body>
 </html>
 
