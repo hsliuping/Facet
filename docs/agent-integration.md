@@ -94,7 +94,7 @@ curl -s http://127.0.0.1:8787/v1/chat/completions \
 1. **启动**：确保 Facet 网关服务已启动（`docker compose up -d` 或者本地 `facet serve`）。
 2. **快速开始**：
    - 在 Trae / IDE 调出 Facet 侧边栏（或命令面板：`PlanRouter: Open`）。
-   - 弹出的 **新手向导**（8 步）引导设置保护键、选择厂家、填入 Key，并自动测试连通性。
+   - 弹出的 **新手向导**（8 步）引导设置管理密码、选择厂家、填入 Key，并自动测试连通性。
    - 向导完成后，配置写入 `~/.facet/router.json`，此后可直接在聊天中使用 `/scheduler`、`/route` 等指令。
 3. **修改配置**：如需修改，可通过右上角「快速开始」重新打开向导，或直接编辑 `~/.facet/router.json`。
 

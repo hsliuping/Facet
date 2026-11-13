@@ -2,7 +2,7 @@
  * 新手配置向导 — modal multi-step wizard for first-time setup.
  *
  * 八步线性流程：
- *   欢迎 → 设置保护键 → 免费/付费偏好 → 选择厂家 → 填写厂家 Key → 测试并保存渠道
+ *   欢迎 → 设置管理密码 → 免费/付费偏好 → 选择厂家 → 填写厂家 Key → 测试并保存渠道
  *   → 生成网关 Key → 完成
  *
  * 工程约定（此前版本的教训）：
@@ -27,6 +27,7 @@ const wizardState = {
   billing: null,    // 付费形态：'payg' | 'token_plan' | 'coding_plan' | 'agent_plan' | null
   provider: null,   // { id, name, modeKey, mode }
   providerKey: '',
+  providerCreds: {}, // 管理面 AK/SK（credential_envs），供额度对齐/余量查询
   testResult: null, // { ok, latency, error, saved }
   generatedKey: '',
 };
@@ -41,7 +42,7 @@ const WIZARD_STEPS = [
         <div class="wizard-step-content">
           <p>向导会带您做三件事：</p>
           <p>1. 设置一个管理密码，防止他人改动您的配置；</p>
-          <p>2. 选择一家模型厂家并填入 API Key（还没有也没关系，可以跳过）；</p>
+          <p>2. 选择服务形态与厂家，填入 API Key（还没有也没关系，可以跳过）；</p>
           <p>3. 自动测试连通性，并生成一把属于您的调用密钥。</p>
           <p class="hint">随时可以点「取消」退出，之后通过右上角「快速开始」再次打开。</p>
         </div>
@@ -50,26 +51,49 @@ const WIZARD_STEPS = [
   },
   {
     id: 'admin-key',
-    title: '设置保护键',
+    title: '设置管理密码',
     description: '管理密码用于验证敏感操作（修改配置、更换密钥等），建议设置。',
     async render() {
       const has = !!readStoredKey('admin');
       return `
         <div class="wizard-step-content">
-          <p>当前保护键：${has ? '已设置' : '未设置（首次默认为 admin）'}</p>
+          <p>当前管理密码：<span id="wizard-admin-status">检查中…</span></p>
           <div class="actions">
-            <button class="btn primary" id="wizard-set-admin">${has ? '更换保护键' : '设置保护键'}</button>
+            <button class="btn primary" id="wizard-set-admin">${has ? '更换管理密码' : '设置管理密码'}</button>
           </div>
           <p class="hint">不需要就点「下一步」跳过。</p>
         </div>
       `;
     },
     async onEnter() {
+      // 服务端实况探测：本地存的状态可能过期（换机器/服务端已改密码）。
+      // 用裸 fetch 而非 api()，避免 401 触发全局「管理密钥」弹框。
+      const probe = async (key) => {
+        try {
+          const r = await fetch('/api/keys', { headers: { 'X-Admin-Key': key } });
+          return r.ok;
+        } catch (_) { return null; }
+      };
+      const el = $('wizard-admin-status');
+      if (el) {
+        const stored = readStoredKey('admin');
+        const storedOk = stored ? await probe(stored) : false;
+        let text;
+        if (storedOk === null) text = '无法连接服务端，请稍后重试';
+        else if (storedOk) text = '已设置（本机已保存，可直接更换）';
+        else {
+          const adminOk = await probe('admin');
+          if (adminOk === null) text = '无法连接服务端，请稍后重试';
+          else if (adminOk) text = '服务端仍在用默认密码 admin，建议立即更换';
+          else text = '服务端已设置管理密码，本机未保存';
+        }
+        el.textContent = text;
+      }
       const btn = $('wizard-set-admin');
       if (!btn) return;
       btn.onclick = async () => {
         const { value } = await askText({
-          title: '设置保护键',
+          title: '设置管理密码',
           message: '输入新的管理密码，设置后请妥善保管。',
           password: true,
           confirmText: '确定',
@@ -82,7 +106,7 @@ const WIZARD_STEPS = [
           });
           state.adminKey = value;
           storeKey('admin', value, true);
-          toast('保护键已更新');
+          toast('管理密码已更新');
           renderWizard();
         } catch (e) {
           toast(e.message, 'bad');
@@ -119,7 +143,9 @@ const WIZARD_STEPS = [
       providers.forEach((p) => {
         Object.entries(p.modes || {}).forEach(([k, m]) => {
           if (m.tier === 'free') freeNames.push(p.name || p.id);
-          else shapes[wizardBilling(k, m)] = (shapes[wizardBilling(k, m)] || [])
+          // 免费额度的按量模式（如火山 payg）同样按形态归类，
+          // 这样「按量付费」筛选也能看到带免费额度的厂家。
+          shapes[wizardBilling(k, m)] = (shapes[wizardBilling(k, m)] || [])
             .concat(p.name || p.id);
         });
       });
@@ -241,9 +267,26 @@ const WIZARD_STEPS = [
       const p = wizardState.provider;
       if (!p) return '<div class="wizard-step-content"><p>尚未选择厂家，请点「上一步」返回选择。</p></div>';
       const mode = p.mode || {};
+      const manual = `<a href="#" data-wizard-guide="${esc(p.id)}">查看使用手册</a>`;
       const docs = mode.keys_url
-        ? `<p class="hint">还没有 Key？<a href="${esc(mode.keys_url)}" target="_blank" rel="noopener">前往官方控制台获取 ↗</a></p>`
-        : '';
+        ? `<p class="hint">还没有 Key？<a href="${esc(mode.keys_url)}" target="_blank" rel="noopener">前往官方控制台获取 ↗</a>　·　${manual}</p>`
+        : `<p class="hint">填写前建议先读 ${manual}（含免费额度说明与凭据获取步骤）。</p>`;
+      // 管理面凭据（如火山 IAM AK/SK、百炼 RAM AK/SK）：免费额度对齐与
+      // 套餐余量查询用它签名调厂家管理 API，缺了就拉不到真实额度。
+      const envs = mode.credential_envs || [];
+      const credFields = envs.length ? `
+          <div class="wizard-cred-block">
+            <p class="hint">该厂家的免费额度/余量查询还需要管理面凭据（与上方 API Key 不同），建议一并填写：</p>
+            <div class="form-grid">
+              ${envs.map((e) => `
+              <div class="field">
+                <label>${esc(e.label || e.env)}（${esc(e.env)}）</label>
+                <input type="text" data-wizard-cred="${esc(e.env)}" autocomplete="off" spellcheck="false"
+                       placeholder="${esc(e.env)}，可稍后在「渠道配置」补填">
+              </div>`).join('')}
+            </div>
+            ${typeof vendorCredHelp === 'function' ? vendorCredHelp(mode.credential_help) : ''}
+          </div>` : '';
       return `
         <div class="wizard-step-content">
           <p>厂家：<strong>${esc(p.name)}</strong>（${esc(mode.label || p.modeKey)}）</p>
@@ -255,6 +298,7 @@ const WIZARD_STEPS = [
                      placeholder="粘贴厂家的 API Key">
             </div>
           </div>
+          ${credFields}
           <p class="hint">暂时没有 Key？留空点「下一步」可以跳过，稍后在「渠道配置」里补填。</p>
         </div>
       `;
@@ -262,6 +306,11 @@ const WIZARD_STEPS = [
     async onNext() {
       const input = $('wizard-provider-key');
       wizardState.providerKey = input ? input.value.trim() : '';
+      wizardState.providerCreds = {};
+      document.querySelectorAll('[data-wizard-cred]').forEach((inp) => {
+        const v = inp.value.trim();
+        if (v) wizardState.providerCreds[inp.dataset.wizardCred] = v;
+      });
       return true;
     },
   },
@@ -298,6 +347,7 @@ const WIZARD_STEPS = [
         mode: p.modeKey,
         base_url: mode.base_url,
         api_key: wizardState.providerKey,
+        creds: wizardState.providerCreds,
         models,
         priority: 100,
         enabled: true,
@@ -367,11 +417,15 @@ const WIZARD_STEPS = [
       if (regen) {
         regen.onclick = async () => {
           try {
+            // 重新生成前先吊销旧密钥，避免 quickstart Key 越积越多。
+            if (wizardState.generatedKey) {
+              await api('/api/keys/delete', { method: 'POST', body: { key: wizardState.generatedKey } });
+            }
             const record = await api('/api/keys', { method: 'POST', body: { name: 'quickstart' } });
             wizardState.generatedKey = record.key || '';
             state.key = wizardState.generatedKey;
             storeKey('gateway', wizardState.generatedKey, true);
-            toast('已生成新密钥');
+            toast('已生成新密钥（旧密钥已吊销）');
             renderWizard();
           } catch (e) {
             toast(e.message, 'bad');
@@ -408,7 +462,7 @@ const WIZARD_STEPS = [
   -H "Authorization: Bearer ${esc(key || 'YOUR-KEY')}" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"auto","messages":[{"role":"user","content":"你好"}]}'</div>
-          <p class="hint">模型名填 auto 会按您的路由链自动调度；测试未跳过的可在「渠道配置」「路由链」页继续调整。</p>
+          <p class="hint">模型名填 auto 会按路由链自动调度；渠道可在「渠道配置」页调整，免费额度可在「免费模型」页查看。</p>
         </div>
       `;
     },
@@ -447,7 +501,7 @@ function wizardPickMode(provider, tier, billing) {
   const wanted = tier
     ? keys.filter((k) => (tier === 'free'
       ? modes[k].tier === 'free'
-      : modes[k].tier !== 'free' && (!billing || wizardBilling(k, modes[k]) === billing)))
+      : !billing || wizardBilling(k, modes[k]) === billing))
     : keys;
   const ordered = [
     ...WIZARD_MODE_ORDER.filter((k) => wanted.includes(k)),
@@ -518,7 +572,6 @@ function closeWizard() {
 async function finishWizard() {
   try {
     localStorage.setItem('setup_done', 'true');
-    localStorage.setItem('wizard_wizard_done', 'true');
   } catch (_) { /* ignore */ }
   try {
     await api('/api/setup/wizard', { method: 'POST', body: { done: true } });
@@ -585,6 +638,15 @@ async function renderWizard(stepId) {
   const finish = $('wizard-finish');
   if (finish) finish.onclick = () => finishWizard().catch(() => {});
 
+  // 「查看使用手册」复用渠道编辑的使用文档弹层（app.js 的 showGuideOverlay）。
+  const guideLink = wrap.querySelector('[data-wizard-guide]');
+  if (guideLink) {
+    guideLink.onclick = (e) => {
+      e.preventDefault();
+      if (typeof showGuideOverlay === 'function') showGuideOverlay(guideLink.dataset.wizardGuide);
+    };
+  }
+
   try {
     await step.onEnter?.();
   } catch (e) {
@@ -600,11 +662,15 @@ async function initWizard() {
     if (done === 'true' || dismissed === 'true') return;
   } catch (_) { /* ignore */ }
   if (readStoredKey('admin')) return; // 已登录过管理界面，视为非全新
+  // 裸 fetch 试探（默认 admin）：走 api() 时 401 会先弹「管理密钥」框，
+  // 把全新用户挡在向导之外，故这里绝不触发那个弹框。
   try {
-    const payload = await api('/api/keys');
+    const r = await fetch('/api/keys', { headers: { 'X-Admin-Key': 'admin' } });
+    if (!r.ok) return; // 密码已改过：不打扰，等用户先解锁控制台
+    const payload = await r.json();
     if (payload && (payload.master || (payload.keys && payload.keys.length))) return;
   } catch (_) {
-    return; // 鉴权未通过或网络异常时不打扰
+    return; // 网络异常时不打扰
   }
   renderWizard('welcome').catch(() => {});
 }
