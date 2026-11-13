@@ -14,9 +14,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
-from planrouter import ark_quota
-from planrouter import freealign
-from planrouter import providers as providers_mod
+from facet.gateway import ark_quota
+from facet.gateway import freealign
+from facet.gateway import providers as providers_mod
 
 
 AK, SK = "AKLTfixture", "SKfixture"

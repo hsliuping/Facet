@@ -39,7 +39,7 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "serve":
         # The gateway ships in this wheel; `facet serve` is its product form.
-        from planrouter.cli import main as serve_main
+        from .gateway.cli import main as serve_main
         return serve_main(argv[1:])
     ap = argparse.ArgumentParser(
         prog="facet", description="Pick models from the Facet registry table."

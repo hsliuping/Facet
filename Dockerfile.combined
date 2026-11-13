@@ -1,4 +1,4 @@
-# Combined PlanRouter + Computer-Use Agent
+# Combined Facet Gateway + Computer-Use Agent
 # Build:  docker build -f Dockerfile.combined -t facet-combined:latest .
 # Run gateway:  docker run -d --name facet-gateway -p 8787:8787 -v ./data:/data facet-combined:latest gateway
 # Run agent:    docker run --rm --network host -v ./data:/data facet-combined:latest agent --task "..."
@@ -18,7 +18,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 # ---- Cached Playwright browsers (copy-only stage) ----
 FROM ${PLAYWRIGHT_BROWSERS_IMAGE} AS pw-browsers
 
-# ---- Builder: build PlanRouter wheel ----
+# ---- Builder: build Facet Gateway wheel ----
 FROM base AS builder
 USER root
 WORKDIR /src
@@ -37,7 +37,7 @@ RUN npm install -g "@deepseek-ai/dsh@${DSH_VERSION}" \
        "bailian-cli@${BAILIAN_CLI_VERSION}" \
     && npm cache clean --force
 
-# ---- Final: PlanRouter + Agent ----
+# ---- Final: Facet Gateway + Agent ----
 FROM base
 USER root
 ENV PYTHONUNBUFFERED=1 \
@@ -45,7 +45,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# System deps: PlanRouter + Playwright Chromium
+# System deps: Facet Gateway + Playwright Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
@@ -78,7 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# User setup (PlanRouter uses 'planrouter', agent uses 'appuser')
+# User setup (Facet gateway uses 'planrouter', agent uses 'appuser')
 # GID 1000 may already exist in base image; find next free GID
 RUN if id planrouter >/dev/null 2>&1; then :; \
     elif command -v useradd >/dev/null 2>&1; then \
@@ -97,22 +97,22 @@ RUN if id planrouter >/dev/null 2>&1; then :; \
          addgroup -g ${APP_GID} appuser \
            && adduser -G appuser -u ${APP_GID} -D appuser; \
        fi \
-    && mkdir -p /data /opt/planrouter /app /ms-playwright \
-    && chown -R planrouter:planrouter /data /opt/planrouter \
+    && mkdir -p /data /opt/facet/gateway /app /ms-playwright \
+    && chown -R planrouter:planrouter /data /opt/facet/gateway \
     && chown -R appuser:appuser /app /ms-playwright
 
-# PlanRouter wheel
+# Facet Gateway wheel
 COPY --from=builder /wheels/ /tmp/wheels/
 RUN python -m pip install --no-index --no-cache-dir /tmp/wheels/*.whl \
     && rm -rf /tmp/wheels
 
-# PlanRouter assets
-COPY docker/entrypoint.py /opt/planrouter/entrypoint.py
-COPY docker/mock_upstream.py /opt/planrouter/mock_upstream.py
-COPY docker/router.example.json /opt/planrouter/router.example.json
-COPY docs/ /opt/planrouter/docs/
-COPY docker/smoke_test.py /opt/planrouter/smoke_test.py
-COPY docker/dsh-profile/ /opt/planrouter/dsh-profile/
+# Facet Gateway assets
+COPY docker/entrypoint.py /opt/facet/gateway/entrypoint.py
+COPY docker/mock_upstream.py /opt/facet/gateway/mock_upstream.py
+COPY docker/router.example.json /opt/facet/gateway/router.example.json
+COPY docs/ /opt/facet/gateway/docs/
+COPY docker/smoke_test.py /opt/facet/gateway/smoke_test.py
+COPY docker/dsh-profile/ /opt/facet/gateway/dsh-profile/
 
 # Node binaries & DSH
 COPY --from=dsh /usr/local/bin/node /usr/local/bin/node
@@ -141,7 +141,7 @@ COPY --from=pw-browsers /ms-playwright/ /ms-playwright/
 # Agent code (kept after the Playwright layer so editing it does not trigger
 # the ~270MB browser download again).
 COPY tools/computer_use_agent.py /app/
-COPY src/planrouter /app/src/planrouter
+COPY src/facet/gateway /app/src/facet/gateway
 COPY src/facet /app/src/facet
 
 # Agent state lives under /data (script's REPO resolves to /, so profile,
@@ -152,7 +152,7 @@ COPY src/facet /app/src/facet
 
 WORKDIR /data
 
-# Expose PlanRouter gateway port
+# Expose Facet gateway port
 EXPOSE 8787 3080
 
 # Healthcheck for gateway
@@ -160,6 +160,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/', timeout=3)"]
 
 # Entrypoint dispatcher
-COPY docker/combined_entrypoint.py /opt/planrouter/combined_entrypoint.py
-ENTRYPOINT ["python", "/opt/planrouter/combined_entrypoint.py"]
+COPY docker/combined_entrypoint.py /opt/facet/gateway/combined_entrypoint.py
+ENTRYPOINT ["python", "/opt/facet/gateway/combined_entrypoint.py"]
 CMD ["gateway"]

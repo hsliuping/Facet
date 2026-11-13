@@ -34,7 +34,7 @@ const wizardState = {
 const WIZARD_STEPS = [
   {
     id: 'welcome',
-    title: '欢迎使用 PlanRouter',
+    title: '欢迎使用 Facet',
     description: '几分钟完成首次配置，马上开始多模型调度。',
     async render() {
       return `
@@ -329,7 +329,7 @@ const WIZARD_STEPS = [
   {
     id: 'gateway-key',
     title: '生成调用密钥',
-    description: '这把 Key 就是您的程序调用 PlanRouter 时使用的凭证。',
+    description: '这把 Key 就是您的程序调用 Facet 时使用的凭证。',
     async render() {
       const existing = wizardState.generatedKey || readStoredKey('gateway');
       const shown = existing

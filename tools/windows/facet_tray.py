@@ -6,7 +6,7 @@ The bundle layout this expects (written by tools/build_windows.py):
     Facet\
       runtime\python.exe         embedded CPython
       app\facet_tray.py          this file
-      app\run_gateway.py         gateway entry (planrouter.cli)
+      app\run_gateway.py         gateway entry (facet.gateway.cli)
       app\tools\computer_use_agent.py
       app\facet.ico
       data\                      router.json, keys.json, logs\

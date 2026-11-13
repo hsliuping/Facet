@@ -14,8 +14,8 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.core import load_config, parse_config, resolve_model
-from planrouter.server import App, Handler
+from facet.gateway.core import load_config, parse_config, resolve_model
+from facet.gateway.server import App, Handler
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -337,7 +337,7 @@ class ModelGatewayTests(unittest.TestCase):
 
 class ModelConsoleTests(unittest.TestCase):
     def test_console_exposes_model_policy_controls(self):
-        from planrouter.ui import STATIC_DIR
+        from facet.gateway.ui import STATIC_DIR
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         self.assertIn('data-tab="models"', html)

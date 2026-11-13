@@ -2,7 +2,7 @@ COMPREHENSIVE PROVIDER MODE ANALYSIS
 ================================================================
 
 SOURCE: overlay data/providers.json (user-overridden, runtime merge priority)
-SOURCE: builtin src/planrouter/providers.json (packaged-in, default)
+SOURCE: builtin src/facet/gateway/providers.json (packaged-in, default)
 
 OVERALL STRUCTURE:
 - Both files contain providers with "modes" objects

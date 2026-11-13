@@ -10,8 +10,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from planrouter.core import load_config
-from planrouter.server import App, Handler
+from facet.gateway.core import load_config
+from facet.gateway.server import App, Handler
 
 
 class Upstream(BaseHTTPRequestHandler):

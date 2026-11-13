@@ -1,7 +1,7 @@
-# PlanRouter test image. The app is pure stdlib; only setuptools is needed at build time.
-# Build:  docker compose build        (or: docker build -t facet-planrouter:test .)
+# Facet Gateway test image. The app is pure stdlib; only setuptools is needed at build time.
+# Build:  docker compose build        (or: docker build -t facet:test .)
 # Offline build against a locally cached Python image:
-#   docker build --build-arg BASE_IMAGE=<local-python-image> -t facet-planrouter:test .
+#   docker build --build-arg BASE_IMAGE=<local-python-image> -t facet:test .
 # Run:    docker compose up -d
 
 ARG BASE_IMAGE=python:3.12-slim
@@ -56,22 +56,22 @@ RUN if id planrouter >/dev/null 2>&1; then :; \
       addgroup planrouter \
         && adduser -G planrouter -h /data -D planrouter; \
     fi \
-    && mkdir -p /data /opt/planrouter \
+    && mkdir -p /data /opt/facet/gateway \
     && chown -R planrouter:planrouter /data
 
 COPY --from=builder /wheels/ /tmp/wheels/
 RUN python -m pip install --no-index --no-cache-dir /tmp/wheels/*.whl \
     && rm -rf /tmp/wheels
 
-COPY docker/entrypoint.py /opt/planrouter/entrypoint.py
-COPY docker/mock_upstream.py /opt/planrouter/mock_upstream.py
-COPY docker/router.example.json /opt/planrouter/router.example.json
+COPY docker/entrypoint.py /opt/facet/gateway/entrypoint.py
+COPY docker/mock_upstream.py /opt/facet/gateway/mock_upstream.py
+COPY docker/router.example.json /opt/facet/gateway/router.example.json
 # Console usage manual (docs/api-key-guide.md + its screenshots). ui.py looks
 # here when the package is installed without a repository checkout.
-COPY docs/ /opt/planrouter/docs/
-COPY docker/smoke_test.py /opt/planrouter/smoke_test.py
+COPY docs/ /opt/facet/gateway/docs/
+COPY docker/smoke_test.py /opt/facet/gateway/smoke_test.py
 # Shipped DSH profile: entrypoint copies it into $HOME/.dsh on first run.
-COPY docker/dsh-profile/ /opt/planrouter/dsh-profile/
+COPY docker/dsh-profile/ /opt/facet/gateway/dsh-profile/
 
 COPY --from=dsh /usr/local/bin/node /usr/local/bin/node
 COPY --from=dsh /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/x86_64-linux-gnu/
@@ -101,4 +101,4 @@ EXPOSE 8787 3080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/', timeout=3)"]
 
-ENTRYPOINT ["python", "/opt/planrouter/entrypoint.py"]
+ENTRYPOINT ["python", "/opt/facet/gateway/entrypoint.py"]

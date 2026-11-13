@@ -1,9 +1,9 @@
-"""End-to-end smoke test for the PlanRouter container.
+"""End-to-end smoke test for the Facet gateway container.
 
 On the host, after `docker compose up -d`:
     python docker/smoke_test.py
 Inside the router container:
-    ROUTER_URL=http://127.0.0.1:8787 python /opt/planrouter/smoke_test.py
+    ROUTER_URL=http://127.0.0.1:8787 python /opt/facet/gateway/smoke_test.py
 
 Override ROUTER_URL / ROUTER_KEY / ROUTER_ADMIN_KEY when you change them in
 compose.yaml. Exits non-zero if any check fails.

@@ -130,8 +130,8 @@ def install_packages() -> None:
          "--no-warn-script-location", "--target", str(SITE),
          "playwright", "pystray", "pillow"])
     check = [str(RUNTIME / "python.exe"), "-c",
-             "import planrouter, facet, playwright, pystray, PIL; "
-             "print('planrouter', planrouter.__file__)"]
+             "import facet.gateway, facet, playwright, pystray, PIL; "
+             "print('facet.gateway', facet.gateway.__file__)"]
     result = run(check, capture_output=True, env={**os.environ, "PYTHONPATH": ""})
     log("packages", result.stdout.strip())
 

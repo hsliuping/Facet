@@ -1,4 +1,4 @@
-"""Tests for the facts-table bridge (planrouter.facts) and its /api/facts endpoints."""
+"""Tests for the facts-table bridge (facet.gateway.facts) and its /api/facts endpoints."""
 from __future__ import annotations
 
 import json
@@ -15,10 +15,10 @@ from urllib.request import Request, urlopen
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from planrouter import facts as facts_mod  # noqa: E402
-from planrouter.core import load_config  # noqa: E402
-from planrouter.facts import Facts  # noqa: E402
-from planrouter.server import App, Handler  # noqa: E402
+from facet.gateway import facts as facts_mod  # noqa: E402
+from facet.gateway.core import load_config  # noqa: E402
+from facet.gateway.facts import Facts  # noqa: E402
+from facet.gateway.server import App, Handler  # noqa: E402
 
 TABLE = {
     "schema_version": 1,

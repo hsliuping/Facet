@@ -3,7 +3,7 @@
 // Keys live in the browser only. sessionStorage is the default (cleared when the
 // tab closes); "remember" also writes localStorage so embedded previews that
 // open a fresh session do not ask for the key on every reload.
-const KEY_STORAGE = { gateway: 'planrouter_key', admin: 'planrouter_admin_key' };
+const KEY_STORAGE = { gateway: 'facet_key', admin: 'facet_admin_key' };
 
 function readStoredKey(kind) {
   try {
@@ -29,6 +29,7 @@ const PAGE_TITLES = {
   status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
   members: '成员用量',
   quickstart: '快速开始',
+  integration: '接入文档',
 };
 
 const state = {
@@ -189,8 +190,8 @@ function toast(message, kind = 'ok') {
   setTimeout(() => el.remove(), 4200);
 }
 
-const DRAFT_CONFIG = 'planrouter_draft_config';
-const DRAFT_SUBS = 'planrouter_draft_subs';
+const DRAFT_CONFIG = 'facet_draft_config';
+const DRAFT_SUBS = 'facet_draft_subs';
 const saveTimers = { config: null, subs: null };
 
 function stashDraft(key, value) {
@@ -677,6 +678,21 @@ function switchPage(name) {
   if (name === 'vendors') {
     loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
   }
+  if (name === 'integration') loadIntegrationDoc().catch((e) => toast(e.message, 'bad'));
+}
+
+// Integration guide: render docs/agent-integration.md inline (same Markdown
+// renderer as the api-key manual) so downstream agents can read it in-browser.
+async function loadIntegrationDoc() {
+  const body = $('integration-body');
+  if (!body || body.dataset.loaded === 'yes') return;
+  const res = await api('/api/guide?doc=integration');
+  if (!res || !res.available) {
+    body.innerHTML = '<p class="hint">接入文档不可用：docs/agent-integration.md 未随镜像打包。</p>';
+    return;
+  }
+  body.innerHTML = renderMarkdown(res.markdown);
+  body.dataset.loaded = 'yes';
 }
 
 // Deep links rendered inside HTML strings (e.g. the fallback hint's jump to
@@ -872,7 +888,7 @@ async function startDshOnly() {
 
 // Open DSH in its own popup window; the window is claimed synchronously inside
 // the click so the navigation keeps the user gesture.
-const DSH_WIN = 'planrouter-dsh';
+const DSH_WIN = 'facet-dsh';
 
 // dsh always prints 127.0.0.1:3080 while the console may be served from
 // localhost:8010. Those are different sites, and DSH's session cookie is
@@ -2265,10 +2281,10 @@ const ACCESS_TOOLS = {
   'codex': (model, base) => [
     '# ~/.codex/config.toml',
     'model = "' + model + '"',
-    'model_provider = "planrouter"',
+    'model_provider = "facet"',
     '',
-    '[model_providers.planrouter]',
-    'name = "PlanRouter"',
+    '[model_providers.facet]',
+    'name = "Facet"',
     'base_url = "' + base + '/v1"',
     'wire_api = "chat"',
     'env_key = "PLANROUTER_API_KEY"',
@@ -2286,12 +2302,12 @@ const ACCESS_TOOLS = {
     '# ~/.dsh/profiles/<profile>/cordis.patch.yml（顶层 YAML 数组）',
     '- id: agent-default-model',
     '  config:',
-    '    provider: planrouter',
+    '    provider: facet',
     '    model: ' + model,
     '- id: llm-pi-ai',
     '  config:',
     '    providers:',
-    '      planrouter:',
+    '      facet:',
     '        apiKeyEnv: ROUTER_API_KEY',
     '        api: openai-completions',
     '        baseURL: ' + base + '/v1',
@@ -2302,7 +2318,7 @@ const ACCESS_TOOLS = {
     '          - id: ' + model,
     '',
     '# 另在环境变量中设置 ROUTER_API_KEY=<API Key>',
-    '# 建 profile：dsh --profile planrouter --from-default-profile web',
+    '# 建 profile：dsh --profile facet-web --from-default-profile web',
   ].join('\n'),
   'trae': (model, base) => [
     'Trae（设置 → AI/LLM → 添加提供方，类型选 OpenAI/Custom Model）：',
@@ -2318,8 +2334,8 @@ const ACCESS_TOOLS = {
     JSON.stringify({
       '$schema': 'https://opencode.ai/config.json',
       'providers': {
-        'planrouter': {
-          'name': 'PlanRouter',
+        'facet': {
+          'name': 'Facet',
           'env': ['ROUTER_API_KEY'],
           'package': '@opencode/ai/providers/openai-compatible',
           'settings': { 'baseURL': base + '/v1' },
@@ -2334,7 +2350,7 @@ const ACCESS_TOOLS = {
     JSON.stringify({
       'models': [{
         'id': model,
-        'name': model + ' (PlanRouter)',
+        'name': model + ' (Facet)',
         'vendor': 'Custom',
         'url': base + '/v1',
         'apiKey': '<API Key>',

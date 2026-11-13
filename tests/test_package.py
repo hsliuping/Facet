@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "src"))
 import facet  # noqa: E402
 import facet.cli  # noqa: E402
 from facet import _table  # noqa: E402
-from planrouter import _alias as planrouter_alias  # noqa: E402
+from facet.gateway import _alias as planrouter_alias  # noqa: E402
 
 FIXTURE = {
     "schema_version": 1,
@@ -271,19 +271,19 @@ class ServeDispatchTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def test_serve_delegates_with_rest_of_argv(self):
-        with mock.patch("planrouter.cli.main", return_value=7) as serve_main:
+        with mock.patch("facet.gateway.cli.main", return_value=7) as serve_main:
             code, _, _ = self.run_main(facet.cli.main, ["serve", "--port", "1234"])
         self.assertEqual(code, 7)
         serve_main.assert_called_once_with(["--port", "1234"])
 
     def test_serve_bare_delegates_empty_argv(self):
-        with mock.patch("planrouter.cli.main", return_value=0) as serve_main:
+        with mock.patch("facet.gateway.cli.main", return_value=0) as serve_main:
             code, _, _ = self.run_main(facet.cli.main, ["serve"])
         self.assertEqual(code, 0)
         serve_main.assert_called_once_with([])
 
     def test_alias_warns_on_stderr_then_serves(self):
-        with mock.patch("planrouter._alias._serve", return_value=3) as serve_main:
+        with mock.patch("facet.gateway._alias._serve", return_value=3) as serve_main:
             code, _, err = self.run_main(planrouter_alias.main, ["--port", "9"])
         self.assertEqual(code, 3)
         serve_main.assert_called_once_with(["--port", "9"])

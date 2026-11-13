@@ -12,12 +12,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from planrouter.convert import (
+from facet.gateway.convert import (
     DEFAULT_MAX_TOKENS, convert_request, convert_response, inject_system,
     stream_converter,
 )
-from planrouter.core import ANTHROPIC, OPENAI, load_config
-from planrouter.server import App
+from facet.gateway.core import ANTHROPIC, OPENAI, load_config
+from facet.gateway.server import App
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -467,7 +467,7 @@ class CrossProtocolForwardTests(unittest.TestCase):
             return resp
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             error = self.app._forward(h, protocol, self.channel, "claude-sonnet-4-5",
                                       body, 0, False)
         self.assertIsNone(error)
@@ -536,7 +536,7 @@ class CrossProtocolForwardTests(unittest.TestCase):
             return _SseResp(chunks)
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             error = self.app._forward(h, OPENAI, channel, "model-a",
                                       {"model": "auto", "messages": [], "stream": True},
                                       0, False)
@@ -572,7 +572,7 @@ class CrossProtocolForwardTests(unittest.TestCase):
             "tools": [{"name": "f", "description": "d",
                        "input_schema": {"type": "object"}}],
         }
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             error = self.app._forward(h, ANTHROPIC, channel, "model-a", body, 0, False)
         self.assertIsNone(error)
         self.assertTrue(captured["url"].endswith("/v1/chat/completions"))

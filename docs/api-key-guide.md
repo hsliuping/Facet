@@ -563,7 +563,7 @@
 
 ## 七、在 Trae / IDE 里使用 Facet
 
-**前提**：你的机器上已经成功启动 `facet-planrouter`，并且用下面的网关 Key 能通
+**前提**：你的机器上已经成功启动 Facet 网关（`facet serve`），并且用下面的网关 Key 能通
 （`curl -H "Authorization: Bearer <gateway_key>" http://127.0.0.1:8787/v1/models` → 200）。
 
 **快速开始**：

@@ -15,10 +15,10 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.core import ModelDecision, StateStore, load_config
-from planrouter.persistence import StatePersistence, capture, restore
-from planrouter.probe import models_path_for, parse_model_list, probe_models
-from planrouter.server import App, Handler
+from facet.gateway.core import ModelDecision, StateStore, load_config
+from facet.gateway.persistence import StatePersistence, capture, restore
+from facet.gateway.probe import models_path_for, parse_model_list, probe_models
+from facet.gateway.server import App, Handler
 
 
 def config_for(upstream_url: str) -> dict:
@@ -296,7 +296,7 @@ class CatalogAppTests(unittest.TestCase):
             "id": "volcengine", "name": "火山引擎方舟",
             "modes": {"payg": {"label": "按量付费", "models": ["x-y"]}},
         }]
-        with mock.patch("planrouter.server.probe_models") as pm:
+        with mock.patch("facet.gateway.server.probe_models") as pm:
             result = self.app.probe_channel_models(
                 {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
                 allow_ark_quota=True)
@@ -322,9 +322,9 @@ class CatalogAppTests(unittest.TestCase):
             {"FoundationModelName": "doubao-seed-1-6-flash", "State": "Available",
              "InitialInferenceFreeUsage": {"Total": 2000, "Consumed": 2000}},
         ]
-        with mock.patch("planrouter.server.ark_quota.list_items",
+        with mock.patch("facet.gateway.server.ark_quota.list_items",
                         return_value=items) as li, \
-             mock.patch("planrouter.server.probe_models",
+             mock.patch("facet.gateway.server.probe_models",
                         return_value={"ok": True, "endpoint": "https://u/models",
                                       "models": ["doubao-seed-1-6",
                                                  "kimi-k3-1-pro-261024"]}) as pm:
@@ -354,9 +354,9 @@ class CatalogAppTests(unittest.TestCase):
             {"FoundationModelName": "kimi-k3-1-pro", "State": "Available",
              "InitialInferenceFreeUsage": {"Total": 500000, "Consumed": 32}},
         ]
-        with mock.patch("planrouter.server.ark_quota.list_items",
+        with mock.patch("facet.gateway.server.ark_quota.list_items",
                         return_value=items), \
-             mock.patch("planrouter.server.probe_models",
+             mock.patch("facet.gateway.server.probe_models",
                         return_value={"ok": True, "endpoint": "https://u/models",
                                       "models": ["kimi-k3-1-pro-261024",
                                                  "doubao-seed-evolving"]}):
@@ -376,9 +376,9 @@ class CatalogAppTests(unittest.TestCase):
         draft = {"name": "plan-a", "provider": "volcengine", "mode": "payg",
                  "credentials": {"volcengine": {"VOLC_ACCESSKEY": "ak-draft",
                                                 "VOLC_SECRETKEY": "sk-draft"}}}
-        with mock.patch("planrouter.server.ark_quota.list_items",
+        with mock.patch("facet.gateway.server.ark_quota.list_items",
                         return_value=[]) as li, \
-             mock.patch("planrouter.server.probe_models",
+             mock.patch("facet.gateway.server.probe_models",
                         return_value={"ok": True, "endpoint": "https://u/models",
                                       "models": ["a"]}):
             result = self.app.probe_channel_models(draft, allow_ark_quota=True)
@@ -393,7 +393,7 @@ class CatalogAppTests(unittest.TestCase):
             self.app.config,
             credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-bad",
                                         "VOLC_SECRETKEY": "sk-bad"}})
-        with mock.patch("planrouter.server.ark_quota.list_items",
+        with mock.patch("facet.gateway.server.ark_quota.list_items",
                         side_effect=RuntimeError("HTTP 401：InvalidCredentials")):
             result = self.app.probe_channel_models(
                 {"name": "plan-a", "provider": "volcengine", "mode": "payg"},
@@ -427,7 +427,7 @@ class CatalogAppTests(unittest.TestCase):
             self.app.config,
             credentials={"volcengine": {"VOLC_ACCESSKEY": "ak-ui",
                                         "VOLC_SECRETKEY": "sk-ui"}})
-        with mock.patch("planrouter.server.ark_quota.list_items") as li:
+        with mock.patch("facet.gateway.server.ark_quota.list_items") as li:
             result = self.app.probe_channel_models(
                 {"name": "plan-a", "provider": "volcengine", "mode": "payg"})
         li.assert_not_called()

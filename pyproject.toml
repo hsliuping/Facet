@@ -29,8 +29,8 @@ Homepage = "https://github.com/hsliuping/Facet"
 
 [project.scripts]
 facet = "facet.cli:main"
-planrouter = "planrouter._alias:main"  # deprecated transition alias of `facet serve`
-facet-ark-quota = "planrouter.ark_quota:main"  # Volcengine Ark free-quota rows for the free-align sweep
+planrouter = "facet.gateway._alias:main"  # deprecated transition alias of `facet serve`
+facet-ark-quota = "facet.gateway.ark_quota:main"  # Volcengine Ark free-quota rows for the free-align sweep
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -40,7 +40,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 facet = ["py.typed", "data/model-registry.json"]
-planrouter = ["static/*", "providers.json"]
+"facet.gateway" = ["static/*", "providers.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "facet._version.__version__" }

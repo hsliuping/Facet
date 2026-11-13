@@ -7,9 +7,9 @@ import time
 import unittest
 from pathlib import Path
 
-from planrouter.core import StateStore, load_config, parse_config
-from planrouter.persistence import StatePersistence, capture, restore
-from planrouter.server import App, channel_tier, model_tier, normalize_kimi_temperature
+from facet.gateway.core import StateStore, load_config, parse_config
+from facet.gateway.persistence import StatePersistence, capture, restore
+from facet.gateway.server import App, channel_tier, model_tier, normalize_kimi_temperature
 
 
 def config_dict() -> dict:

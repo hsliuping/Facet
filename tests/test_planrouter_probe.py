@@ -13,9 +13,9 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.core import load_config, upstream_path_for
-from planrouter.probe import describe_key, pick_model, validate_channel
-from planrouter.server import App, Handler
+from facet.gateway.core import load_config, upstream_path_for
+from facet.gateway.probe import describe_key, pick_model, validate_channel
+from facet.gateway.server import App, Handler
 
 
 def config_for(upstream_url: str, gateway_key=None, admin_key=None,
@@ -417,7 +417,7 @@ class ProbeGatewayTests(unittest.TestCase):
 
 class ConsoleAssetsTests(unittest.TestCase):
     def test_console_ships_both_test_buttons(self):
-        root = Path(__file__).resolve().parent.parent / "src" / "planrouter" / "static"
+        root = Path(__file__).resolve().parent.parent / "src" / "facet" / "gateway" / "static"
         js = (root / "app.js").read_text(encoding="utf-8")
         css = (root / "style.css").read_text(encoding="utf-8")
         self.assertIn('id="editor-test"', js)
@@ -463,7 +463,7 @@ class ConsoleAssetsTests(unittest.TestCase):
     def test_console_never_calls_native_dialogs(self):
         # Embedded/IDE webviews throw "prompt() is not supported." on 401, which
         # used to surface as "请求失败" when clicking the probe buttons.
-        root = Path(__file__).resolve().parent.parent / "src" / "planrouter" / "static"
+        root = Path(__file__).resolve().parent.parent / "src" / "facet" / "gateway" / "static"
         js = (root / "app.js").read_text(encoding="utf-8")
         css = (root / "style.css").read_text(encoding="utf-8")
         for banned in ("window.prompt(", "window.confirm(", "window.alert("):

@@ -2,7 +2,7 @@
 then exec the gateway.
 
 The default seed matches a normal (non-container) first run: the vendor-preset
-channels from planrouter.seed, retargeted for the container (0.0.0.0 listen,
+channels from facet.gateway.seed, retargeted for the container (0.0.0.0 listen,
 key references resolved from the environment). Set ROUTER_SEED=example to seed
 the mock smoke-test config from router.example.json instead.
 """
@@ -15,11 +15,11 @@ import socket
 import sys
 from pathlib import Path
 
-TEMPLATE = Path("/opt/planrouter/router.example.json")
+TEMPLATE = Path("/opt/facet/gateway/router.example.json")
 DATA = Path("/data")
 CONFIG = DATA / "router.json"
-DSH_PROFILE = Path("/opt/planrouter/dsh-profile")
-DSH_PROFILE_NAME = "planrouter-web"
+DSH_PROFILE = Path("/opt/facet/gateway/dsh-profile")
+DSH_PROFILE_NAME = "facet-web"
 
 EXAMPLE_SEED = ("example", "mock", "smoke")
 
@@ -80,7 +80,7 @@ def preset_config() -> dict:
     listener, so both fields become environment references (the same style the
     example template uses with ROUTER_API_KEY / ROUTER_ADMIN_KEY).
     """
-    from planrouter.seed import build_seed
+    from facet.gateway.seed import build_seed
 
     config = build_seed()
     listen = config.setdefault("listen", {})
@@ -109,7 +109,7 @@ def main() -> None:
     # are derived from the config path, so a single /data volume persists them.
     seed_dsh_profile()
     publish_dsh_web()
-    os.execvp("planrouter", ["planrouter", "--config", str(CONFIG), *sys.argv[1:]])
+    os.execvp("facet", ["facet", "serve", "--config", str(CONFIG), *sys.argv[1:]])
 
 
 if __name__ == "__main__":

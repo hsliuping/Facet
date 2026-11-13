@@ -1,4 +1,4 @@
-name: facet-planrouter
+name: facet
 
 x-build: &build
   context: .
@@ -8,9 +8,9 @@ services:
   # Fake upstream so `docker compose up` can exercise the whole gateway without
   # any real provider credentials. Remove this service once you use real channels.
   mock:
-    image: facet-planrouter:test
+    image: facet:test
     build: *build
-    entrypoint: ["python", "/opt/planrouter/mock_upstream.py"]
+    entrypoint: ["python", "/opt/facet/gateway/mock_upstream.py"]
     command: []
     environment:
       MOCK_PORT: "9000"
@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
 
   router:
-    image: facet-planrouter:test
+    image: facet:test
     build: *build
     depends_on:
       mock:

@@ -16,10 +16,10 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.audit import RequestLog
-from planrouter.cli import main
-from planrouter.core import load_config, parse_config
-from planrouter.server import App, Handler
+from facet.gateway.audit import RequestLog
+from facet.gateway.cli import main
+from facet.gateway.core import load_config, parse_config
+from facet.gateway.server import App, Handler
 
 OPENAI_SSE = [
     b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
@@ -353,11 +353,11 @@ class CliAndConsoleTests(unittest.TestCase):
             self.assertIn("WARNING: listen.admin_key is unset", text)
 
     def test_console_exposes_request_log_and_admin_key(self):
-        from planrouter.ui import STATIC_DIR
+        from facet.gateway.ui import STATIC_DIR
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="requests-body"', html)
-        self.assertIn('id="btn-admin-key"', html)
+        self.assertIn('id="btn-admin-key-save"', html)
         self.assertIn("loadRequests", js)
         self.assertIn("X-Admin-Key", js)
 

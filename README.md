@@ -33,11 +33,11 @@ The package ships both layers; there is one command family.
 | Layer | Owns | Lives in |
 |---|---|---|
 | **Facts** (data) | per-model capabilities, prices, `quota_tier`, aliases | `registry/model-registry.json` → bundled snapshot |
-| **Gateway** (runtime) | channels, routes, the free pool, daily self-maintenance | `src/planrouter/` |
+| **Gateway** (runtime) | channels, routes, the free pool, daily self-maintenance | `src/facet/gateway/` |
 
 The bridge between them:
 
-- **Name resolution** — `planrouter/facts.py` maps well-known names to
+- **Name resolution** — `facet/gateway/facts.py` maps well-known names to
   canonical keys, read-only, stdlib-only, and degrades to "unavailable" if
   the snapshot is missing. The gateway's *routing* still runs purely on what
   its maintenance layer observes; routing never depends on table freshness.
@@ -238,7 +238,7 @@ issue with the report attached, or fix the row via `manual-overrides.json`.
 
 ## The gateway
 
-The gateway layer (`src/planrouter/`) is the runtime half of the package:
+The gateway layer (`src/facet/gateway/`) is the runtime half of the package:
 `facet serve` aggregates channels — upstream vendor endpoints you configure —
 routes OpenAI- and Anthropic-compatible traffic across them, and maintains
 itself daily. The console and the `/api/*` endpoints ship on the same port.
@@ -316,7 +316,7 @@ Two layers, two registries:
 
 | Layer | Registry | How to extend |
 |---|---|---|
-| Gateway | builtin `src/planrouter/providers.json` + user overlay `<config dir>/providers.json` | PR a builtin entry, or drop an overlay entry locally |
+| Gateway | builtin `src/facet/gateway/providers.json` + user overlay `<config dir>/providers.json` | PR a builtin entry, or drop an overlay entry locally |
 | Facts | `registry/model-registry.json` | vendors arrive via `tools/sync_models_dev.py`; manual facts (e.g. `quota_tier`) via `registry/manual-overrides.json` |
 
 A gateway vendor entry needs `id` (`[a-z0-9-]+`), `name`, and at least one

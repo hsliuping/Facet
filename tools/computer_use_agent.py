@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Computer-use agent: a vision LLM drives a real browser, through PlanRouter.
+"""Computer-use agent: a vision LLM drives a real browser, through Facet.
 
 What this is
 ------------
@@ -877,7 +877,7 @@ def main() -> int:
 
     key = gateway_key()
     if not key:
-        print("no gateway key: set FACET_KEY, or start PlanRouter so that "
+        print("no gateway key: set FACET_KEY, or start the Facet gateway so that "
               "data/keys.json exists", file=sys.stderr)
         return 1
 

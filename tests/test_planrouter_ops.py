@@ -11,11 +11,11 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from planrouter import subscriptions as subs
-from planrouter.core import load_config
-from planrouter.notifier import ReminderService, alert_message
-from planrouter.server import App, Handler
-from planrouter.usage import UsageRecorder
+from facet.gateway import subscriptions as subs
+from facet.gateway.core import load_config
+from facet.gateway.notifier import ReminderService, alert_message
+from facet.gateway.server import App, Handler
+from facet.gateway.usage import UsageRecorder
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -228,7 +228,7 @@ class UsageTests(OpsFixture):
         self.assertEqual((cache["input_tokens"], cache["cached_tokens"]), (100, 60))
 
     def test_usage_parses_upstream_cache_fields(self):
-        from planrouter.server import _usage
+        from facet.gateway.server import _usage
         openai_shape = json.dumps({"usage": {
             "prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105,
             "prompt_tokens_details": {"cached_tokens": 40}}}).encode()

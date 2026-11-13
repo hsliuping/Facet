@@ -12,12 +12,12 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from planrouter import maintenance as maint
-from planrouter import providers as providers_mod
-from planrouter import subscriptions as subs
-from planrouter.core import load_config, parse_config
-from planrouter.server import App
-from planrouter.usage import UsageRecorder
+from facet.gateway import maintenance as maint
+from facet.gateway import providers as providers_mod
+from facet.gateway import subscriptions as subs
+from facet.gateway.core import load_config, parse_config
+from facet.gateway.server import App
+from facet.gateway.usage import UsageRecorder
 
 
 def providers_registry_fixture() -> dict:
@@ -1154,7 +1154,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
             "Too Many Requests", None, io.BytesIO(
                 b'{"error":{"code":429,"metadata":{"raw":"x"},'
                 b'"message":"Rate limit exceeded: free-models-per-day"}}'))
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=err):
             with self.assertRaises(RuntimeError) as ctx:
                 self.app._maintenance_direct_call(
                     self.app.config.channels[0], "gpt-old", "prompt")
@@ -1572,7 +1572,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
             captured["timeout"] = timeout
             return FakeResp()
 
-        with mock.patch("planrouter.server.open_with_proxy", fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", fake_open):
             reply = self.app._maintenance_direct_call(channel, "gpt-x", "p")
         self.assertEqual(reply, "ok")
         self.assertEqual(captured["url"],

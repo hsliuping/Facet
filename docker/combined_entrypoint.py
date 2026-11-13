@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combined entrypoint: runs either PlanRouter gateway or Computer-Use Agent."""
+"""Combined entrypoint: runs either the Facet gateway or Computer-Use Agent."""
 
 import os
 import sys
@@ -7,8 +7,8 @@ import subprocess
 import signal
 
 def run_gateway():
-    """Run PlanRouter gateway (original entrypoint)."""
-    os.execv(sys.executable, [sys.executable, "/opt/planrouter/entrypoint.py"] + sys.argv[1:])
+    """Run the Facet gateway (original entrypoint)."""
+    os.execv(sys.executable, [sys.executable, "/opt/facet/gateway/entrypoint.py"] + sys.argv[1:])
 
 def run_agent():
     """Run Computer-Use Agent."""

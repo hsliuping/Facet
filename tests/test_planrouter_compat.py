@@ -14,9 +14,9 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from planrouter.completions import CompletionsAdapter, to_chat_request
-from planrouter.core import OPENAI, load_config
-from planrouter.server import App
+from facet.gateway.completions import CompletionsAdapter, to_chat_request
+from facet.gateway.core import OPENAI, load_config
+from facet.gateway.server import App
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -211,7 +211,7 @@ class LegacyCompletionsEndpointTests(unittest.TestCase):
             return resp
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._completion(h, OPENAI, json.dumps(body).encode(), legacy=True)
         return h
 
@@ -280,7 +280,7 @@ class WeightedStrategyFailoverTests(unittest.TestCase):
                               "usage": {"total_tokens": 1}})
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._completion(h, OPENAI, json.dumps(
                 {"model": "auto", "prompt": "x", "max_tokens": 8}).encode(), legacy=True)
         self.assertEqual(h.status, 200)
@@ -313,7 +313,7 @@ class RerankEndpointTests(unittest.TestCase):
             return resp
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._rerank(h, json.dumps(body).encode())
         return h
 
@@ -347,7 +347,7 @@ class RerankEndpointTests(unittest.TestCase):
         cfg["channels"][0]["models"] = {"auto": "model-a"}  # no rerank model
         app = App(load_config(write_config(cfg)))
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             app._rerank(h, json.dumps({
                 "model": "rerank-v1",
@@ -392,7 +392,7 @@ class RerankEndpointTests(unittest.TestCase):
             return upstream_responses[call_count["n"] - 1]
 
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._rerank(h, json.dumps({
                 "model": "rerank-v1",
                 "query": "x",
@@ -410,7 +410,7 @@ class RerankEndpointTests(unittest.TestCase):
         cfg["channels"][0]["models"] = {"auto": "model-a", "rerank-v1": "rerank-v1"}
         app = App(load_config(write_config(cfg)))
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             app._rerank(h, json.dumps({
                 "model": "unknown-rerank-model",
@@ -491,7 +491,7 @@ class AudioEndpointTests(unittest.TestCase):
             _JsonResp({}, status=200, headers={"Content-Type": "audio/mpeg"}),
         ])
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_speech(h, json.dumps({
                 "model": "tts-1",
                 "input": "Hello world",
@@ -512,7 +512,7 @@ class AudioEndpointTests(unittest.TestCase):
             _JsonResp({}, status=200, headers={"Content-Type": "audio/mpeg"}),
         ])
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_speech(h, json.dumps({
                 "model": "tts-1",
                 "input": "test",
@@ -531,7 +531,7 @@ class AudioEndpointTests(unittest.TestCase):
             _JsonResp({}, status=200, headers={"Content-Type": "audio/mpeg"}),
         ])
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_speech(h, json.dumps({
                 "model": "tts-1",
                 "input": "test",
@@ -547,7 +547,7 @@ class AudioEndpointTests(unittest.TestCase):
         cfg["channels"][0]["models"] = {"auto": "model-a"}  # no tts-1
         app = App(load_config(write_config(cfg)))
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             app._audio_speech(h, json.dumps({
                 "model": "tts-1",
@@ -577,7 +577,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("test.mp3", b"fake-audio-data", "audio/mpeg"),
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_transcriptions(h, body, endpoint="transcriptions")
         self.assertEqual(h.status, 200)
         self.assertTrue(self.captured["url"].endswith("/v1/audio/transcriptions"))
@@ -595,7 +595,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("test.mp3", b"fake-audio-data", "audio/mpeg"),
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_transcriptions(h, body, endpoint="transcriptions")
         self.assertEqual(h.status, 200)
         # Check that upstream received the params
@@ -615,7 +615,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("test.mp3", b"fake-audio-data", "audio/mpeg"),
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_transcriptions(h, body, endpoint="translations")
         self.assertEqual(h.status, 200)
         self.assertTrue(self.captured["url"].endswith("/v1/audio/translations"))
@@ -628,7 +628,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("test.mp3", b"fake-audio-data", "audio/mpeg"),
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             self.app._audio_transcriptions(h, body, endpoint="transcriptions")
         self.assertEqual(h.status, 400)
@@ -643,7 +643,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("", b"", "audio/mpeg"),  # empty file
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             self.app._audio_transcriptions(h, body, endpoint="transcriptions")
         self.assertEqual(h.status, 400)
@@ -662,7 +662,7 @@ class AudioEndpointTests(unittest.TestCase):
             ("test.mp3", b"fake-audio-data", "audio/mpeg"),
         )
         h.headers["Content-Type"] = content_type
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=fake_open):
             self.app._audio_transcriptions(h, body, endpoint="transcriptions")
         self.assertEqual(h.status, 200)
         out = json.loads(h.body)
@@ -675,7 +675,7 @@ class AudioEndpointTests(unittest.TestCase):
         cfg["channels"][0]["models"] = {"auto": "model-a", "tts-1": "tts-1"}
         app = App(load_config(write_config(cfg)))
         h = _CaptureHandler()
-        with mock.patch("planrouter.server.open_with_proxy",
+        with mock.patch("facet.gateway.server.open_with_proxy",
                         side_effect=lambda *a, **k: _error_resp({"error": "x"}, 500)):
             app._audio_speech(h, json.dumps({
                 "model": "unknown-tts-model",

@@ -45,7 +45,7 @@ def main() -> int:
     if not CFG.is_file():
         # First install: seed the zero-key config here so listen.port lands
         # in the same file the gateway will serve from.
-        from planrouter.seed import write_seed
+        from facet.gateway.seed import write_seed
         write_seed(CFG)
 
     cfg = json.loads(CFG.read_text(encoding="utf-8"))

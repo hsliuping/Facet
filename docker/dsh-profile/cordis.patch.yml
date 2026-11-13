@@ -1,8 +1,8 @@
 # DSH profile shipped with the image, seeded into $HOME/.dsh/profiles/
-# planrouter-web on first run.
+# facet-web on first run.
 #
-# PlanRouter gateway integration:
-# - provider "planrouter" points at the in-container gateway (OpenAI Chat
+# Facet gateway integration:
+# - provider "facet" points at the in-container gateway (OpenAI Chat
 #   Completions on the loopback port the entrypoint listens on).
 # - apiKeyEnv reuses the ROUTER_API_KEY the gateway itself authenticates with,
 #   so no secret is copied into this file.
@@ -13,12 +13,12 @@
 #   seed the picker before the first sync.
 - id: agent-default-model
   config:
-    provider: planrouter
+    provider: facet
     model: facet-auto
 - id: llm-pi-ai
   config:
     providers:
-      planrouter:
+      facet:
         apiKeyEnv: ROUTER_API_KEY
         api: openai-completions
         baseURL: http://127.0.0.1:8787/v1

@@ -1,7 +1,7 @@
 """Locate and launch the DeepSeek Harness (DSH) web console.
 
-DSH is an external Node client (`@deepseek-ai/dsh`), not part of PlanRouter:
-its `planrouter-web` profile points the provider at this gateway. The console
+DSH is an external Node client (`@deepseek-ai/dsh`), not part of Facet:
+its `facet-web` profile points the provider at this gateway. The console
 only needs to know whether the CLI is installed, which profile it runs, and
 where to reach it, so this module reports that state and spawns the profile
 when asked.
@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-WEB_PROFILE = "planrouter-web"
+WEB_PROFILE = "facet-web"
 URL_LINE = re.compile(r"dsh web: (http://\S+)")
 BASE_URL_LINE = re.compile(r"^\s*baseURL:\s*(\S+)\s*$", re.MULTILINE)
 MODELS_LINE = re.compile(r"^\s*models:\s*$")
@@ -190,7 +190,7 @@ def _indent(line: str) -> int:
 
 
 def _models_block(lines: list[str]) -> tuple[int, int] | None:
-    """Locate the `models:` list of the planrouter provider.
+    """Locate the `models:` list of the facet provider.
 
     Returns the half-open range [first item line, first line after the list),
     or None when the profile carries no such block.

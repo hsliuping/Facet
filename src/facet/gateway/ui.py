@@ -15,12 +15,12 @@ from . import keys as keys_mod
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 # Bundled usage manual, rendered by the console in a floating panel. It lives
-# in the repository's docs/ during development and is copied to /opt/planrouter
+# in the repository's docs/ during development and is copied to /opt/facet/gateway
 # by the Docker image; when neither is present (a bare `pip install`) the UI
 # degrades to a hint pointing at the vendor's own documentation.
 _GUIDE_CANDIDATES = (
-    Path(__file__).resolve().parents[2] / "docs" / "api-key-guide.md",  # checkout
-    Path("/opt/planrouter/docs/api-key-guide.md"),                      # container
+    Path(__file__).resolve().parents[3] / "docs" / "api-key-guide.md",  # checkout
+    Path("/opt/facet/gateway/docs/api-key-guide.md"),                      # container
     Path(__file__).parent / "docs" / "api-key-guide.md",                 # wheel
 )
 
@@ -277,9 +277,17 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             return _json(h, 404, {"error": f"unresolved: {name}"})
         return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
     if path == "/api/guide" and method == "GET":
-        if GUIDE_PATH.is_file():
+        # ?doc=integration serves the agent integration guide; the default is
+        # the api-key manual. Names are whitelisted (no path traversal).
+        query = urlsplit(h.path or "").query
+        doc = dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("doc", "")
+        if doc == "integration":
+            target = GUIDE_PATH.parent / "agent-integration.md"
+        else:
+            target = GUIDE_PATH
+        if target.is_file():
             _json(h, 200, {"available": True,
-                           "markdown": GUIDE_PATH.read_text(encoding="utf-8")})
+                           "markdown": target.read_text(encoding="utf-8")})
         else:
             _json(h, 200, {"available": False, "markdown": ""})
         return True
@@ -691,7 +699,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         return True
 
     if path == "/api/integrations/dsh/web" and method == "POST":
-        # Spawn the planrouter-web profile and return the URL it prints at
+        # Spawn the facet-web profile and return the URL it prints at
         # startup. The browser tab is opened by the console, not by dsh, so
         # the URL belongs to the operator's machine even when the gateway is
         # reached remotely.

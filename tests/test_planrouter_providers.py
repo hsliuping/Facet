@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from planrouter import providers as pmod
+from facet.gateway import providers as pmod
 
 
 def provider_by_id(providers: list[dict], pid: str) -> dict | None:

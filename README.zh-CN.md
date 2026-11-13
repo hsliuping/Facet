@@ -31,11 +31,11 @@ registry/model-registry.json   ← 核心交付物：单文件 < 1 MB，零依�
 | 层 | 负责 | 落在 |
 |---|---|---|
 | **事实层**（数据） | 模型级能力、价格、`quota_tier`、别名 | `registry/model-registry.json` → 内置快照 |
-| **网关层**（运行时） | 渠道、路由、免费池、每日自我维护 | `src/planrouter/` |
+| **网关层**（运行时） | 渠道、路由、免费池、每日自我维护 | `src/facet/gateway/` |
 
 两层之间的桥：
 
-- **名字解析**——`planrouter/facts.py` 把知名名称映射到规范键；只读、纯
+- **名字解析**——`facet/gateway/facts.py` 把知名名称映射到规范键；只读、纯
   stdlib、快照缺失时退化为"不可用"。网关的**路由**依然只看维护层观测到的
   渠道数据，绝不依赖表格的新鲜度。
 - **`quota_tier`**——人工标注（`registry/manual-overrides.json`）为新手指引
@@ -217,7 +217,7 @@ API key 自备（环境变量——`OPENAI_API_KEY`、`ZHIPU_API_KEY`、`ARK_API
 
 ## 网关层
 
-网关层（`src/planrouter/`）是包的运行时一半：`facet serve` 聚合渠道——你自己
+网关层（`src/facet/gateway/`）是包的运行时一半：`facet serve` 聚合渠道——你自己
 配置的上游厂商端点——在其间路由 OpenAI / Anthropic 兼容流量，并每天自我
 维护。控制台与 `/api/*` 与网关同端口。跑起来之前值得知道的五件事：
 
@@ -283,7 +283,7 @@ OpenAI 兼容渠道用 `Bearer`，该渠道的 `proxy` 照常生效。路由表�
 
 | 层 | 注册表 | 怎么扩展 |
 |---|---|---|
-| 网关 | 内置 `src/planrouter/providers.json` + 用户覆盖层 `<config 目录>/providers.json` | 给内置表提 PR，或本地放一条覆盖条目 |
+| 网关 | 内置 `src/facet/gateway/providers.json` + 用户覆盖层 `<config 目录>/providers.json` | 给内置表提 PR，或本地放一条覆盖条目 |
 | 事实层 | `registry/model-registry.json` | 厂商随 `tools/sync_models_dev.py` 自动进来；人工事实（如 `quota_tier`）走 `registry/manual-overrides.json` |
 
 网关厂家条目需要 `id`（`[a-z0-9-]+`）、`name` 和至少一个模式——`coding` /

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PlanRouter · 渠道调度控制台</title>
+  <title>Facet · 渠道调度控制台</title>
   <link rel="stylesheet" href="/static/style.css?v=20261113-3">
 </head>
 <body>
@@ -12,7 +12,7 @@
       <div class="brand">
         <span class="mark"></span>
         <div>
-          <h1>PlanRouter</h1>
+          <h1>Facet</h1>
           <p>本地多渠道调度控制台</p>
         </div>
       </div>
@@ -31,6 +31,7 @@
         <div class="menu-group">访问与安全</div>
         <button class="menu-item" data-tab="apikeys">API Keys</button>
         <button class="menu-item" data-tab="adminkey">管理密钥</button>
+        <button class="menu-item" data-tab="integration">接入文档</button>
         <div class="menu-group">运行与维护</div>
         <button class="menu-item" data-tab="status">运行状态</button>
         <button class="menu-item" data-tab="maintenance">自维护</button>
@@ -114,7 +115,7 @@
                 </div>
                 <div class="actions">
                   <button class="btn small ghost" id="btn-dsh-start"
-                    title="启动 dsh 的 planrouter-web profile（不弹浏览器）">启动 DSH</button>
+                    title="启动 dsh 的 facet-web profile（不弹浏览器）">启动 DSH</button>
                   <a class="btn small" id="btn-dsh-open" href="#" target="_blank" rel="noopener"
                     title="在新窗口中打开 DSH 的网页界面；未运行时先启动">打开 DSH 界面</a>
                 </div>
@@ -209,7 +210,7 @@
             <div class="card-top">
               <div>
                 <h3>工具里填的模型名</h3>
-                <p class="sub-note">这些名字始终代表「由 PlanRouter 内部选路」，可直接复制到工具的模型输入框。</p>
+                <p class="sub-note">这些名字始终代表「由 Facet 内部选路」，可直接复制到工具的模型输入框。</p>
               </div>
               <span class="tag active">内部调度</span>
             </div>
@@ -816,6 +817,19 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
             </div>
           </div>
           <p class="hint">忘记管理密钥时，可在数据目录的 <code>router.json</code> 中修改 <code>listen.admin_key</code>，再重载网关。</p>
+        </section>
+
+        <section class="panel" id="panel-integration">
+          <div class="panel-head">
+            <div>
+              <h2>接入文档</h2>
+              <p>下游 Agent / SDK / 业务服务接入 Facet 网关的通用指南：鉴权、端点、模型命名约定、请求响应格式、流式协议、错误码。</p>
+            </div>
+          </div>
+          <div class="guide-body" id="integration-body">
+            <p class="hint">加载中…</p>
+          </div>
+          <p class="hint">完整 Markdown 源文件：<code>docs/agent-integration.md</code>。</p>
         </section>
 
         <section class="panel" id="panel-quickstart" hidden>

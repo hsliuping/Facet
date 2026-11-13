@@ -4,9 +4,9 @@ from __future__ import annotations
 import time
 import unittest
 
-from planrouter.core import StateStore, parse_config
-from planrouter.persistence import capture, restore
-from planrouter.server import App
+from facet.gateway.core import StateStore, parse_config
+from facet.gateway.persistence import capture, restore
+from facet.gateway.server import App
 
 
 def scoring_config() -> dict:

@@ -12,7 +12,7 @@ dist/
 reports/
 .trae/
 
-# PlanRouter local runtime data (contains account/pricing details)
+# Facet local runtime data (contains account/pricing details)
 subscriptions.json
 router.state.json
 usage.json
@@ -30,7 +30,7 @@ providers.json.bak
 router.example.json
 *.tmp
 
-# PlanRouter container data (bind-mounted into /data)
+# Facet container data (bind-mounted into /data)
 data/
 # Compose secrets: real gateway/admin keys (see compose.yaml)
 .env

@@ -14,9 +14,9 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter import providers as providers_mod
-from planrouter.core import load_config
-from planrouter.server import App, Handler
+from facet.gateway import providers as providers_mod
+from facet.gateway.core import load_config
+from facet.gateway.server import App, Handler
 
 
 def config_doc() -> dict:
@@ -113,7 +113,7 @@ class SaveProviderAppTests(unittest.TestCase):
             seen["vendor_id"] = vendor_id
             report["applied"].append({"action": "update_provider_models"})
 
-        with mock.patch("planrouter.maintenance.refresh_providers",
+        with mock.patch("facet.gateway.maintenance.refresh_providers",
                         side_effect=fake_refresh):
             report = self.app.maintain_providers("acme")
             self.assertEqual(seen["vendor_id"], "acme")
@@ -218,7 +218,7 @@ class ProviderEndpointTests(unittest.TestCase):
         def fake_refresh(app, report, vendor_id=None):
             report["applied"].append({"vendor": vendor_id or "all"})
 
-        with mock.patch("planrouter.maintenance.refresh_providers",
+        with mock.patch("facet.gateway.maintenance.refresh_providers",
                         side_effect=fake_refresh):
             status, data = self.send("/api/providers/maintain", {}, self.admin)
             self.assertEqual(status, 200)

@@ -14,10 +14,10 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from planrouter import cli
-from planrouter import subscriptions as subs
-from planrouter.core import load_config
-from planrouter.server import App, Handler, channel_tier
+from facet.gateway import cli
+from facet.gateway import subscriptions as subs
+from facet.gateway.core import load_config
+from facet.gateway.server import App, Handler, channel_tier
 
 TODAY = date(2026, 11, 7)
 

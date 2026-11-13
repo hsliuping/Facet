@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from planrouter.core import load_config
-from planrouter.server import App, Handler
+from facet.gateway.core import load_config
+from facet.gateway.server import App, Handler
 
 
 def base_config(gateway_key: str | None = None) -> dict:
@@ -91,7 +91,7 @@ class ConsoleTests(unittest.TestCase):
         base = self.start()
         status, _, body = self.call(base, "GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"PlanRouter", body)
+        self.assertIn(b"Facet", body)
         self.assertIn(b"/static/app.js", body)
         status, headers, body = self.call(base, "GET", "/static/style.css")
         self.assertEqual(status, 200)
@@ -193,7 +193,7 @@ class ConsoleTests(unittest.TestCase):
     def test_guide_image_route_confines_to_docs(self):
         base = self.start()
         # A real file that exists in the repo but outside docs/ must be off-limits.
-        status, _, _ = self.call(base, "GET", "/api/guide/img/..%2F..%2Fsrc%2Fplanrouter%2Fproviders.json")
+        status, _, _ = self.call(base, "GET", "/api/guide/img/..%2F..%2Fsrc%2Ffacet%2Fgateway%2Fproviders.json")
         self.assertEqual(status, 404)
         status, _, _ = self.call(base, "GET", "/api/guide/img/images/api-key-guide/missing.png")
         self.assertEqual(status, 404)
@@ -291,7 +291,7 @@ class ConsoleTests(unittest.TestCase):
         app.store.record_catalog("plan-a", ["gpt-4o", "model-a"], "http://a/v1")
         app.store.record_catalog("plan-b", ["model-b"], "http://b/v1")
         # Mark gpt-4o on plan-a as dead (probe-verified).
-        from planrouter.maintenance import label_dead_model
+        from facet.gateway.maintenance import label_dead_model
         label_dead_model(app, "plan-a", "gpt-4o", ok=False, error="HTTP 500")
         status, _, body = self.call(base, "GET", "/api/recommend?purpose=agent", admin="admin")
         self.assertEqual(status, 200, body)

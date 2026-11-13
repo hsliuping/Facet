@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from planrouter import dsh
-from planrouter.core import parse_config
-from planrouter.server import App
+from facet.gateway import dsh
+from facet.gateway.core import parse_config
+from facet.gateway.server import App
 
 
 class DshProfileTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class DshProfileTest(unittest.TestCase):
         runs.start()
         self.addCleanup(runs.stop)
 
-    def _profile(self, name="planrouter-web", patch_text=None):
+    def _profile(self, name="facet-web", patch_text=None):
         directory = self.home / "profiles" / name
         directory.mkdir(parents=True)
         (directory / "package.json").write_text("{}", encoding="utf-8")
@@ -61,7 +61,7 @@ class DshProfileTest(unittest.TestCase):
             state = dsh.status()
         self.assertTrue(state["installed"])
         self.assertFalse(state["profile_exists"])
-        self.assertIn("dsh --profile planrouter-web", state["note"])
+        self.assertIn("dsh --profile facet-web", state["note"])
 
     def test_start_web_refuses_without_the_client(self):
         with mock.patch.object(dsh, "find_cli", return_value={
@@ -82,12 +82,12 @@ class DshModelsTest(unittest.TestCase):
     PATCH = (
         "- id: agent-default-model\n"
         "  config:\n"
-        "    provider: planrouter\n"
+        "    provider: facet\n"
         "    model: facet-auto\n"
         "- id: llm-pi-ai\n"
         "  config:\n"
         "    providers:\n"
-        "      planrouter:\n"
+        "      facet:\n"
         "        apiKeyEnv: ROUTER_API_KEY\n"
         "        api: openai-completions\n"
         "        baseURL: http://127.0.0.1:8010/v1\n"
@@ -108,7 +108,7 @@ class DshModelsTest(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def _profile(self, patch_text=PATCH):
-        directory = self.home / "profiles" / "planrouter-web"
+        directory = self.home / "profiles" / "facet-web"
         directory.mkdir(parents=True)
         (directory / "package.json").write_text("{}", encoding="utf-8")
         (directory / "cordis.patch.yml").write_text(patch_text, encoding="utf-8")
@@ -221,7 +221,7 @@ class DshCommandTest(unittest.TestCase):
     def _command(self, env: dict) -> list[str]:
         with mock.patch.object(dsh, "_node", return_value="/usr/local/bin/node"), \
                 mock.patch.dict(os.environ, env):
-            return dsh._command(self.CLI, "planrouter-web", None)
+            return dsh._command(self.CLI, "facet-web", None)
 
     def test_container_launch_binds_the_interface_and_advertises_the_host_url(self):
         command = self._command({"DSH_WEB_HOST": "172.17.0.2",

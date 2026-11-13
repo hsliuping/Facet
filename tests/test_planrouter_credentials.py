@@ -16,8 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from planrouter.core import parse_config
-from planrouter.server import App, merge_secrets
+from facet.gateway.core import parse_config
+from facet.gateway.server import App, merge_secrets
 
 
 def base_config() -> dict:

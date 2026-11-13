@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from planrouter.core import parse_config
-from planrouter.providers import MODE_KEYS
-from planrouter.seed import build_seed
-from planrouter.server import App
+from facet.gateway.core import parse_config
+from facet.gateway.providers import MODE_KEYS
+from facet.gateway.seed import build_seed
+from facet.gateway.server import App
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -205,7 +205,7 @@ class AccountTests(unittest.TestCase):
     """Optional account entity: parse, credential chain, console round-trip."""
 
     def test_account_parses_and_wins_the_credential_chain(self):
-        from planrouter.accounts import resolve_creds
+        from facet.gateway.accounts import resolve_creds
         raw = volc_config()
         raw["channels"][0]["account"] = "volc-main"
         raw["channels"][0]["business_line"] = "coding"
@@ -223,7 +223,7 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(resolve_creds(claude, cfg), {})
 
     def test_channel_creds_override_account_creds(self):
-        from planrouter.accounts import resolve_creds
+        from facet.gateway.accounts import resolve_creds
         raw = volc_config()
         raw["channels"][0].update({"account": "volc-main",
                                    "creds": {"VOLC_ACCESSKEY": "own-ak"}})
@@ -245,7 +245,7 @@ class AccountTests(unittest.TestCase):
         self.assertEqual([a.id for a in cfg.accounts], ["volc-main"])
 
     def test_console_masks_and_restores_account_secrets(self):
-        from planrouter.server import App, merge_secrets
+        from facet.gateway.server import App, merge_secrets
         import hashlib
         import copy
         import json

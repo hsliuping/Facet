@@ -23,10 +23,10 @@ for p in providers:
 
 # Analyze builtin providers
 print("\n" + "=" * 60)
-print("BUILTIN: src/planrouter/providers.json")
+print("BUILTIN: src/facet/gateway/providers.json")
 print("=" * 60)
 
-with open('d:\\code\\Facet\\src\\planrouter\\providers.json', 'r') as f:
+with open('d:\\code\\Facet\\src\\facet\\gateway\\providers.json', 'r') as f:
     data = json.load(f)
 providers = data['providers']
 print(f'Total providers in builtin: {len(providers)}')

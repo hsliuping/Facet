@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from planrouter.core import parse_config
+from facet.gateway.core import parse_config
 
 
 def base_config() -> dict:

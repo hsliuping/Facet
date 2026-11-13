@@ -14,12 +14,12 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.core import load_config, parse_config
-from planrouter.quota import (parse_quota, quota_exhaustion_wait, quota_ratio,
+from facet.gateway.core import load_config, parse_config
+from facet.gateway.quota import (parse_quota, quota_exhaustion_wait, quota_ratio,
                               quota_view)
-from planrouter.report import build_report
-from planrouter.server import App, Handler
-from planrouter import subscriptions as subs
+from facet.gateway.report import build_report
+from facet.gateway.server import App, Handler
+from facet.gateway import subscriptions as subs
 
 
 def sub_record(**extra):
@@ -357,7 +357,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(len(subs_payload["summary"]["quota_alerts"]), 1)
 
     def test_console_exposes_quota_and_report(self):
-        from planrouter.ui import STATIC_DIR
+        from facet.gateway.ui import STATIC_DIR
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="report-body"', html)

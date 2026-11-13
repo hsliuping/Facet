@@ -2205,7 +2205,7 @@ class App:
         return entries
 
     def start_dsh_web(self, port=None) -> dict:
-        """Spawn DSH's planrouter-web profile and return its tokenised URL.
+        """Spawn DSH's facet-web profile and return its tokenised URL.
 
         The gateway key is handed over as ROUTER_API_KEY, which the profile's
         patch layer reads, so the spawned client can authenticate without the

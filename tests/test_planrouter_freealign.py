@@ -9,13 +9,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
-from planrouter import ark_quota
-from planrouter import freealign
-from planrouter import maintenance as maint
-from planrouter import providers as providers_mod
-from planrouter.core import load_config, parse_config, parse_free_quota
-from planrouter.server import App
-from planrouter.usage import UsageRecorder
+from facet.gateway import ark_quota
+from facet.gateway import freealign
+from facet.gateway import maintenance as maint
+from facet.gateway import providers as providers_mod
+from facet.gateway.core import load_config, parse_config, parse_free_quota
+from facet.gateway.server import App
+from facet.gateway.usage import UsageRecorder
 
 
 TODAY = date.today().isoformat()
@@ -308,7 +308,7 @@ class SweepTests(unittest.TestCase):
             {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 480693,
              "total": 500000, "consumed": 19307, "expires": FUTURE},
         ])
-        with mock.patch("planrouter.freealign.probe_models",
+        with mock.patch("facet.gateway.freealign.probe_models",
                         return_value={"ok": True,
                                       "endpoint": "https://ark.../models",
                                       "models": ["kimi-k3-1-pro-261024"]}):
@@ -331,7 +331,7 @@ class SweepTests(unittest.TestCase):
             {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 100,
              "expires": FUTURE},
         ])
-        with mock.patch("planrouter.freealign.probe_models",
+        with mock.patch("facet.gateway.freealign.probe_models",
                         return_value={"ok": False, "error": "401"}):
             report = freealign.run_free_align(app, "manual",
                                               _run_cmd=fake_runner(rows))

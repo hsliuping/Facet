@@ -91,7 +91,7 @@ curl -s http://127.0.0.1:8787/v1/chat/completions \
 
 ## 7. 在 Trae / IDE 里使用 Facet
 
-1. **启动**：确保 `facet-planrouter` 服务已启动（`docker compose up -d` 或者本地 `python -m planrouter.server`）。
+1. **启动**：确保 Facet 网关服务已启动（`docker compose up -d` 或者本地 `facet serve`）。
 2. **快速开始**：
    - 在 Trae / IDE 调出 Facet 侧边栏（或命令面板：`PlanRouter: Open`）。
    - 弹出的 **新手向导**（8 步）引导设置保护键、选择厂家、填入 Key，并自动测试连通性。

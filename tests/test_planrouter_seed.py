@@ -13,9 +13,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.cli import main
-from planrouter.core import load_config, parse_config
-from planrouter.seed import build_seed, write_seed
+from facet.gateway.cli import main
+from facet.gateway.core import load_config, parse_config
+from facet.gateway.seed import build_seed, write_seed
 
 
 class SeedConfigTests(unittest.TestCase):
@@ -63,7 +63,7 @@ class CliSeedTests(unittest.TestCase):
 
     def _run_serve(self, argv):
         out = io.StringIO()
-        with mock.patch("planrouter.cli.make_server",
+        with mock.patch("facet.gateway.cli.make_server",
                         return_value=self._fake_server()):
             with contextlib.redirect_stdout(out):
                 code = main(argv)

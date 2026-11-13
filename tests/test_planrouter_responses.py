@@ -13,9 +13,9 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from planrouter.core import load_config, parse_config
-from planrouter.responses import ResponsesAdapter, chat_to_response, to_chat_request
-from planrouter.server import App, Handler
+from facet.gateway.core import load_config, parse_config
+from facet.gateway.responses import ResponsesAdapter, chat_to_response, to_chat_request
+from facet.gateway.server import App, Handler
 
 TEXT_SSE = [
     b'data: {"choices":[{"delta":{"content":"forty-"}}]}\n\n',

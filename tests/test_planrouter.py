@@ -12,12 +12,12 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from planrouter.core import (OPENAI, StateStore, body_has_vision,
+from facet.gateway.core import (OPENAI, StateStore, body_has_vision,
                              channel_takes_images, load_config,
                              open_with_proxy, parse_cooldown, vision_wire,
                              wire_model)
-from planrouter.keys import KeyStore
-from planrouter.server import App, HealthProber
+from facet.gateway.keys import KeyStore
+from facet.gateway.server import App, HealthProber
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -234,7 +234,7 @@ class ConfigTests(unittest.TestCase):
 
 class OpenWithProxyTests(unittest.TestCase):
     def test_empty_proxy_keeps_plain_urlopen(self):
-        with mock.patch("planrouter.core.urlopen") as fake:
+        with mock.patch("facet.gateway.core.urlopen") as fake:
             fake.return_value = "resp"
             self.assertEqual(open_with_proxy("req", 5), "resp")
         fake.assert_called_once_with("req", timeout=5)
@@ -251,7 +251,7 @@ class OpenWithProxyTests(unittest.TestCase):
             captured["proxies"] = handler.proxies
             return FakeOpener()
 
-        with mock.patch("planrouter.core.build_opener", fake_build_opener):
+        with mock.patch("facet.gateway.core.build_opener", fake_build_opener):
             self.assertEqual(
                 open_with_proxy("req", 7, "http://127.0.0.1:7890"), "resp")
         self.assertEqual(captured["timeout"], 7)
@@ -494,7 +494,7 @@ class ModelScopedFailureTests(unittest.TestCase):
     def forward(self, status, body, headers=None):
         err = HTTPError(self.channel.base_url + "/v1/chat/completions", status,
                         "boom", headers or {}, io.BytesIO(body.encode()))
-        with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+        with mock.patch("facet.gateway.server.open_with_proxy", side_effect=err):
             return self.app._forward(None, OPENAI, self.channel, "wire-a",
                                      {"messages": []}, 0, False)
 
@@ -531,7 +531,7 @@ class PlanWindowCooldownTests(unittest.TestCase):
         with mock.patch.object(App, "plan_for", return_value=plan):
             err = HTTPError(self.channel.base_url + "/v1/chat/completions", 429,
                             "boom", {}, io.BytesIO(b'{"error":"quota exceeded"}'))
-            with mock.patch("planrouter.server.open_with_proxy", side_effect=err):
+            with mock.patch("facet.gateway.server.open_with_proxy", side_effect=err):
                 return self.app._forward(None, OPENAI, self.channel, "wire-a",
                                          {"messages": []}, 0, False)
 
@@ -956,7 +956,7 @@ class StreamCancelTests(unittest.TestCase):
         # success(0) and skipped record_usage entirely.
         resp = _StreamResp([SSE_DELTA, SSE_USAGE_7])
         h = _DropHandler(fail_after=2)   # chunks relay, the tail write dies
-        with mock.patch("planrouter.server.open_with_proxy", return_value=resp):
+        with mock.patch("facet.gateway.server.open_with_proxy", return_value=resp):
             with mock.patch.object(self.app, "record_usage") as rec:
                 result = self.app._forward(
                     h, OPENAI, self.channel, "wire-a",
@@ -970,7 +970,7 @@ class StreamCancelTests(unittest.TestCase):
     def test_full_stream_records_all_relayed_usage(self):
         resp = _StreamResp([SSE_DELTA, SSE_USAGE_7])
         h = _DropHandler(fail_after=99)   # nobody hangs up
-        with mock.patch("planrouter.server.open_with_proxy", return_value=resp):
+        with mock.patch("facet.gateway.server.open_with_proxy", return_value=resp):
             with mock.patch.object(self.app, "record_usage") as rec:
                 result = self.app._forward(
                     h, OPENAI, self.channel, "wire-a",
