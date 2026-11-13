@@ -21,9 +21,8 @@ FROM ${BASE_IMAGE} AS builder
 USER root
 WORKDIR /src
 COPY . .
-# src/facet/data/ and src/facet/_version.py are generated and gitignored, but
-# pyproject.toml reads version from facet._version. Generate them before building
-# the wheel, otherwise `pip wheel .` fails on a clean checkout.
+# src/facet/data/ is generated (bundled table snapshot) and gitignored; generate
+# it before building the wheel, otherwise `pip wheel .` fails on a clean checkout.
 RUN python tools/build_package.py --skip-build \
     && (python -c "import setuptools" || python -m pip install "setuptools>=77") \
     && python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .

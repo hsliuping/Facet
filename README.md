@@ -271,7 +271,7 @@ API Key 与管理员密钥、请求日志、维护日志、接入文档。所有
 ```python
 import facet
 
-t = facet.load()                    # 包内捆绑快照（包版本号 = 表日期）
+t = facet.load()                    # 包内捆绑快照
 facet.resolve(t, "glm-5.3")         # -> 规范键，容忍拼写漂移
 facet.find(t, tool_call=True, min_context=200_000, free=True, limit=10)
 ```

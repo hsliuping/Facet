@@ -92,8 +92,8 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def version() -> str:
-    text = (ROOT / "src" / "facet" / "_version.py").read_text(encoding="utf-8")
-    match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     return match.group(1) if match else "0.0.0"
 
 

@@ -4,7 +4,7 @@
 > 对应项或移入「已完成」，并在文末「更新记录」追加一行。本文件是唯一的进度
 > 基准，功能口径以 [README.md](../README.md) 为准。
 
-**最后更新**：2026-11-11
+**最后更新**：2026-11-13
 
 ---
 
@@ -77,14 +77,14 @@
 | free-tier 渠道 | 已恢复主力服务（46/55 成功、约 24 万 tokens）；免费额度耗尽时按上游重置头自动冷却 |
 | 桥接渠道恢复 | codex-plan / claude-plan / glm-plan 已临时禁用（本地桥未运行 / GLM key 未设）；跑起 8080/8081 桥或提供智谱 key（User 级 `GLM_PLAN_KEY`）后把渠道改回 enabled 即恢复；**glm-plan 需额外排查**：`/health` 显示 `channel header missing authorization` 连续失败，疑似渠道 Key 未配置或协议 Header 映射不对，非桥问题 |
 | 火山引擎 Agent 套餐渠道 | 注册表 agent 模式模型清单已恢复到 22 个；LLM 提取提示词已加「禁止改写分隔符」规则+示例，采纳前对已有清单做归一化（`.`/`-`/`_` 等价）比对，变体自动映射回原始拼写；「regex 兜底只增不删」护栏已上线，不会再被回砍到 5 个 |
-| 正式试用（容器栈） | 网关已容器化常驻（[planrouter-container-trial.md](planrouter-container-trial.md)）：router/mock 双容器 healthy、宿主 127.0.0.1:8787、状态挂载 ./data、每小时指标监控运行中；试用通过后定版本号打 tag |
+| 正式试用（容器栈） | 网关已容器化常驻（[planrouter-container-trial.md](planrouter-container-trial.md)）：router/mock 双容器 healthy、宿主 127.0.0.1:8787、状态挂载 ./data、每小时指标监控运行中；试用通过后打 v1.0.0 tag |
 
 ## 接下来
 
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册
 - [ ] **superagent 对接 P0 后半**（见 [行动清单](planrouter-superagent-integration.md)）：DSH 底座已接通并实测（样例见 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)）；剩验证 super_agent 原型 Router / Worker 能否分别指定模型
-- [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过再定版本号与 tag
+- [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过再打 v1.0.0 tag（版本号已定为 1.0）
 - [ ] **P1–P3**（superagent）：Worker 模型档位评估（facet-cheap 够不够）→ 运维走 `/api/*` + admin key 的 policy 草案 → 吸收三条设计原则到维护层
 
 ---
@@ -111,6 +111,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-13 | 版本定为 1.0（v1.0.0）：pyproject.toml 版本静态化，「包版本号 = 表日期」日历版本机制废除，版本单一来源收敛到 pyproject.toml（Development Status 升为 Production/Stable）；`tools/build_package.py` 不再派生版本/写 `src/facet/_version.py`（该生成文件删除，.gitignore/.dockerignore 同步清理），`tools/build_windows.py` 改从 pyproject 读版本，gateway `__version__` 0.1.0 → 1.0.0（docstring 顺手修正 PlanRouter 残留）；待正式试用通过后打 v1.0.0 tag |
 | 2026-11-11 | 渠道编辑器内嵌 AK/SK 获取指南（用户反馈：「火山引擎和百炼获取ak/sk的过程都要写清楚，还有权限的要求。步骤要细。不然用户不清楚具体过程，我刚才都搞了半天才配好」）：注册表新增厂家级 `credential_help`（steps/permissions/note），厂家只声明一次、加载时自动展开到声明 `credential_envs` 的各模式；`_fill_links` 对早于该字段的 overlay 条目从 builtin 回填（厂家级+模式级 INHERIT_LISTS 双保险），`normalize_vendor` 校验（steps 非空字符串数组、permissions/note 可选字符串）并随控制台保存扩展进模式。内容经官方文档核实——火山：访问控制→用户→新建 IAM 用户（编程访问）→添加权限勾选 `ArkFullAccess`（限制项目时选 default）→用户详情「密钥」Tab 新建密钥，SK 只显示一次，强调填的是 IAM Access Key 而非 ark- 开头的数据面 API Key（个人图快也可直接主账号在 API 访问密钥页建）；百炼：RAM 访问控制创建用户（勾「OpenAPI 调用访问」）+ 创建 AccessKey → RAM 挂 `AliyunBailianFullAccess`（缺则 NoPermission）→ 百炼控制台业务空间管理加成员（缺则 Team.NotAuthorised）→ 空间内模型授权（缺则 Workspace.NotAuthorised），强调填 RAM AccessKey 而非 sk- 开头的 DashScope Key。编辑器凭据区渲染为默认折叠的 `<details>`（summary「不会获取 AK/SK？点开看详细步骤与权限要求」，展开为编号步骤+权限要求+提示行）。补 6 条测试，全量 712 passed；线上验证火山/百炼编辑器帮助块均正确渲染 |
 | 2026-11-11 | 渠道绑定凭据（渠道即账号）+ AgentPlan 余量接入（用户指出 agentplan 在另一个账号、且纠正架构理解：「厂家不能绑定帐号，渠道绑定帐号，我们是在渠道的界面里填 AK/SK 的」）：`Channel` 新增 `creds` 字段，凭据归属渠道而非厂家——同一厂家的第二个账号就是第二条渠道各带各的 IAM AK/SK，厂家级 `config.credentials` 降级为未填渠道的共享回退。`freealign._creds_for` 与订阅页 `plan_for` 均按「渠道自带 > 厂家级 > 环境变量」取凭据，免费额度对齐按 (命令， 凭据) 去重执行；`public_config` 对渠道 creds 回显掩码 `***`（env: 引用保留），`merge_secrets` 对其沿用掩码继承规则（漏传整节整体继承、`***`/空值逐键继承、显式值覆盖），渠道「复制」按钮随整体克隆。AgentPlan 接入：`ark_quota.fetch_agent_plan` = `GetPersonalPlan(Plan=AgentPlan)` + `GetAFPUsage`（AFP 绝对 Quota/Used，5小时/日/周/月四窗口，epoch 毫秒时间戳转秒），订阅表按行渲染绝对值「已用 x / y」而非百分比；套餐查询按行缓存 `kind:sha1(ak:sk)`（coding/agent 分槽，成功 5 分钟、失败 60 秒 TTL），行 vendor 非火山系（百炼等）不再挂火山套餐数据。注册表 volcengine `agent`/`coding` 模式补 `credential_envs`（此前仅 payg 有，套餐渠道编辑器不显示凭据区）；编辑器凭据区改为读写渠道自带 creds（厂家级不再有 UI 入口，仅作回退数据）。补 14 条测试，全量 706 passed；线上验证 CodingPlan 行余量正常（会话 98.4%/周 92.5%/月 96.3%），agentplan 行绑定第二条渠道并填入该账号 AK/SK 后即查真实余量 |
 | 2026-11-11 | 百炼额度免浏览器授权（用户问「百炼能不能像火山一样填 key」）：核对容器内 `bailian-cli` 源码后确认可以——`bl usage free` 虽走控制台接口（`freeTrial.queryFreeTierQuota`），但 runtime 在没有 `access_token` 时会用 `BAILIAN_ACCESS_KEY_ID/SECRET`（或 `--open-api` 保存的 AK/SK）现场换取 CLI token，并在 `expired-console-session` 时自动重换，无需网页登录；`bl auth login --open-api` 其实也会把生成的 token 一并写进 `config.json`（此前以为只存 AK/SK）。落地：`providers.json` 的 bailian `payg` 模式补 `credential_envs`（AK/SK），控制台渠道编辑器据此渲染输入框、`freealign._creds_for` 注入子进程，与火山一致；补注册表测试断言两家免费额度 CLI 都声明凭据；编辑器提示文案改为区分火山 IAM 与百炼 RAM 的 Key 口径。线上排障：填 key 后依次报 `NoPermission`（RAM 缺 `AliyunBailianFullAccess`）→ `Team.NotAuthorised`（非团队成员）→ `Workspace.NotAuthorised`（无业务空间授权），逐层授权后 `bl usage free` 成功，百炼免费 8 模型对齐并落厂家快照 |
