@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Facet gateway launchd template. install.sh replaces the __PLACEHOLDER__
+     strings and installs this as ~/Library/LaunchAgents/com.facet.gateway.plist. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.facet.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__FACET_VENV__/bin/facet</string>
+        <string>serve</string>
+        <string>--config</string>
+        <string>__FACET_HOME__/data/router.json</string>
+        <string>--host</string>
+        <string>__FACET_HOST__</string>
+        <string>--port</string>
+        <string>__FACET_PORT__</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>__FACET_HOME__/logs/gateway.log</string>
+    <key>StandardErrorPath</key>
+    <string>__FACET_HOME__/logs/gateway.err.log</string>
+</dict>
+</plist>

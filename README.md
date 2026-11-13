@@ -67,6 +67,18 @@ git clone https://github.com/hsliuping/Facet && cd Facet
 pip install -e .
 ```
 
+### macOS 一键安装（launchd 服务）
+
+```bash
+git clone https://github.com/hsliuping/Facet && cd Facet
+tools/macos/install.sh            # venv 装到 ~/.facet，注册开机自启 + 崩溃重启
+```
+
+- 装完自动做健康检查并打印控制台地址；服务崩溃后 launchd 自动拉起。
+- 配置与日志在 `~/.facet/`（`data/router.json`、`logs/gateway.err.log`）。
+- 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
+- 卸载：`tools/macos/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
+
 容器部署见下文[「Docker 部署」](#docker-部署)。
 
 ## 快速开始
