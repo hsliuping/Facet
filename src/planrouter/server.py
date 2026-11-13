@@ -32,7 +32,8 @@ from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
 from .convert import convert_request, convert_response, inject_system, stream_converter
 from .core import (
-    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, OPENAI, Config, StateStore, channel_ref,
+    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, OPENAI, QUOTA_MARKERS, Config,
+    StateStore, channel_ref,
     body_has_vision, channel_takes_images, ensure_channel_ids, explicit_models,
     open_with_proxy, parse_cooldown, parse_config, parse_free_quota,
     resolve_model, resolve_secret, upstream_path_for, vision_wire,
@@ -40,7 +41,7 @@ from .core import (
 from .keys import KeyStore
 from .notifier import ReminderService
 from .persistence import StatePersistence
-from .probe import MAX_CHANNELS, probe_channel, probe_models
+from .probe import MAX_CHANNELS, pick_model, probe_channel, probe_models
 from .quota import parse_quota, quota_exhaustion_wait
 from .report import build_report
 from .responses import ResponsesAdapter, to_chat_request
@@ -608,6 +609,97 @@ class FreeAlignRunner(ScheduledTask):
         return _free_align_summary(self.app.run_free_align("scheduled"))
 
 
+class HealthProber:
+    """Background liveness probes for channels sitting in a short cooldown.
+
+    A transient cooldown (30s network blip, a few minutes of Retry-After)
+    usually outlives the outage; with no traffic the half-open probe never
+    fires, so a route idles on later channels until the timer runs out. This
+    loop probes such channels directly and clears the cooldown on the first
+    success. Quota/plan-window cooldowns, per-model cooldowns, half-open
+    channels and long Retry-After freezes are left to their own timers.
+    """
+
+    MAX_WORKERS = 3
+    BACKOFF_START = 30.0
+    BACKOFF_MAX = 300.0
+
+    def __init__(self, app, interval: float, probe_fn=None):
+        self.app = app
+        self.interval = max(5.0, float(interval))
+        self._probe = probe_fn or (lambda channel: app._probe_channel(channel))
+        self._attempts: dict[str, int] = {}
+        self._deferred: dict[str, float] = {}  # name -> earliest next probe
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="planrouter-prober")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
+
+    @staticmethod
+    def _quota_bound(reason: str) -> bool:
+        """True when the cooldown ends by its window, not by recovery."""
+        return (reason in ("daily_quota_reset", "http_404_not_found")
+                or "_exhausted" in reason
+                or any(m in reason for m in QUOTA_MARKERS))
+
+    def _targets(self, now: float) -> list:
+        """Enabled channels whose short, non-quota cooldown is worth one probe."""
+        max_cooldown = self.app.config.defaults.probe_max_cooldown_seconds
+        targets = []
+        for channel in self.app.config.channels:
+            if not channel.enabled:
+                continue
+            with self.app.store.lock:
+                state = self.app.store.states.get(channel.name)
+                if not state or state.cooldown_until <= now or state.half_open:
+                    continue
+                remaining = state.cooldown_until - now
+                reason = (state.reason or "").lower()
+            if remaining > max_cooldown or self._quota_bound(reason):
+                continue
+            targets.append(channel)
+        return targets
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            self._cycle()
+
+    def _cycle(self) -> None:
+        now = time.time()
+        targets = [c for c in self._targets(now)
+                   if now >= self._deferred.get(c.name, 0.0)]
+        if not targets:
+            return
+        with ThreadPoolExecutor(
+                max_workers=min(self.MAX_WORKERS, len(targets))) as pool:
+            futures = [(channel, pool.submit(self._probe, channel))
+                       for channel in targets]
+            for channel, future in futures:
+                try:
+                    ok = bool(future.result(timeout=60))
+                except Exception:
+                    ok = False
+                if ok:
+                    self._attempts.pop(channel.name, None)
+                    self._deferred.pop(channel.name, None)
+                    with self.app.store.lock:
+                        state = self.app.store.states.get(channel.name)
+                        if state:
+                            state.clear_cooldown()
+                else:
+                    k = self._attempts.get(channel.name, 0) + 1
+                    self._attempts[channel.name] = k
+                    self._deferred[channel.name] = time.time() + min(
+                        self.BACKOFF_MAX, self.BACKOFF_START * (2 ** (k - 1)))
+
+
 class App:
     def __init__(
         self,
@@ -731,6 +823,11 @@ class App:
             self.maintenance_runner.start()
         if self.config.defaults.free_align_hours:
             self.free_align_runner.start()
+        # Created even when switched off, so the console can list the sweep;
+        # the thread only runs with a positive probe_interval_seconds.
+        self.health_prober = HealthProber(self, self.config.defaults.probe_interval_seconds)
+        if self.config.defaults.probe_interval_seconds > 0:
+            self.health_prober.start()
 
     def stop_background(self) -> None:
         if self.maintenance_runner:
@@ -739,6 +836,8 @@ class App:
             self.free_align_runner.stop()
         if self.catalog_refresher:
             self.catalog_refresher.stop()
+        if self.health_prober:
+            self.health_prober.stop()
         if self.notifier:
             self.notifier.stop()
         if self.usage:
@@ -1455,14 +1554,51 @@ class App:
         self.apply_config({**self.raw, "channels": channels})
         return {"ok": True, "name": new_name}
 
-    def rotate_admin_key(self, key: str = "") -> str:
-        """Persist a new management key (random when empty) and apply it live."""
+    def _verify_admin(self, provided: str) -> bool:
+        """True when `provided` is the current management password."""
+        expected = (self.config.listen.admin_key
+                    or (DEFAULT_ADMIN_KEY if self.config.listen.api_key else ""))
+        if not expected:
+            return True
+        return hmac.compare_digest(
+            expected.encode("utf-8"), (provided or "").strip().encode("utf-8"))
+
+    def rotate_admin_key(self, key: str = "", old_key: str = "") -> str:
+        """Replace the management key; the current one must be confirmed."""
+        if not self._verify_admin(old_key):
+            raise ValueError("原管理密钥不正确")
         value = (key or "").strip() or "sk-admin-" + secrets.token_hex(16)
         if len(value) < 4:
             raise ValueError("管理密钥至少 4 个字符")
         raw = dict(self.raw)
         listen = dict(raw.get("listen") or {})
         listen["admin_key"] = value
+        raw["listen"] = listen
+        self.apply_config(raw)
+        return value
+
+    def set_master_key_enabled(self, enabled: bool, admin_key: str = "") -> bool:
+        """Pause or resume the master gateway key; member keys are unaffected."""
+        if not self._verify_admin(admin_key):
+            raise ValueError("管理密码不正确")
+        raw = dict(self.raw)
+        listen = dict(raw.get("listen") or {})
+        listen["api_key_enabled"] = bool(enabled)
+        raw["listen"] = listen
+        self.apply_config(raw)
+        return bool(enabled)
+
+    def rotate_master_key(self, key: str = "", admin_key: str = "") -> str:
+        """Replace the master gateway key after confirming the password."""
+        if not self._verify_admin(admin_key):
+            raise ValueError("管理密码不正确")
+        value = (key or "").strip() or "sk-router-" + secrets.token_hex(20)
+        if len(value) < 8:
+            raise ValueError("主密钥至少 8 个字符")
+        raw = dict(self.raw)
+        listen = dict(raw.get("listen") or {})
+        listen["api_key"] = value
+        listen["api_key_enabled"] = True
         raw["listen"] = listen
         self.apply_config(raw)
         return value
@@ -1919,6 +2055,35 @@ class App:
             return "".join(b.get("text") or "" for b in data.get("content") or []
                            if isinstance(b, dict))
         return data["choices"][0]["message"]["content"]
+
+    def _probe_channel(self, channel) -> bool:
+        """One cheap liveness probe for the background HealthProber.
+
+        "models" sends GET /v1/models (free, verifies reachability + auth);
+        "chat" spends one 1-token completion via the maintenance caller.
+        """
+        if self.config.defaults.probe_mode == "chat":
+            model = pick_model(dict(channel.models) or {})
+            if not model:
+                return False
+            try:
+                self._maintenance_direct_call(channel, model, "ping")
+                return True
+            except Exception:
+                return False
+        raw = {
+            "name": channel.name,
+            "protocol": channel.protocol,
+            "base_url": channel.base_url,
+            "api_key": channel.api_key,
+            "models": dict(channel.models) or {"auto": "*"},
+            "upstream_path": channel.upstream_path,
+            "proxy": channel.proxy,
+        }
+        try:
+            return bool(probe_models(raw, timeout=8.0).get("ok"))
+        except Exception:
+            return False
 
     def _maintenance_loopback_call(self, model: str, prompt: str) -> str:
         """Ordinary client request through the gateway itself, so the model
@@ -2541,6 +2706,12 @@ class App:
             "subscription_settings": self.subscription_settings,
             "blocked_channels": blocked,
             "catalog_refresh_hours": self.config.defaults.catalog_refresh_hours,
+            "load_balancing": {
+                "strategy": self.config.defaults.lb_strategy,
+                "probe_interval_seconds": self.config.defaults.probe_interval_seconds,
+                "probe_mode": self.config.defaults.probe_mode,
+                "probe_max_cooldown_seconds": self.config.defaults.probe_max_cooldown_seconds,
+            },
             "maintenance": {
                 "hours": self.config.defaults.maintenance_hours,
                 "llm_model": self.config.defaults.maintenance_model,
@@ -2677,6 +2848,10 @@ class App:
         expected = self.config.listen.api_key
         if not expected:
             return True
+        # A paused master key stops gateway calls that use it, while the
+        # member keys above keep their own independent lifecycle.
+        if not self.config.listen.api_key_enabled:
+            return False
         return hmac.compare_digest(provided, expected)
 
     def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
@@ -4337,6 +4512,10 @@ class App:
             return (502, "transient_internal", 30.0)
         else:
             # Headers may already be on the wire here: never fail over again.
+            # Time-to-first-byte feeds the weighted strategy's latency signal;
+            # the full duration would measure generation length, not the channel.
+            with self.store.lock:
+                self.store.states[channel.name].record_latency(time.time() - now)
             try:
                 with resp:
                     return self._relay(h, resp, protocol, channel, wire, attempt,
@@ -4361,6 +4540,25 @@ class App:
         }
         if handoff:
             extra["X-Session-Handoff"] = "1"
+        # urlopen raises HTTPError for non-2xx, so a bare response object with
+        # an error status only appears via mocks/unusual openers: relay the
+        # status and body honestly instead of masking it as 200.
+        if (getattr(resp, "status", 0) or 200) >= 400:
+            data = resp.read()
+            self.record_usage(channel.name, False, model=wire, h=h)
+            h.send_response(resp.status)
+            ctype = resp.headers.get("Content-Type")
+            if ctype:
+                h.send_header("Content-Type", ctype)
+            retry = resp.headers.get("Retry-After")
+            if retry:
+                h.send_header("Retry-After", retry)
+            h.send_header("Content-Length", str(len(data)))
+            for key, value in extra.items():
+                h.send_header(key, value)
+            h.end_headers()
+            h.wfile.write(data)
+            return None
         if stream:
             # Cross-protocol streaming (P1-3): the upstream speaks the
             # channel's protocol, so the SSE is converted incrementally into

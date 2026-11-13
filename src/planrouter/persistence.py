@@ -12,6 +12,7 @@ STATE_FIELDS = (
     "cooldown_until", "model_cooldown_until", "reason", "last_error",
     "consecutive_errors", "half_open", "total_requests", "served_requests",
     "failed_requests", "total_tokens", "handoffs", "last_used", "quota",
+    "latency_ewma",
 )
 WINDOW_SECONDS = 86400
 

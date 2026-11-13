@@ -17,7 +17,7 @@ from planrouter.core import (OPENAI, StateStore, body_has_vision,
                              open_with_proxy, parse_cooldown, vision_wire,
                              wire_model)
 from planrouter.keys import KeyStore
-from planrouter.server import App
+from planrouter.server import App, HealthProber
 
 BASE = {
     "listen": {"host": "127.0.0.1", "port": 8787},
@@ -365,6 +365,123 @@ class ModelLevelCooldownTests(unittest.TestCase):
         state.mark_success(10, self.now, "wire-a")
         self.assertTrue(state.model_available(self.now, "wire-a"))
         self.assertFalse(state.model_available(self.now, "model-a"))
+
+
+class WeightedOrderTests(unittest.TestCase):
+    """lb_strategy="weighted": score-ranked candidates, chain order for ties."""
+
+    def setUp(self):
+        data = {**BASE, "defaults": {"lb_strategy": "weighted"}}
+        self.cfg = load_config(write_config(data))
+        self.store = StateStore(self.cfg)
+        self.now = time.time()
+
+    def candidates(self, route="default", model="auto", session=None):
+        pairs, _ = self.store.pick(OPENAI, route, model, session, self.now)
+        return [c.name for c, _ in pairs]
+
+    def test_idle_channels_keep_chain_order(self):
+        # Zero history everywhere: identical ranks, stable sort keeps the
+        # configured order — the prior never demotes an unknown channel.
+        self.assertEqual(self.candidates(), ["plan-a", "plan-b", "free"])
+
+    def test_consecutive_errors_sink_a_channel(self):
+        self.store.states["plan-a"].consecutive_errors = 3
+        self.assertEqual(self.candidates(), ["plan-b", "free", "plan-a"])
+
+    def test_high_latency_sinks_a_channel(self):
+        self.store.states["plan-b"].record_latency(9.0)
+        self.assertEqual(self.candidates(), ["plan-a", "free", "plan-b"])
+
+    def test_expired_transient_failure_still_sinks_a_channel(self):
+        # Cooldown long gone, but failed_requests + consecutive_errors keep
+        # the pair ranked below its healthy siblings.
+        self.store.states["plan-a"].mark_cooldown(30, "transient_http_502",
+                                                  self.now - 60)
+        self.assertEqual(self.candidates(), ["plan-b", "free", "plan-a"])
+
+    def test_route_level_lb_overrides_the_default(self):
+        routes = [dict(r) for r in BASE["routes"]]
+        routes[1]["lb"] = "order"  # the cheap route
+        data = {**BASE, "defaults": {"lb_strategy": "weighted"}, "routes": routes}
+        store = StateStore(load_config(write_config(data)))
+        store.states["plan-b"].record_latency(9.0)
+        pairs, _ = store.pick(OPENAI, "cheap", "auto", None, self.now)
+        self.assertEqual([c.name for c, _ in pairs], ["free", "plan-b"])
+
+    def test_sticky_session_still_pinned_to_front(self):
+        self.store.bind_session("s1", "plan-b", self.now)
+        self.assertEqual(self.candidates(session="s1")[0], "plan-b")
+
+    def test_invalid_strategy_is_rejected(self):
+        with self.assertRaises(ValueError):
+            load_config(write_config({**BASE, "defaults": {"lb_strategy": "random"}}))
+
+
+class HealthProberTests(unittest.TestCase):
+    """Background probes lift transient cooldowns; window-bound ones stay put."""
+
+    def setUp(self):
+        data = {**BASE, "defaults": {"lb_strategy": "weighted",
+                                     "probe_interval_seconds": 30}}
+        self.cfg = load_config(write_config(data))
+        self.app = App(self.cfg)
+        self.now = time.time()
+        self.seen: list[str] = []
+        self.results: dict[str, bool] = {}
+
+    def prober(self, interval: float = 5.0) -> HealthProber:
+        def probe(channel):
+            self.seen.append(channel.name)
+            return self.results.get(channel.name, True)
+        return HealthProber(self.app, interval, probe_fn=probe)
+
+    def test_transient_cooldown_is_cleared_by_probe(self):
+        self.app.store.states["plan-a"].mark_cooldown(120, "transient_http_503", self.now)
+        self.prober()._cycle()
+        self.assertEqual(self.seen, ["plan-a"])
+        state = self.app.store.states["plan-a"]
+        self.assertEqual(state.cooldown_until, 0.0)
+        self.assertEqual(state.reason, "")
+        self.assertFalse(state.half_open)
+
+    def test_quota_and_window_cooldowns_are_never_probed(self):
+        self.app.store.states["plan-a"].mark_cooldown(3600, "quota", self.now)
+        self.app.store.states["plan-b"].mark_cooldown(7200, "plan_default_exhausted", self.now)
+        self.app.store.states["free"].mark_cooldown(3600, "daily_quota_reset", self.now)
+        self.prober()._cycle()
+        self.assertEqual(self.seen, [])
+
+    def test_long_freeze_and_half_open_are_left_to_the_timer(self):
+        self.app.store.states["plan-a"].mark_cooldown(900, "transient_http_503", self.now)
+        self.app.store.states["plan-b"].mark_cooldown(120, "transient_http_503",
+                                                      self.now, half_open=True)
+        self.prober()._cycle()
+        self.assertEqual(self.seen, [])
+
+    def test_failed_probes_back_off_exponentially(self):
+        self.results["plan-a"] = False
+        self.app.store.states["plan-a"].mark_cooldown(120, "transient_http_503", self.now)
+        prober = self.prober()
+        prober._cycle()
+        self.assertEqual(self.seen, ["plan-a"])
+        self.assertGreater(prober._deferred["plan-a"], time.time() + 20)
+        prober._deferred["plan-a"] = time.time() - 1  # expire the backoff
+        prober._cycle()
+        self.assertEqual(self.seen.count("plan-a"), 2)
+        self.assertGreater(prober._deferred["plan-a"], time.time() + 50)
+
+    def test_success_resets_backoff_state(self):
+        self.results["plan-a"] = False
+        self.app.store.states["plan-a"].mark_cooldown(120, "transient_http_503", self.now)
+        prober = self.prober()
+        prober._cycle()
+        prober._deferred["plan-a"] = time.time() - 1
+        self.results["plan-a"] = True
+        prober._cycle()
+        self.assertEqual(self.app.store.states["plan-a"].cooldown_until, 0.0)
+        self.assertNotIn("plan-a", prober._deferred)
+        self.assertNotIn("plan-a", prober._attempts)
 
 
 class ModelScopedFailureTests(unittest.TestCase):

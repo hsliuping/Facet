@@ -347,6 +347,9 @@ class Route:
     # Route-level system prompt prepended before routing (P1-3 §2.3); empty
     # means the client's request is sent untouched.
     system_prompt: str = ""
+    # Load-balancing strategy override: "" inherits defaults.lb_strategy,
+    # "order" keeps chain order, "weighted" ranks by success/latency/errors.
+    lb: str = ""
 
 
 @dataclass(frozen=True)
@@ -364,6 +367,8 @@ class Listen:
     port: int
     api_key: str | None
     admin_key: str | None = None
+    # The master key can be paused from the console; member keys keep working.
+    api_key_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -394,6 +399,19 @@ class Defaults:
     # toward 0 with exponential half-life so old failures (and old successes)
     # fade. 0 disables decay and keeps a pure running total.
     score_halflife_hours: float = 12.0
+    # Load-balancing strategy for candidate ordering: "order" keeps the
+    # chain order (only known-bad pairs sink), "weighted" ranks candidates
+    # by success rate, latency EWMA, consecutive errors and stability score.
+    lb_strategy: str = "order"
+    # Background health probing of cooled channels: 0 disables the prober.
+    # Only channel-level cooldowns that should end soon get probed.
+    probe_interval_seconds: int = 0
+    # Probe request type: "models" (GET /models, free) or "chat" (1-token
+    # chat via the maintenance direct-call path).
+    probe_mode: str = "models"
+    # Cooldowns longer than this many seconds are skipped by the prober
+    # (Retry-After / daily-quota windows end on their own schedule).
+    probe_max_cooldown_seconds: int = 600
 
 
 @dataclass(frozen=True)
@@ -628,6 +646,7 @@ def parse_config(raw: dict) -> Config:
         port=int(listen_raw.get("port", 8787)),
         api_key=resolve_secret(listen_raw.get("api_key")),
         admin_key=resolve_secret(listen_raw.get("admin_key")),
+        api_key_enabled=bool(listen_raw.get("api_key_enabled", True)),
     )
     if listen.host not in LOOPBACK and not listen.api_key:
         raise ValueError("non-loopback listen requires listen.api_key (use env:VAR)")
@@ -639,6 +658,12 @@ def parse_config(raw: dict) -> Config:
     preempt_quota = d.get("preempt_quota", True)
     if not isinstance(preempt_quota, bool):
         raise ValueError("defaults.preempt_quota must be true or false")
+    lb_strategy = str(d.get("lb_strategy") or "order").strip().lower()
+    if lb_strategy not in ("order", "weighted"):
+        raise ValueError("defaults.lb_strategy must be 'order' or 'weighted'")
+    probe_mode = str(d.get("probe_mode") or "models").strip().lower()
+    if probe_mode not in ("models", "chat"):
+        raise ValueError("defaults.probe_mode must be 'models' or 'chat'")
     defaults = Defaults(
         cooldown_minutes=int(d.get("cooldown_minutes", 300)),
         max_failover=int(d.get("max_failover", 3)),
@@ -655,6 +680,10 @@ def parse_config(raw: dict) -> Config:
         daily_429_cooldown_hours=int(d.get("daily_429_cooldown_hours", 0)),
         network_retries=int(d.get("network_retries", 1)),
         score_halflife_hours=float(d.get("score_halflife_hours", 12.0)),
+        lb_strategy=lb_strategy,
+        probe_interval_seconds=int(d.get("probe_interval_seconds", 0)),
+        probe_mode=probe_mode,
+        probe_max_cooldown_seconds=int(d.get("probe_max_cooldown_seconds", 600)),
     )
 
     # Vendor management credentials: {provider: {ENV_NAME: value}}. Values
@@ -814,6 +843,10 @@ def parse_config(raw: dict) -> Config:
         protocol = item.get("protocol", OPENAI)
         names = tuple(item.get("channels") or [])
         system_prompt = str(item.get("system_prompt") or "")
+        lb = str(item.get("lb") or "").strip().lower()
+        if lb and lb not in ("order", "weighted"):
+            raise ValueError(
+                f"route {name}: lb must be '', 'order' or 'weighted'")
         if protocol not in PROTOCOLS:
             raise ValueError(f"route {name}: protocol must be one of {PROTOCOLS}")
         if not names:
@@ -848,7 +881,7 @@ def parse_config(raw: dict) -> Config:
         if key in routes:
             raise ValueError(f"duplicate route {key!r}")
         routes[key] = Route(name=name, protocol=protocol, channels=names,
-                            system_prompt=system_prompt)
+                            system_prompt=system_prompt, lb=lb)
     for protocol in PROTOCOLS:
         if f"{protocol}:default" not in routes:
             raise ValueError(f"missing {protocol}:default route")
@@ -920,6 +953,9 @@ class ChannelState:
     handoffs: int = 0
     last_used: float = 0.0
     quota: dict = field(default_factory=dict)
+    # Exponential moving average of upstream round-trip seconds (weighted
+    # strategy input); 0.0 means "unknown" and never penalizes a channel.
+    latency_ewma: float = 0.0
 
     def model_available(self, now: float, wire: str) -> bool:
         """该模型的冷却是否已结束（不含渠道整体冷却）。"""
@@ -996,6 +1032,24 @@ class ChannelState:
             self.tok_events.append((now, tokens))
             self.total_tokens += tokens
 
+    def record_latency(self, seconds: float) -> None:
+        """Fold one upstream round-trip into the EWMA (α=0.5)."""
+        if seconds <= 0:
+            return
+        self.latency_ewma = (seconds if self.latency_ewma <= 0
+                             else 0.5 * self.latency_ewma + 0.5 * seconds)
+
+    def clear_cooldown(self) -> None:
+        """Lift a channel-level cooldown without touching counters.
+
+        Used by the background health prober: a successful probe proves the
+        channel is back, but it is not client traffic, so served_requests and
+        the 24h windows must stay untouched (mark_success would count it).
+        """
+        self.cooldown_until = 0.0
+        self.reason = ""
+        self.half_open = False
+
     def snapshot(self, now: float) -> dict:
         cooling = max(0.0, self.cooldown_until - now)
         return {
@@ -1016,6 +1070,7 @@ class ChannelState:
             "handoffs": self.handoffs,
             "last_used": self.last_used,
             "quota": quota_view(self.quota, now),
+            "latency_ms": round(self.latency_ewma * 1000) if self.latency_ewma > 0 else 0,
         }
 
 
@@ -1036,6 +1091,9 @@ class StateStore:
         # Keyed "channel|wire_model"; each value is [score, last_ts] with
         # exponential decay applied lazily on read/write. Missing keys = 0.0.
         self.scores: dict[str, list[float, float]] = {}
+        # Last rotation performed by _rotate_tier, formatted "offset/tier_size"
+        # for the [route] selection log; empty when rotation was not possible.
+        self.last_rotate = ""
 
     def _halflife_seconds(self) -> float:
         return self.config.defaults.score_halflife_hours * 3600.0
@@ -1167,18 +1225,22 @@ class StateStore:
         Lower-priority channels keep their tail positions as fallback.
         """
         if len(ordered) < 2:
+            self.last_rotate = ""
             return ordered
         head = self.config.channel(ordered[0])
         if head is None:
+            self.last_rotate = ""
             return ordered
         positions = [i for i, name in enumerate(ordered)
                      if (c := self.config.channel(name)) is not None
                      and c.priority == head.priority]
         if len(positions) < 2:
+            self.last_rotate = ""
             return ordered
         key = f"{protocol}:{route.name}"
         offset = self.rr_cursor.get(key, 0) % len(positions)
         self.rr_cursor[key] = offset + 1
+        self.last_rotate = f"{offset}/{len(positions)}"
         if not offset:
             return ordered
         tier = [ordered[i] for i in positions]
@@ -1187,6 +1249,40 @@ class StateStore:
         for pos, name in zip(positions, rotated):
             result[pos] = name
         return result
+
+    @staticmethod
+    def _fmt_pairs(pairs: list[tuple[Channel, str]], limit: int = 5) -> str:
+        shown = [f"{channel.name}->{wire}" for channel, wire in pairs[:limit]]
+        extra = len(pairs) - len(shown)
+        text = " ".join(shown) if shown else "none"
+        return f"{text} +{extra}" if extra > 0 else text
+
+    def _log_pick(self, protocol: str, route: Route, model: str,
+                  decision: ModelDecision, sticky: str | None,
+                  skipped: list[str], strategy: str,
+                  result: list[tuple[Channel, str]]) -> None:
+        """One [route] line per pick: how the candidate chain was built.
+
+        Mirrors the [inbound] shape-log style: a single flushed stdout line,
+        no configuration, so a running gateway can be read top to bottom.
+        """
+        picked = (f"{result[0][0].name}->{result[0][1]}"
+                  if result else "none")
+        parts = [
+            f"[route] {protocol}:{route.name}",
+            f"model={model!r}",
+            f"mode={decision.mode}",
+            f"reason={decision.reason}",
+            f"sticky={sticky or 'no'}",
+            f"rotate={self.last_rotate or '-'}",
+        ]
+        if strategy:
+            parts.append(f"lb={strategy}")
+        parts.append("skipped=" + (" ".join(skipped[:5]) or "-")
+                     + (f" +{len(skipped) - 5}" if len(skipped) > 5 else ""))
+        parts.append(f"picked={picked}")
+        parts.append(f"chain={self._fmt_pairs(result)}")
+        print(" ".join(parts), flush=True)
 
     def pick(
         self,
@@ -1219,44 +1315,71 @@ class StateStore:
             if decision is None:
                 decision = resolve_model(self.config, protocol, model, hint, excluded)
             if decision.mode == "rejected":
+                print(f"[route] {protocol} model={model!r} "
+                      f"rejected reason={decision.reason}", flush=True)
                 return [], None
             route = self.config.route(protocol, decision.hint)
             if route is None:
+                print(f"[route] {protocol} model={model!r} mode={decision.mode} "
+                      f"no-route hint={decision.hint!r}", flush=True)
                 return [], None
             ordered = list(route.channels)
             sticky = self.session_channel(session_id, now)
             if sticky in ordered:
                 ordered.remove(sticky)
                 ordered.insert(0, sticky)
+                self.last_rotate = ""
             else:
                 ordered = self._rotate_tier(protocol, route, ordered)
             exact: list[tuple[Channel, str]] = []
             scheduled: list[tuple[Channel, str]] = []
             reachable: dict[str, Channel] = {}
+            skipped: list[str] = []
             for name in ordered:
                 channel = self.config.channel(name)
-                if (channel is None or not channel.enabled or name in excluded
-                        or channel.protocol != protocol):
+                if channel is None:
+                    skipped.append(f"{name}(missing)")
                     continue
-                ok, _ = self.states[name].available(now, channel.rate)
+                if not channel.enabled:
+                    skipped.append(f"{name}(disabled)")
+                    continue
+                if name in excluded:
+                    skipped.append(f"{name}(blocked)")
+                    continue
+                if channel.protocol != protocol:
+                    skipped.append(f"{name}(protocol={channel.protocol})")
+                    continue
+                ok, why = self.states[name].available(now, channel.rate)
                 if not ok:
+                    skipped.append(f"{name}({why or 'unavailable'})")
                     continue
                 reachable[name] = channel
                 if decision.mode == "exact" and name in decision.exact_channels:
                     wire = wire_model(channel, decision.exposed)
                     if wire and self.states[name].model_available(now, wire):
                         exact.append((channel, wire))
+                    elif wire:
+                        skipped.append(f"{name}({wire}:cooling)")
+                    else:
+                        skipped.append(f"{name}(no-wire)")
                     continue
                 if decision.mode == "agent":
                     continue  # filled from the caller's ranked list below
                 wire = dispatch_wire_model(channel, decision.requested)
                 if wire and self.states[name].model_available(now, wire):
                     scheduled.append((channel, wire))
+                elif wire:
+                    skipped.append(f"{name}({wire}:cooling)")
+                else:
+                    skipped.append(f"{name}(no-wire)")
             if decision.mode == "agent":
                 for name, wire in (agent_candidates or ()):
                     channel = reachable.get(name)
                     if channel is not None and self.states[name].model_available(now, wire):
                         scheduled.append((channel, wire))
+                    else:
+                        why = "unreachable" if channel is None else f"{wire}:cooling"
+                        skipped.append(f"{name}({why})")
                 if not scheduled:
                     # No usable catalog entry anywhere (fresh install, or
                     # every catalog model is tool-less / labelled dead): give
@@ -1266,13 +1389,24 @@ class StateStore:
                         wire = dispatch_wire_model(channel, decision.requested)
                         if wire and self.states[channel.name].model_available(now, wire):
                             scheduled.append((channel, wire))
+                self._log_pick(protocol, route, model, decision, sticky,
+                               skipped, "", scheduled)
                 return scheduled, route
             # Stability reordering: within each group, higher score first;
             # equal scores keep the chain order. The sticky session channel
-            # (position 0, if any) stays pinned to the front.
-            if decision.mode == "exact":
-                return self._by_score(exact or scheduled, sticky), route
-            return self._by_score(scheduled, sticky), route
+            # (position 0, if any) stays pinned to the front. The "weighted"
+            # strategy additionally ranks by success rate, latency and
+            # consecutive errors; "order" (default) is unchanged.
+            strategy = route.lb or self.config.defaults.lb_strategy
+            ordered_pairs = exact or scheduled
+            if decision.mode != "exact":
+                ordered_pairs = scheduled
+            result = (self._weighted_order(ordered_pairs, sticky, now)
+                      if strategy == "weighted"
+                      else self._by_score(ordered_pairs, sticky))
+            self._log_pick(protocol, route, model, decision, sticky,
+                           skipped, strategy, result)
+            return result, route
 
     def _by_score(self, pairs: list[tuple[Channel, str]],
                   sticky: str | None) -> list[tuple[Channel, str]]:
@@ -1296,6 +1430,64 @@ class StateStore:
                 healthy.append(pair)
         bad.sort(key=lambda pair: -self.score(pair[0].name, pair[1]))
         return pairs[:head] + healthy + bad
+
+    # Weighted-strategy rank weights: stability score dominates, the 24h
+    # success rate pulls toward its 0.9 prior, consecutive errors and the
+    # latency EWMA subtract. Kept as module constants so tests can reason
+    # about magnitudes without re-deriving them.
+    RANK_SUCCESS_WEIGHT = 6.0
+    RANK_ERROR_WEIGHT = 2.0
+    RANK_ERROR_CAP = 5
+    RANK_LATENCY_WEIGHT = 1.5
+    RANK_LATENCY_CAP = 10.0
+    RANK_SUCCESS_PRIOR = 0.9
+    RANK_WARMUP_ATTEMPTS = 10
+
+    def _success_rate(self, state: ChannelState) -> float:
+        """24h window success rate in [0, 1], blended toward a 0.9 prior.
+
+        The window counts attempts (req_times) vs successes with tokens
+        (tok_events). Fewer than RANK_WARMUP_ATTEMPTS samples blend linearly
+        toward the prior so a fresh channel is never punished into silence;
+        an empty window falls back to lifetime counters, then to the prior.
+        """
+        attempts = len(state.req_times)
+        successes = len(state.tok_events)
+        if attempts <= 0:
+            lifetime = state.served_requests + state.failed_requests
+            if lifetime <= 0:
+                return self.RANK_SUCCESS_PRIOR
+            raw = state.served_requests / lifetime
+            warm = self.RANK_WARMUP_ATTEMPTS
+            return raw * (lifetime / warm) + self.RANK_SUCCESS_PRIOR * (1 - lifetime / warm)
+        raw = min(successes, attempts) / attempts
+        blend = min(attempts, self.RANK_WARMUP_ATTEMPTS) / self.RANK_WARMUP_ATTEMPTS
+        return raw * blend + self.RANK_SUCCESS_PRIOR * (1 - blend)
+
+    def _rank(self, channel: Channel, wire: str, now: float) -> float:
+        state = self.states[channel.name]
+        lat = min(max(state.latency_ewma, 0.0), self.RANK_LATENCY_CAP) / self.RANK_LATENCY_CAP
+        return (self._decayed(f"{channel.name}|{wire}", now)
+                + self.RANK_SUCCESS_WEIGHT * (self._success_rate(state) - self.RANK_SUCCESS_PRIOR)
+                - self.RANK_ERROR_WEIGHT * min(state.consecutive_errors, self.RANK_ERROR_CAP)
+                - self.RANK_LATENCY_WEIGHT * lat)
+
+    def _weighted_order(self, pairs: list[tuple[Channel, str]], sticky: str | None,
+                        now: float) -> list[tuple[Channel, str]]:
+        """Rank pairs by _rank, highest first; equal ranks keep chain order.
+
+        Sticky sessions stay pinned to the front exactly like _by_score.
+        Python's sort is stable, so untouched channels keep their route
+        order — a brand-new channel with no data lands where the console
+        put it, it just no longer guarantees the front spot once a
+        statistically better sibling exists.
+        """
+        if len(pairs) < 2:
+            return pairs
+        head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
+        body = pairs[head:]
+        body.sort(key=lambda pair: -self._rank(pair[0], pair[1], now))
+        return pairs[:head] + body
 
     def snapshot(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now

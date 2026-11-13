@@ -201,6 +201,14 @@ class CatalogStoreTests(unittest.TestCase):
                                      "plan-c": {"models": [1, "m2"]}}}, now=100.0)
         self.assertEqual(other.catalog_view("plan-c")["models"], ["1", "m2"])
 
+    def test_capture_restore_round_trips_latency_ewma(self):
+        store = self.make_store()
+        store.states["plan-a"].record_latency(1.5)
+        snap = capture(store, now=100.0)
+        other = self.make_store()
+        restore(other, snap, now=100.0)
+        self.assertAlmostEqual(other.states["plan-a"].latency_ewma, 1.5)
+
     def test_persistence_flush_writes_catalogs(self):
         store = self.make_store()
         state_file = self.path.with_name("state.json")

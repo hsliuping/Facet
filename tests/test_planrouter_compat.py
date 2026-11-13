@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
 from planrouter.completions import CompletionsAdapter, to_chat_request
 from planrouter.core import OPENAI, load_config
@@ -245,6 +247,45 @@ class LegacyCompletionsEndpointTests(unittest.TestCase):
                                                       "Retry-After": "5"}))
         self.assertEqual(h.status, 401)
         self.assertIn(b"bad key", h.body)
+
+
+class WeightedStrategyFailoverTests(unittest.TestCase):
+    """lb_strategy="weighted" only reorders candidates; failover stays intact."""
+
+    def setUp(self):
+        cfg = copy.deepcopy(BASE)
+        cfg["channels"].append({
+            "name": "plan-b", "protocol": "openai",
+            "base_url": "http://127.0.0.1:9002", "models": {"auto": "model-b"},
+            "priority": 20, "api_key": "sk-b",
+        })
+        cfg["routes"][0]["channels"] = ["plan-a", "plan-b"]
+        cfg["defaults"] = {"lb_strategy": "weighted"}
+        self.app = App(load_config(write_config(cfg)))
+
+    def test_transient_failure_still_fails_over(self):
+        # Emulate urlopen's behavior faithfully: HTTPError raises at call
+        # time (not at response __enter__), so the gateway sees it exactly
+        # like a real upstream 502.
+        calls = {"n": 0}
+
+        def fake_open(req, timeout, proxy=""):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise HTTPError("http://test", 502, "Error",
+                                {"Retry-After": "1"},
+                                io.BytesIO(b'{"error": "boom"}'))
+            return _JsonResp({"choices": [{"message": {"content": "ok"},
+                                           "finish_reason": "stop"}],
+                              "usage": {"total_tokens": 1}})
+
+        h = _CaptureHandler()
+        with mock.patch("planrouter.server.open_with_proxy", side_effect=fake_open):
+            self.app._completion(h, OPENAI, json.dumps(
+                {"model": "auto", "prompt": "x", "max_tokens": 8}).encode(), legacy=True)
+        self.assertEqual(h.status, 200)
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(json.loads(h.body)["choices"][0]["text"], "ok")
 
 
 class RerankEndpointTests(unittest.TestCase):
