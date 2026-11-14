@@ -669,18 +669,25 @@ document.addEventListener('click', (e) => {
 // maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
 // the trend chart, free-quota alignment and backup counts. No backend logic.
 async function loadDashboard() {
-  const [snap, usage, maint, backups, dsh] = await Promise.all([
+  const [snap, usage, maint, backups, dsh, subsData] = await Promise.all([
     api('/api/state'),
     api('/api/usage/7').catch(() => null),
     api('/api/maintenance').catch(() => null),
     api('/api/backups').catch(() => null),
     api('/api/integrations/dsh').catch(() => null),
+    // Per-account plan windows live on /api/subscriptions; the vendor calls
+    // behind it are TTL-cached server-side, so polling this is cheap.
+    api('/api/subscriptions').catch(() => null),
   ]);
   state.snapshot = snap;
   if (usage) state.dashUsage = usage;
   if (maint) state.maintenance = maint;
   if (backups) state.backups = backups;
   if (dsh) state.dshInfo = dsh;
+  if (subsData) {
+    state.subs = subsData;
+    renderSubscriptions();
+  }
   renderDashboard();
 }
 
@@ -807,6 +814,22 @@ function renderDashboard() {
   // handled by the popup below, but Ctrl/middle clicks use this href.
   $('btn-dsh-open').href = (dsh && dsh.running && dsh.url) ? dshUrl(dsh.url) : '#';
 
+  // 订阅用量：账号、档位、状态、厂家额度窗口与到期，登录即见每个订阅还剩多少。
+  const records = (state.subs && state.subs.subscriptions) || [];
+  const subLabels = { active: '生效中', expiring: '即将到期', expired: '已过期', unknown: '未填到期日' };
+  $('dash-subusage').innerHTML = records.length ? records.map((r) => {
+    const days = r.days_left === null || r.days_left === undefined ? '—'
+      : r.days_left < 0 ? `逾期 ${-r.days_left} 天` : `剩 ${r.days_left} 天`;
+    return `<tr>
+      <td><strong>${esc(r.plan)}</strong><br><span class="sub-note">${esc([r.vendor && r.vendor !== r.plan ? r.vendor : '',
+        r.account_id || r.account || '未填账号'].filter(Boolean).join(' · '))}</span></td>
+      <td>${esc(r.tier) || '—'}</td>
+      <td><span class="tag ${esc(r.status)}">${esc(subLabels[r.status] || r.status)}</span></td>
+      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${planQuotaCell(r)}</td>
+      <td>${esc(r.expires_at) || '—'}<br><span class="days-left ${esc(r.status)}">${days}</span></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="sub-note">还没有订阅记录，去「套餐订阅」新增后即可在这里看到账号与用量。</td></tr>';
+
   // 近 7 天用量趋势：与用量报表页同一套 bars/sparkline。
   const usage = state.dashUsage;
   const el = $('dash-trend');
@@ -902,6 +925,53 @@ $('btn-dsh-open').onclick = async (ev) => {
   await startDshOnly();
 };
 
+// Vendor plan usage cell, shared by the subscriptions table and the dashboard.
+// Vendor-reported windows (Volcengine plans, OpenCode Go) replace the
+// hand-typed remainder when available; the local number stays in the editor
+// and the banner logic, it just loses the display slot.
+function planQuotaCell(r) {
+  const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
+    ? '—'
+    : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
+  const vp = r.vendor_plan;
+  if (vp && vp.error && !vp.windows) {
+    return `<span class="sub-note">厂家余量获取失败：${esc(vp.error)}${vp.stale ? '（显示上次快照）' : ''}</span>`;
+  }
+  if (vp && Array.isArray(vp.windows) && vp.windows.length) {
+    const levels = { session: '会话', weekly: '周', monthly: '月',
+      five_hour: '5小时', daily: '日' };
+    // Coding Plan windows report Percent only; Agent Plan (AFP) reports the
+    // absolute Quota/Used, which reads better so it wins when present.
+    const absolute = vp.windows.some((w) => w.quota !== undefined && w.quota !== null);
+    const win = absolute
+      ? vp.windows.map((w) =>
+          `${levels[w.level] || esc(w.level)} 已用 ${fmtNum(w.used)} / ${fmtNum(w.quota)}`)
+          .join(' · ')
+      : vp.windows
+          .filter((w) => w.percent !== null && w.percent !== undefined)
+          .map((w) => {
+            // OpenCode Go reports ISO reset stamps; surfacing the monthly
+            // one answers "when does the quota come back" at a glance.
+            const reset = (vp.provider === 'opencode'
+              && w.level === 'monthly' && w.reset_ts)
+              ? `（${new Date(w.reset_ts * 1000).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 重置）`
+              : '';
+            const bad = w.status && w.status !== 'ok' ? `（${esc(w.status)}）` : '';
+            return `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%${reset}${bad}`;
+          })
+          .join(' · ');
+    const meta = [vp.plan
+        ? `${esc(vp.plan)}${vp.plan_type ? ` ${esc(vp.plan_type)}` : ''}` : '',
+      vp.end_time ? `到期 ${esc(vp.end_time.slice(0, 10))}` : '']
+      .filter(Boolean).join(' · ');
+    return `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
+  }
+  if (vp && vp.windows && !vp.windows.length) {
+    return '<span class="sub-note">厂家无用量窗口（可能未订阅）</span>';
+  }
+  return esc(quota);
+}
+
 function renderSubscriptions() {
   if (!state.subs) return;
   const records = state.subs.subscriptions || [];
@@ -924,49 +994,6 @@ function renderSubscriptions() {
   $('sub-body').innerHTML = records.length ? records.map((r) => {
     const days = r.days_left === null ? '—'
       : r.days_left < 0 ? `逾期 ${-r.days_left} 天` : `${r.days_left} 天`;
-    const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
-      ? '—'
-      : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
-    // Vendor-reported plan usage (Volcengine plans, OpenCode Go) replaces the
-    // hand-typed remainder when available; the local number stays in the
-    // editor and the banner logic, it just loses the display slot.
-    const vp = r.vendor_plan;
-    let planQuota;
-    if (vp && vp.error && !vp.windows) {
-      planQuota = `<span class="sub-note">厂家余量获取失败：${esc(vp.error)}${vp.stale ? '（显示上次快照）' : ''}</span>`;
-    } else if (vp && Array.isArray(vp.windows) && vp.windows.length) {
-      const levels = { session: '会话', weekly: '周', monthly: '月',
-        five_hour: '5小时', daily: '日' };
-      // Coding Plan windows report Percent only; Agent Plan (AFP) reports the
-      // absolute Quota/Used, which reads better so it wins when present.
-      const absolute = vp.windows.some((w) => w.quota !== undefined && w.quota !== null);
-      const win = absolute
-        ? vp.windows.map((w) =>
-            `${levels[w.level] || esc(w.level)} 已用 ${fmtNum(w.used)} / ${fmtNum(w.quota)}`)
-            .join(' · ')
-        : vp.windows
-            .filter((w) => w.percent !== null && w.percent !== undefined)
-            .map((w) => {
-              // OpenCode Go reports ISO reset stamps; surfacing the monthly
-              // one answers "when does the quota come back" at a glance.
-              const reset = (vp.provider === 'opencode'
-                && w.level === 'monthly' && w.reset_ts)
-                ? `（${new Date(w.reset_ts * 1000).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 重置）`
-                : '';
-              const bad = w.status && w.status !== 'ok' ? `（${esc(w.status)}）` : '';
-              return `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%${reset}${bad}`;
-            })
-            .join(' · ');
-      const meta = [vp.plan
-          ? `${esc(vp.plan)}${vp.plan_type ? ` ${esc(vp.plan_type)}` : ''}` : '',
-        vp.end_time ? `到期 ${esc(vp.end_time.slice(0, 10))}` : '']
-        .filter(Boolean).join(' · ');
-      planQuota = `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
-    } else if (vp && vp.windows && !vp.windows.length) {
-      planQuota = '<span class="sub-note">厂家无用量窗口（可能未订阅）</span>';
-    } else {
-      planQuota = esc(quota);
-    }
     return `<tr>
       <td><strong>${esc(r.plan)}</strong><br><span class="sub-note">${esc([r.vendor && r.vendor !== r.plan ? r.vendor : '',
         r.account_id || r.account || '未填账号'].filter(Boolean).join(' · '))}</span></td>
@@ -978,7 +1005,7 @@ function renderSubscriptions() {
       <td class="days-left ${esc(r.status)}">${days}</td>
       <td><span class="tag ${esc(r.status)}">${labels[r.status] || r.status}</span></td>
       <td>${r.auto_renew ? '是' : '否'}</td>
-      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${planQuota}</td>
+      <td class="${r.low_quota ? 'quota-low' : 'sub-note'}">${planQuotaCell(r)}</td>
       <td class="sub-note">${esc((r.channel_names || r.channels || []).join(', ')) || '—'}</td>
       <td>
         <button class="btn small" data-action="renew" data-id="${esc(r.id)}">续费</button>

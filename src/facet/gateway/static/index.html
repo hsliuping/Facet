@@ -125,6 +125,28 @@
           <div class="chart-card">
             <div class="chart-head">
               <div>
+                <h3>订阅用量</h3>
+                <p>各订阅账号的厂家额度窗口与到期时间；编辑、续费与费用见「套餐订阅」</p>
+              </div>
+              <div class="actions">
+                <button class="btn small ghost" data-goto-tab="subscriptions">查看订阅</button>
+              </div>
+            </div>
+            <div class="table-wrap" style="margin-top:14px">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>订阅 / 厂家</th><th>档位</th><th>状态</th>
+                    <th>额度余量</th><th>到期 / 剩余</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-subusage"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-head">
+              <div>
                 <h3>近 7 天用量趋势</h3>
                 <p>每日请求数与 Tokens，完整报表见「用量报表」</p>
               </div>
@@ -882,7 +904,7 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261114-3"></script>
+  <script src="/static/app.js?v=20261114-4"></script>
   <script src="/static/setup.js?v=20261114-1"></script>
 </body>
 </html>
