@@ -56,6 +56,10 @@ Facet 把它们收敛成三件事：
 
 需要 Python 3.10+。网关与事实表都是纯标准库实现，**零第三方依赖**。
 
+- Windows：Inno Setup 安装包（含托盘、开机自启），本地 `python tools/build_windows.py` 构建；
+- macOS / Linux：见下方一键安装小节；
+- 容器：见下文[「Docker 部署」](#docker-部署)。
+
 ```bash
 pip install facet-models     # PyPI 包名沿用历史名，装出来的命令是 facet
 ```
@@ -78,6 +82,37 @@ tools/macos/install.sh            # venv 装到 ~/.facet，注册开机自启 + 
 - 配置与日志在 `~/.facet/`（`data/router.json`、`logs/gateway.err.log`）。
 - 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
 - 卸载：`tools/macos/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
+
+### Linux 安装（systemd 服务）
+
+```bash
+git clone https://github.com/hsliuping/Facet && cd Facet
+python3 -m venv ~/.facet/venv && ~/.facet/venv/bin/pip install .
+mkdir -p ~/.facet/data
+```
+
+注册 systemd 服务（开机自启 + 崩溃自动重启）：
+
+```bash
+sudo tee /etc/systemd/system/facet.service >/dev/null <<EOF
+[Unit]
+Description=Facet LLM gateway
+After=network-online.target
+
+[Service]
+User=$USER
+ExecStart=$HOME/.facet/venv/bin/facet serve --config $HOME/.facet/data/router.json --host 127.0.0.1 --port 8787
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable --now facet
+```
+
+- 状态与日志：`systemctl status facet`、`journalctl -u facet -f`；
+- 停用：`sudo systemctl disable --now facet`（配置保留在 `~/.facet/data/`）；
+- 服务化参数（`--config` / `--port` 等）见下文[「服务化运行」](#服务化运行)。
 
 容器部署见下文[「Docker 部署」](#docker-部署)。
 
