@@ -927,7 +927,7 @@ function renderSubscriptions() {
     const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
       ? '—'
       : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
-    // Vendor-reported plan usage (Volcengine Coding Plan) replaces the
+    // Vendor-reported plan usage (Volcengine plans, OpenCode Go) replaces the
     // hand-typed remainder when available; the local number stays in the
     // editor and the banner logic, it just loses the display slot.
     const vp = r.vendor_plan;
@@ -946,7 +946,16 @@ function renderSubscriptions() {
             .join(' · ')
         : vp.windows
             .filter((w) => w.percent !== null && w.percent !== undefined)
-            .map((w) => `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%`)
+            .map((w) => {
+              // OpenCode Go reports ISO reset stamps; surfacing the monthly
+              // one answers "when does the quota come back" at a glance.
+              const reset = (vp.provider === 'opencode'
+                && w.level === 'monthly' && w.reset_ts)
+                ? `（${new Date(w.reset_ts * 1000).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 重置）`
+                : '';
+              const bad = w.status && w.status !== 'ok' ? `（${esc(w.status)}）` : '';
+              return `${levels[w.level] || esc(w.level)} 剩 ${Math.max(0, 100 - w.percent).toFixed(1)}%${reset}${bad}`;
+            })
             .join(' · ');
       const meta = [vp.plan
           ? `${esc(vp.plan)}${vp.plan_type ? ` ${esc(vp.plan_type)}` : ''}` : '',

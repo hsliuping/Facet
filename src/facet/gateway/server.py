@@ -26,7 +26,7 @@ from . import dsh as dsh_mod
 from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import facts as facts_mod
-from . import ark_quota
+from . import ark_quota, opencode_quota
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -975,14 +975,27 @@ class App:
         (its provider plus business line / billing mode), never from free text
         on the subscription: a subscription has no vendor of its own.
 
-        Plan endpoints are Volcengine-only, so a Bailian/OpenRouter row must
-        not get decorated with (or fail on) an Ark management-plane call.
+        Plan endpoints exist for Volcengine (IAM-signed management plane)
+        and OpenCode Go (inference gateway, same oc_sk_ key as chat), so a
+        Bailian/OpenRouter row must not get decorated with (or fail on) a
+        plan call.
 
         If the record has an explicit `account_id`, we look up the account
         by id from config.accounts and use its credentials; otherwise the
         channel credential chain applies.
         """
         linked = self._linked_channels(record)
+        oc = next((c for c in linked if c.provider == "opencode"), None)
+        if oc:
+            # Only the Go subscription reports usage; the pay-as-you-go
+            # endpoint has no usage route.
+            line = (oc.business_line or oc.mode or "").strip().lower()
+            if line != "agent":
+                return "", "", ""
+            from .accounts import resolve_creds
+            creds: dict = resolve_creds(oc, self.config)
+            key = str(creds.get("api_key") or oc.api_key or "")
+            return "opencode", key, ""
         volc = next((c for c in linked if c.provider == "volcengine"), None)
         if not volc:
             return "", "", ""
@@ -1008,12 +1021,14 @@ class App:
     def plan_for(self, record: dict) -> dict | None:
         """Vendor plan usage for one subscription row, TTL-cached per creds.
 
-        Returns None when the row has no usable AK/SK; a fetch failure
-        returns ``{"error": ...}`` (plus the last good snapshot marked
-        stale when one exists). Snapshots persist through vendorquota.json.
+        Returns None when the row has no usable credentials (OpenCode Go
+        rows only need the channel key; Volcengine rows need AK and SK); a
+        fetch failure returns ``{"error": ...}`` (plus the last good
+        snapshot marked stale when one exists). Snapshots persist through
+        vendorquota.json.
         """
         kind, ak, sk = self._plan_creds_for(record)
-        if not ak or not sk:
+        if not ak or (kind != "opencode" and not sk):
             return None
         key = f"{kind}:{hashlib.sha1(f'{ak}:{sk}'.encode()).hexdigest()[:12]}"
         with self._plan_lock:
@@ -1027,10 +1042,13 @@ class App:
                 if error and snapshot:
                     return {**snapshot, "stale": True, "error": error}
                 return snapshot
-            fetch = ark_quota.fetch_agent_plan if kind == "agent" \
-                else ark_quota.fetch_coding_plan
             try:
-                plan = fetch(ak, sk)
+                if kind == "opencode":
+                    plan = opencode_quota.fetch_go_plan(ak)
+                else:
+                    fetch = ark_quota.fetch_agent_plan if kind == "agent" \
+                        else ark_quota.fetch_coding_plan
+                    plan = fetch(ak, sk)
             except Exception as exc:
                 error = str(exc)[:160]
                 self.plan_entries[key] = {"snapshot": snapshot, "error": error,
