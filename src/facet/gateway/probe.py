@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .core import (ANTHROPIC, OPENAI, PROTOCOLS, VERSIONED_BASE, open_with_proxy,
-                   resolve_secret, upstream_path_for)
+                   resolve_secret, upstream_path_for, apply_upstream_headers)
 
 DEFAULT_TIMEOUT = 8.0
 MAX_CHANNELS = 8
@@ -205,6 +205,8 @@ def probe_channel(raw, model: str | None = None,
             auth = "x-api-key"
     if protocol == ANTHROPIC:
         headers["anthropic-version"] = "2023-06-01"
+    apply_upstream_headers(headers, url,
+        body=payload, api_key=channel["api_key"] or "")
 
     safe_headers = dict(headers)
     if "Authorization" in safe_headers:
@@ -318,6 +320,7 @@ def probe_models(raw, timeout: float = DEFAULT_TIMEOUT) -> dict:
             headers["x-api-key"] = channel["api_key"]
     if protocol == ANTHROPIC:
         headers["anthropic-version"] = "2023-06-01"
+    apply_upstream_headers(headers, url, api_key=channel["api_key"] or "")
 
     started = time.monotonic()
     try:

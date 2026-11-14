@@ -34,6 +34,7 @@ from .convert import convert_request, convert_response, inject_system, stream_co
 from .core import (
     ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, OPENAI, QUOTA_MARKERS, Config,
     StateStore, channel_ref,
+    apply_upstream_headers,
     body_has_vision, channel_takes_images, ensure_channel_ids, explicit_models,
     open_with_proxy, parse_cooldown, parse_config, parse_free_quota,
     resolve_model, resolve_secret, upstream_path_for, vision_wire,
@@ -2039,6 +2040,8 @@ class App:
                 headers["anthropic-version"] = "2023-06-01"
             else:
                 headers["Authorization"] = f"Bearer {channel.api_key}"
+        apply_upstream_headers(headers, channel.base_url,
+            body=payload, api_key=channel.api_key)
         req = Request(
             channel.base_url + upstream_path_for(
                 channel.base_url, channel.upstream_path, protocol),
@@ -3123,6 +3126,8 @@ class App:
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
             headers["Authorization"] = f"Bearer {channel.api_key}"
+        apply_upstream_headers(headers, channel.base_url,
+            body=payload, api_key=channel.api_key)
 
         req = Request(
             channel.base_url + upstream_path,
@@ -3387,6 +3392,8 @@ class App:
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
             headers["Authorization"] = f"Bearer {channel.api_key}"
+        apply_upstream_headers(headers, channel.base_url,
+            body=payload, api_key=channel.api_key)
 
         req = Request(
             channel.base_url + upstream_path,
@@ -3677,6 +3684,8 @@ class App:
         headers = {"Content-Type": "application/json"}
         if channel.api_key:
             headers["Authorization"] = f"Bearer {channel.api_key}"
+        apply_upstream_headers(headers, channel.base_url,
+            body=payload, api_key=channel.api_key)
 
         req = Request(
             channel.base_url + upstream_path,
@@ -4016,6 +4025,8 @@ class App:
         }
         if channel.api_key:
             headers["Authorization"] = f"Bearer {channel.api_key}"
+        apply_upstream_headers(headers, channel.base_url,
+            body=fields, api_key=channel.api_key)
 
         req = Request(
             channel.base_url + upstream_path,
@@ -4451,6 +4462,13 @@ class App:
             headers["anthropic-version"] = (
                 h.headers.get("anthropic-version") if h is not None else None
             ) or "2023-06-01"
+        client_session = ""
+        if h is not None:
+            client_session = (h.headers.get("x-opencode-session")
+                              or h.headers.get("x-session-id") or "")
+        apply_upstream_headers(headers, channel.base_url,
+            body=body, api_key=channel.api_key or "",
+            client_session=client_session)
         req = Request(
             channel.base_url + upstream_path,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

@@ -8,6 +8,7 @@ differ, and pass through byte-for-byte when they match.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener, urlopen
 
 from .quota import quota_view
@@ -88,6 +90,84 @@ def open_with_proxy(req, timeout, proxy: str = ""):
         return urlopen(req, timeout=timeout)
     opener = build_opener(ProxyHandler({"http": proxy, "https": proxy}))
     return opener.open(req, timeout=timeout)
+
+
+# Vendors gate on client identity headers. OpenCode Go's Cloudflare rules
+# reject generic library user agents (Python-urllib/* -> HTTP 403 "error
+# code: 1010"), and since 2026-09-05 it also requires a stable
+# x-opencode-session header per conversation for routing and prompt caching.
+# The gateway is the HTTP client of record, so it injects both on every
+# forwarded request; clients like TRAE/dsh need no changes of their own.
+GATEWAY_USER_AGENT = "facet-gateway/1.0"
+OPENCODE_HOST = "opencode.ai"
+SAFE_SESSION = re.compile(r"^[A-Za-z0-9._:/@+ -]{1,120}$")
+
+
+def is_opencode_url(url: str) -> bool:
+    """True when a request targets the OpenCode Go inference service."""
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    return host == OPENCODE_HOST or host.endswith("." + OPENCODE_HOST)
+
+
+def first_user_text(body) -> str:
+    """Text of the first user message, across OpenAI/Anthropic request shapes.
+
+    Chat APIs are stateless — every turn of one conversation repeats its
+    first user message — so hashing this text yields the same session id
+    for every request of that conversation.
+    """
+    if not isinstance(body, dict):
+        return ""
+    for message in body.get("messages") or []:
+        if not isinstance(message, dict) or str(message.get("role")) != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = [part.get("text") for part in content
+                     if isinstance(part, dict) and isinstance(part.get("text"), str)]
+            return "\n".join(texts)
+        return ""
+    return ""
+
+
+def opencode_session_id(body, api_key: str = "",
+                        client_session: str = "") -> str:
+    """Stable x-opencode-session value for one conversation.
+
+    A native session header from the client wins when it sends one; the
+    fallback derives from the conversation's first user message (keeps
+    prompt caches warm across turns), then from the channel key
+    (embeddings-style bodies have no messages).
+    """
+    if client_session and SAFE_SESSION.fullmatch(client_session):
+        return client_session
+    seed = first_user_text(body)
+    if not seed:
+        seed = "key:" + str(api_key or "")
+    if not seed.strip():
+        return "facet-session"
+    return "facet-" + hashlib.blake2b(
+        seed.encode("utf-8", "replace"), digest_size=16).hexdigest()
+
+
+def apply_upstream_headers(headers: dict, url: str, body=None,
+                           api_key: str = "", client_session: str = "") -> dict:
+    """Decorate upstream headers with the gateway identity, in place.
+
+    Every forwarded request carries a proper User-Agent instead of the
+    urllib default; OpenCode Go targets additionally get the
+    per-conversation x-opencode-session header.
+    """
+    headers.setdefault("User-Agent", GATEWAY_USER_AGENT)
+    if is_opencode_url(url) and "x-opencode-session" not in headers:
+        headers["x-opencode-session"] = opencode_session_id(
+            body, api_key, client_session)
+    return headers
 
 # Tools usually demand a concrete model id. These branded ids are ours: putting
 # one into a tool's model field means "let the router schedule internally".
