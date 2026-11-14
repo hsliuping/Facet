@@ -77,17 +77,53 @@ ACCOUNT_SCOPED_MARKERS = (
 # A channel failing this many times in a row (no success in between) deserves
 # a runtime alert: something is broken even while cooldowns route around it.
 RUNTIME_ALERT_ERROR_THRESHOLD = 3
+# Consecutive failed cycles of one scheduled sweep before it raises a runtime
+# alert (self-maintenance breaking must be visible without watching the console).
+TASK_FAIL_ALERT_THRESHOLD = 2
 # Human names for the persisted artefacts whose failed writes runtime_alerts
 # reports (see App._note_write_failure / usage / notifier write callbacks).
 PERSIST_KIND_LABELS = {
     "usage": "用量统计 usage.json",
     "notifier": "通知状态 notifications.json",
+    "state": "渠道状态快照 state.json",
+    "subscriptions": "订阅与通知设置 subscriptions.json",
     "vendor_quota": "厂家额度快照 vendorquota.json",
     "maintenance_log": "维护日志 maintenance.jsonl",
     "freealign_log": "免费额度日志 freealign.jsonl",
     "config_backup": "配置备份 config.json.bak",
     "maintenance_pool": "维护模型池 maintenance_models.json",
 }
+# Report logs grow one line per sweep; past this size they keep only the last
+# REPORT_LOG_KEEP lines (audit.jsonl rotates by bytes, usage.json by retention).
+REPORT_LOG_MAX_BYTES = 2 * 1024 * 1024
+REPORT_LOG_KEEP = 500
+
+
+def append_jsonl(path: Path, entry: dict, kind: str, on_error=None,
+                 on_ok=None) -> None:
+    """Append one report line, trimming the file once it grows past the cap.
+
+    Never raises: a failed append or trim is reported through the same
+    write-failure channel as the other persisted artefacts, so a read-only or
+    full data volume shows up as a runtime alert instead of a silent drop.
+    """
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if path.stat().st_size > REPORT_LOG_MAX_BYTES:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text("\n".join(lines[-REPORT_LOG_KEEP:]) + "\n",
+                           encoding="utf-8")
+            os.replace(tmp, path)
+    except OSError as exc:
+        if on_error:
+            on_error(kind, exc)
+    else:
+        if on_ok:
+            on_ok(kind)
+
+
 # Pay-as-you-go vendors report account usage to the same key the channel
 # already sends upstream. provider -> fetcher(creds) -> snapshot; the channel
 # config page renders the result. Vendors without an endpoint stay out, so a
@@ -478,12 +514,16 @@ def merge_secrets(new_raw: dict, old_raw: dict) -> dict:
 
 
 def _maintenance_summary(report: dict) -> str:
+    if report.get("busy"):
+        return str(report.get("message") or "上一次自维护仍在运行，本次已跳过")
     return (f"应用 {len(report.get('applied') or [])} 项"
             f" · 建议 {len(report.get('suggestions') or [])} 条"
             f" · 注意 {len(report.get('alerts') or [])} 条")
 
 
 def _free_align_summary(report: dict) -> str:
+    if report.get("busy"):
+        return str(report.get("message") or "上一次自维护仍在运行，本次已跳过")
     text = f"{len(report.get('aligned') or [])} 个免费渠道已核对"
     changed = len(report.get("patch") or {})
     if changed:
@@ -530,6 +570,9 @@ class ScheduledTask:
         self.next_run_at = 0.0
         self.last_summary = ""
         self.last_error = ""
+        # Consecutive failed cycles; runtime_alerts alarms on this so a sweep
+        # that keeps breaking does not just sit in the task table.
+        self.consecutive_failures = 0
         self.running = False
 
     def hours(self) -> float:
@@ -567,8 +610,10 @@ class ScheduledTask:
         try:
             self.last_summary = self.run_once() or ""
             self.last_error = ""
+            self.consecutive_failures = 0
         except Exception as exc:  # a broken sweep must never kill the gateway
             self.last_error = str(exc) or exc.__class__.__name__
+            self.consecutive_failures += 1
         finally:
             self.running = False
 
@@ -577,17 +622,26 @@ class ScheduledTask:
 
     def status(self) -> dict:
         enabled = bool(getattr(self.app.config.defaults, self.hours_key))
+        if self.running:
+            state = "running"
+        elif not enabled:
+            state = "disabled"
+        elif self.last_error:
+            state = "warn"
+        else:
+            state = "idle"
         return {
             "key": self.key,
             "label": self.label,
             "description": self.description,
             "enabled": enabled,
             "hours": self.hours() if enabled else 0,
-            "state": "running" if self.running else ("idle" if enabled else "disabled"),
+            "state": state,
             "last_run_at": self.last_run_at,
             "next_run_at": self.next_run_at if enabled else 0,
             "last_summary": self.last_summary,
             "last_error": self.last_error,
+            "consecutive_failures": self.consecutive_failures,
         }
 
 
@@ -834,6 +888,12 @@ class App:
         except (OSError, ValueError):
             self.subscriptions = []
             self.subscription_settings = dict(subs.DEFAULT_SETTINGS)
+        # Persisted-state failures are counted here instead of vanishing into
+        # `except OSError: pass`; runtime_alerts turns them into an alarm and
+        # the next successful write clears it. Created before the recorders so
+        # every one of them (and the migration save just below) can report.
+        self._write_failure_lock = threading.Lock()
+        self.write_failures: dict[str, dict] = {}
         # Subscriptions written before channel ids existed link by name; point
         # them at the ids now, while those names still resolve.
         if self._migrate_subscription_channels(self.subscriptions) \
@@ -841,8 +901,8 @@ class App:
             try:
                 subs.save_file(self.subscriptions_path, self.subscriptions,
                                self.subscription_settings)
-            except OSError:
-                pass
+            except OSError as exc:
+                self._note_write_failure("subscriptions", exc)
         self._refresh_billing_ranks()
         # Vendor registry (builtin providers.json + optional user overlay in
         # the config dir); a broken overlay must not keep the gateway down.
@@ -851,14 +911,12 @@ class App:
                 self.config_path.parent if self.config_path else None)
         except (OSError, ValueError):
             self.providers = providers_mod.load_providers(None)
-        self.persistence = StatePersistence(state_file, lambda: self.store) if state_file else None
+        self.persistence = (StatePersistence(
+            state_file, lambda: self.store,
+            on_error=self._note_write_failure, on_ok=self._note_write_ok,
+        ) if state_file else None)
         if self.persistence:
             self.persistence.restore_from_disk()
-        # Persisted-state failures are counted here instead of vanishing into
-        # `except OSError: pass`; runtime_alerts turns them into an alarm and
-        # the next successful write clears it.
-        self._write_failure_lock = threading.Lock()
-        self.write_failures: dict[str, dict] = {}
         self.usage = UsageRecorder(
             usage_file,
             retention_days=self.config.defaults.usage_retention_days,
@@ -899,13 +957,16 @@ class App:
         self.maintenance_runner: "MaintenanceRunner | None" = None
         self.free_align_runner: "FreeAlignRunner | None" = None
         self.free_verify_runner: "FreeVerifyRunner | None" = None
-        self.maintenance_reports: list[dict] = []
-        self.free_align_reports: list[dict] = []
+        self.maintenance_reports: list[dict] = self._load_report_history("maintenance.jsonl")
+        self.free_align_reports: list[dict] = self._load_report_history("freealign.jsonl")
         self.maintenance_lock = threading.Lock()
-        # One maintenance sweep at a time: the scheduled runner and the console
-        # button share this lock, so a manual click during the daily run backs
-        # off instead of interleaving config patches and duplicate reports.
-        self.maintenance_run_lock = threading.Lock()
+        # One config-patching sweep at a time: the maintenance pass and the
+        # free-quota alignment sweep both rewrite channel mappings through
+        # apply_config (read self.raw -> write file -> swap), so a second pass
+        # would silently drop the other's mapping. Scheduled runners and the
+        # console buttons share this lock; a manual click during a run backs
+        # off instead of interleaving patches and duplicating reports.
+        self.config_apply_lock = threading.Lock()
         # Same for the free-pool verification sweep (scheduled + button).
         self.free_verify_lock = threading.Lock()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
@@ -1425,10 +1486,12 @@ class App:
     def runtime_alerts(self) -> list[dict]:
         """Live conditions worth alarming about (P1-2 runtime alerts).
 
-        Three families: a route chain whose every usable channel is cooling or
-        blocked, a free-tier model whose allowance is exhausted, and a channel
-        failing repeatedly. Config gaps (no key, everything disabled) stay
-        silent — those are console hints, not runtime alarms.
+        Families: a route chain whose every usable channel is cooling or
+        blocked; a free-tier model whose allowance is exhausted; a channel
+        failing repeatedly; data volume headroom; persisted artefacts failing
+        to write; a scheduled sweep that keeps failing. Config gaps (no key,
+        everything disabled) stay silent — those are console hints, not
+        runtime alarms.
         """
         now = time.time()
         alerts: list[dict] = []
@@ -1485,24 +1548,36 @@ class App:
                     })
         # Disk headroom: usage, notification state, maintenance reports and
         # config backups all fail once the data volume fills up. Warn while
-        # writes still succeed so the operator has time to act.
+        # writes still succeed so the operator has time to act. Every volume
+        # that holds a persisted artefact is checked (usually the same dir).
         disk_min = self.config.defaults.disk_min_free_mb
         if disk_min > 0:
-            root = self.config_path.parent if self.config_path else Path.cwd()
-            try:
-                free_mb = shutil.disk_usage(str(root)).free / (1024 * 1024)
-            except OSError:
-                free_mb = None
-            if free_mb is not None and free_mb < disk_min:
-                alerts.append({
-                    "kind": "disk_low",
-                    "key": "disk:data",
-                    "title": f"磁盘剩余空间不足：{free_mb:.0f} MB",
-                    "message": ("[PlanRouter 运行告警] 数据目录磁盘空间不足\n"
-                                f"目录：{root}\n剩余：{free_mb:.0f} MB\n"
-                                f"阈值：{disk_min} MB\n"
-                                "用量、通知历史与维护报告可能写盘失败。"),
-                })
+            roots: list[Path] = []
+            if self.config_path:
+                roots.append(self.config_path.parent)
+            for holder in (self.persistence, self.usage, self.notifier, self.audit):
+                path = getattr(holder, "path", None)
+                if path:
+                    roots.append(Path(path).parent)
+            checked: set[str] = set()
+            for root in roots:
+                if str(root) in checked:
+                    continue
+                checked.add(str(root))
+                try:
+                    free_mb = shutil.disk_usage(str(root)).free / (1024 * 1024)
+                except OSError:
+                    continue
+                if free_mb < disk_min:
+                    alerts.append({
+                        "kind": "disk_low",
+                        "key": f"disk:{root}",
+                        "title": f"磁盘剩余空间不足：{free_mb:.0f} MB",
+                        "message": ("[PlanRouter 运行告警] 数据目录磁盘空间不足\n"
+                                    f"目录：{root}\n剩余：{free_mb:.0f} MB\n"
+                                    f"阈值：{disk_min} MB\n"
+                                    "用量、通知历史与维护报告可能写盘失败。"),
+                    })
         # Failed persisted writes that have not succeeded since. A transient
         # failure clears on the next successful write of the same artefact.
         with self._write_failure_lock:
@@ -1518,6 +1593,22 @@ class App:
                             f"对象：{label}\n"
                             f"累计失败：{row.get('count', 0)} 次\n"
                             f"最近错误：{(row.get('last_error') or '—')[:160]}"),
+            })
+        # Self-maintenance that keeps breaking is itself an alarm: the sweep
+        # only reports into its own task row otherwise, and nobody watches the
+        # console 24/7 after go-live.
+        for runner in (self.catalog_refresher, self.maintenance_runner,
+                       self.free_align_runner, self.free_verify_runner):
+            if not runner or runner.consecutive_failures < TASK_FAIL_ALERT_THRESHOLD:
+                continue
+            alerts.append({
+                "kind": "task_failing",
+                "key": f"task:{runner.key}",
+                "title": f"定时任务连续失败：{runner.label}",
+                "message": ("[PlanRouter 运行告警] 定时任务连续失败\n"
+                            f"任务：{runner.label}（每 {runner.hours():g} 小时）\n"
+                            f"连续失败：{runner.consecutive_failures} 次\n"
+                            f"最近错误：{(runner.last_error or '—')[:160]}"),
             })
         return alerts
 
@@ -1856,8 +1947,8 @@ class App:
             try:
                 subs.save_file(self.subscriptions_path, self.subscriptions,
                                self.subscription_settings)
-            except OSError:
-                pass
+            except OSError as exc:
+                self._note_write_failure("subscriptions", exc)
         return config
 
     def duplicate_channel(self, name: str) -> dict:
@@ -2259,7 +2350,7 @@ class App:
         config backup); LLM output and quota heuristics become suggestions
         for the console. Never raises: failures land in the report.
         """
-        if not self.maintenance_run_lock.acquire(blocking=False):
+        if not self.config_apply_lock.acquire(blocking=False):
             # The scheduled runner and the console button must not interleave:
             # both patch channel mappings and write reports.
             return {"busy": True, "trigger": trigger, "patch": {},
@@ -2268,7 +2359,7 @@ class App:
         try:
             return self._run_maintenance(trigger)
         finally:
-            self.maintenance_run_lock.release()
+            self.config_apply_lock.release()
 
     def _run_maintenance(self, trigger: str) -> dict:
         refresh = self.refresh_all_catalogs()
@@ -2601,14 +2692,30 @@ class App:
             return
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
                  **{k: v for k, v in report.items() if k != "patch"}}
-        try:
-            path = self.config_path.parent / "maintenance.jsonl"
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            self._note_write_failure("maintenance_log", exc)
-        else:
-            self._note_write_ok("maintenance_log")
+        append_jsonl(self.config_path.parent / "maintenance.jsonl", entry,
+                     "maintenance_log", on_error=self._note_write_failure,
+                     on_ok=self._note_write_ok)
+
+    def _load_report_history(self, name: str) -> list[dict]:
+        """Oldest-first tail of a report log, so a restart keeps the cards.
+
+        Memory held only the reports produced since process start; the JSONL
+        log already has them, so the console's latest-report view no longer
+        starts empty (and stays right even before the first sweep runs).
+        """
+        if not self.config_path:
+            return []
+        lines, _ = maint.read_jsonl_tail(self.config_path.parent / name,
+                                         MaintenanceRunner.MAX_REPORTS)
+        reports = []
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                reports.append(entry)
+        return reports
 
     # ----------------------------------------------------------- free align
     def run_free_align(self, trigger: str = "manual") -> dict:
@@ -2617,7 +2724,21 @@ class App:
         Applies the sweep's patch through the normal config pipeline (after a
         config backup); never raises — failures land in the report alerts and
         the channels keep their current mapping until the next sweep.
+
+        Shares App.config_apply_lock with run_maintenance: both passes rewrite
+        channel mappings through apply_config, so a manual click during a
+        scheduled run (either direction) backs off instead of interleaving.
         """
+        if not self.config_apply_lock.acquire(blocking=False):
+            return {"busy": True, "trigger": trigger, "aligned": [],
+                    "patch": {}, "alerts": [], "quota": {},
+                    "message": "上一次自维护仍在运行，本次对齐已跳过"}
+        try:
+            return self._run_free_align(trigger)
+        finally:
+            self.config_apply_lock.release()
+
+    def _run_free_align(self, trigger: str) -> dict:
         report = freealign_mod.run_free_align(self, trigger)
         if report["patch"]:
             self._backup_config("freealign")
@@ -2654,14 +2775,9 @@ class App:
             return
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
                  **{k: v for k, v in report.items() if k != "patch"}}
-        try:
-            path = self.config_path.parent / "freealign.jsonl"
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            self._note_write_failure("freealign_log", exc)
-        else:
-            self._note_write_ok("freealign_log")
+        append_jsonl(self.config_path.parent / "freealign.jsonl", entry,
+                     "freealign_log", on_error=self._note_write_failure,
+                     on_ok=self._note_write_ok)
 
     def maintenance_payload(self) -> dict:
         with self.maintenance_lock:
@@ -2716,6 +2832,18 @@ class App:
         delivery = status.get("delivery") or {}
         interval = max(1, int((status.get("settings") or {}).get("interval_minutes") or 30))
         last = float(status.get("last_check") or 0)
+        last_error = status.get("last_error") or ""
+        # A configured webhook that keeps failing to deliver is not "ok": the
+        # delivery check only proves the settings are complete.
+        if not delivery.get("ok"):
+            state = "warn"
+            summary = f"告警无法外发：{delivery.get('hint') or '未配置'}"
+        elif last_error:
+            state = "warn"
+            summary = f"告警外发失败：{last_error[:160]}"
+        else:
+            state = "ok"
+            summary = "告警外发正常"
         return {
             "key": "reminder",
             "label": "续费与运行告警通知",
@@ -2723,12 +2851,11 @@ class App:
             "enabled": bool(status.get("settings", {}).get("notify_enabled")),
             "hours": 0,
             "cycle": f"运行告警每 60 秒 · 到期提醒每 {interval} 分钟",
-            "state": "ok" if delivery.get("ok") else "warn",
+            "state": state,
             "last_run_at": last,
             "next_run_at": last + 60 if last else 0,
-            "last_summary": ("告警外发正常" if delivery.get("ok")
-                             else f"告警无法外发：{delivery.get('hint') or '未配置'}"),
-            "last_error": status.get("last_error") or "",
+            "last_summary": summary,
+            "last_error": last_error,
         }
 
     def tasks_payload(self) -> dict:

@@ -114,13 +114,19 @@ def restore(store, data: dict, now: float | None = None) -> int:
 class StatePersistence:
     """Periodically write a snapshot; a background thread coalesces changes."""
 
-    def __init__(self, path, store_getter, interval: float = 5.0):
+    def __init__(self, path, store_getter, interval: float = 5.0,
+                 on_error=None, on_ok=None):
         self.path = Path(path)
         self._get_store = store_getter
         self.interval = interval
         self._last = ""
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        # Persistence outcome callbacks (kind, exc) / (kind): a failed snapshot
+        # (full disk, read-only volume) becomes a runtime alert instead of a
+        # silent drop, matching the usage/notifier recorders.
+        self._on_error = on_error
+        self._on_ok = on_ok
         self._thread = threading.Thread(target=self._loop, daemon=True, name="planrouter-state")
 
     def start(self) -> None:
@@ -159,8 +165,12 @@ class StatePersistence:
                                encoding="utf-8")
                 os.replace(tmp, self.path)
                 self._last = compare
-            except OSError:
-                pass
+            except OSError as exc:
+                if self._on_error:
+                    self._on_error("state", exc)
+            else:
+                if self._on_ok:
+                    self._on_ok("state")
 
     @staticmethod
     def _fingerprint(snapshot: dict) -> dict:

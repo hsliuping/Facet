@@ -3145,6 +3145,10 @@ $('btn-free-align').onclick = async (e) => {
   b.textContent = '对齐中…';
   try {
     const r = await api('/api/freealign/run', { method: 'POST' });
+    if (r.busy) {
+      toast(r.message || '上一次自维护仍在运行，本次对齐已跳过', 'warn');
+      return;
+    }
     const changed = Object.keys(r.patch || {}).length;
     const alerts = (r.alerts || []).length;
     toast(`额度对齐完成：${changed} 个渠道映射更新${alerts ? ` · ${alerts} 条告警` : ''}`,
@@ -3308,6 +3312,10 @@ $('btn-run-freealign').onclick = async (e) => {
   b.textContent = '对齐中…';
   try {
     const r = await api('/api/freealign/run', { method: 'POST' });
+    if (r.busy) {
+      toast(r.message || '上一次自维护仍在运行，本次对齐已跳过', 'warn');
+      return;
+    }
     const changed = Object.keys(r.patch || {}).length;
     toast(changed
       ? `免费额度对齐完成：${changed} 个渠道映射已更新（原配置已备份）`

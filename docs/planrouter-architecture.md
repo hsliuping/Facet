@@ -178,14 +178,16 @@ listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置�
 
 - **每日维护**（MaintenanceRunner）：刷新模型目录 → 可确认修复自动应用（先备份）→
   刷新套餐与厂家模型清单 → LLM 顾问意见 → **applied / suggestions / alerts 三桶**，
-  落内存 + maintenance.jsonl。定时与控制台按钮共用互斥锁，重复触发直接跳过。
+  落内存 + maintenance.jsonl（超过 2MB 自动只保留最近 500 条，重启后由此恢复最近报告）。定时与控制台按钮共用互斥锁，重复触发直接跳过。
 - **免费池**：仅 tier:free 渠道捐候选 → 合成文档页测验（全对才入持久化队列）→
   干活前复验，失败即除名；全量体检（实测免费模型映射）定时每 6h 自动跑
   （`defaults.free_verify_hours`，0 关闭），与控制台按钮互斥。
 - **维护调用直达不走路由**：优先第一个暴露目标模型的启用渠道（free 优先、单轮非流式、
   走渠道 proxy），无渠道暴露才回退网关自身路由——维护流量不污染业务路由统计。
 - **运行告警**（runtime_alerts → notifier）：链全冷却 / 免费额度用尽 / 渠道连续失败 /
-  磁盘水位不足（`disk_min_free_mb`）/ 本地状态写盘失败，经 webhook 外发并留本地记录；
+  定时任务连续失败（连续 2 轮异常）/ 磁盘水位不足（`disk_min_free_mb`，
+  覆盖所有持久化目录所在卷）/ 本地状态写盘失败（state / subscriptions / 报告日志），
+  经 webhook 外发并留本地记录；webhook 投递失败会反映到任务面板的提醒行状态。
   通知通道未配置时自维护页显示「告警无法外发」横幅，不再静默。
 - **用量保留期**：usage.json 每日桶按 `usage_retention_days`（默认 180 天）在日切时修剪，
   users 桶同步收缩，避免文件与 model_usage 扫描无限增长。
