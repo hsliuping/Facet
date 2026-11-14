@@ -415,6 +415,8 @@
             </div>
           </div>
 
+          <div id="maintenance-notify-banner"></div>
+
           <div class="card settings-card">
             <div class="card-top">
               <div>
@@ -474,7 +476,7 @@
               </div>
               <div class="actions">
                 <button class="btn small ghost" id="btn-test-maintenance-models" title="用内置提取考题实测免费模型，通过者进入维护模型队列">测试维护模型</button>
-                <button class="btn small ghost" id="btn-verify-free" title="逐个实测各免费渠道的全部映射；确认失效的打上标签，路由不再调用，标签 6 小时后自动失效">全量校验免费模型</button>
+                <button class="btn small ghost" id="btn-verify-free" title="逐个实测各免费渠道的全部映射；确认失效的打上标签，路由不再调用，标签 6 小时后自动失效。定时任务每 6 小时也会自动跑一次（defaults.free_verify_hours）">全量校验免费模型</button>
                 <button class="btn small ghost" id="btn-run-freealign" title="重跑各免费渠道厂家的免费额度工具，立即对齐模型映射">立即对齐免费额度</button>
                 <button class="btn small" id="btn-run-maintenance">立即运行维护</button>
               </div>

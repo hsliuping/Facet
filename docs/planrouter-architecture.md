@@ -10,7 +10,7 @@
 - **事实层（`facet`）**：模型事实表（能力 / 价格 / quota_tier），每周变化，纯数据 + 工具；
 - **网关层（`planrouter`）**：运行时网关（渠道 / 路由 / 免费池 / 每日自维护），每天变化。
 
-两层之间的桥是 [facts.py](../src/planrouter/facts.py)：网关做名字解析与 quota_tier 查询，
+两层之间的桥是 [facts.py](../src/facet/gateway/facts.py)：网关做名字解析与 quota_tier 查询，
 只读不写。
 
 ## 2. 总体架构
@@ -51,32 +51,32 @@
 | [cli.py](../src/facet/cli.py) | `facet "模型名"` 查询 CLI；`serve` 子命令转交网关 |
 | data/model-registry.json | 构建时拷入的表快照 |
 
-### 3.2 网关层 `src/planrouter`（约 6300 行）
+### 3.2 网关层 `src/facet/gateway`（约 13500 行）
 
 | 模块 | 职责 |
 |---|---|
-| [core.py](../src/planrouter/core.py)（842 行） | 核心：配置解析（`parse_config`）、模型名解析（`resolve_model`）、`StateStore`（冷却 / 评分 / 粘性 / 轮换）、配额冷却判定、`env:` 密钥解析、出站代理 |
-| [server.py](../src/planrouter/server.py)（1736 行） | HTTP 网关本体：App / Handler / ThreadingHTTPServer、转发与 failover、后台线程编排（目录刷新 / 维护 / freealign / 用量 / 提醒） |
-| [maintenance.py](../src/planrouter/maintenance.py)（981 行） | 每日自维护：目录分析、建议三桶、LLM 顾问、免费池测验；`maintenance_models.json` 为其持久化队列 |
-| [ui.py](../src/planrouter/ui.py)（432 行） | `/api/*` 管理 API + `/` 控制台壳 |
-| [subscriptions.py](../src/planrouter/subscriptions.py)（272 行） | 套餐订阅：月费换算、到期状态、续期 |
-| [notifier.py](../src/planrouter/notifier.py)（158 行） | 到期 webhook 提醒（带去重） |
-| [report.py](../src/planrouter/report.py)（98 行） | 月度订阅 × 用量报表 |
-| [quota.py](../src/planrouter/quota.py)（130 行） | 读 x-ratelimit 头做配额抢占冷却 |
-| [persistence.py](../src/planrouter/persistence.py)（146 行） | router.state.json 健康快照持久化 |
-| [audit.py](../src/planrouter/audit.py)（80 行） | requests.jsonl 路由审计（仅元数据） |
-| [usage.py](../src/planrouter/usage.py)（84 行） | 每日每渠道用量桶 |
-| [probe.py](../src/planrouter/probe.py)（308 行） | 控制台一次性探测（不动渠道状态） |
-| [responses.py](../src/planrouter/responses.py)（351 行） | Responses ↔ Chat 协议边缘适配（桥） |
-| [facts.py](../src/planrouter/facts.py)（84 行） | 事实表只读桥：名字解析 + quota_tier |
-| [freealign.py](../src/planrouter/freealign.py)（141 行） | 免费额度对齐 sweep（vendor CLI） |
-| [providers.py](../src/planrouter/providers.py)（240 行） | 厂家注册表：内置 + 用户覆盖层 |
-| [seed.py](../src/planrouter/seed.py)（100 行） | 零密钥首启种子配置 |
-| [cli.py](../src/planrouter/cli.py)（149 行） | `serve` 入口 |
-| [ark_quota.py](../src/planrouter/ark_quota.py)（190 行） | 火山 Ark 免费额度 CLI |
-| [_alias.py](../src/planrouter/_alias.py) | 弃用的 `planrouter` 命令别名（转 `facet serve` 语义） |
-| [providers.json](../src/planrouter/providers.json) | 内置厂家注册表（20 家） |
-| static/（index.html 448 / app.js 2869 / style.css 423 行） | 零构建中文控制台 |
+| [core.py](../src/facet/gateway/core.py)（1476 行） | 核心：配置解析（`parse_config`）、模型名解析（`resolve_model`）、`StateStore`（冷却 / 评分 / 粘性 / 轮换）、配额冷却判定、`env:` 密钥解析、出站代理 |
+| [server.py](../src/facet/gateway/server.py)（4792 行） | HTTP 网关本体：App / Handler / ThreadingHTTPServer、转发与 failover、后台线程编排（目录刷新 / 维护 / freealign / 免费体检 / 冷却探测 / 用量 / 提醒）、运行告警（runtime_alerts） |
+| [maintenance.py](../src/facet/gateway/maintenance.py)（1359 行） | 每日自维护：目录分析、建议三桶、LLM 顾问、免费池全量体检；`maintenance_models.json` 为其持久化队列 |
+| [ui.py](../src/facet/gateway/ui.py)（759 行） | `/api/*` 管理 API + `/` 控制台壳 |
+| [subscriptions.py](../src/facet/gateway/subscriptions.py)（297 行） | 套餐订阅：月费换算、到期状态、续期 |
+| [notifier.py](../src/facet/gateway/notifier.py)（265 行） | 到期提醒与运行告警 webhook（带去重/节流），并报告告警通道是否可达 |
+| [report.py](../src/facet/gateway/report.py)（100 行） | 月度订阅 × 用量报表 |
+| [quota.py](../src/facet/gateway/quota.py)（130 行） | 读 x-ratelimit 头做配额抢占冷却 |
+| [persistence.py](../src/facet/gateway/persistence.py)（155 行） | router.state.json 健康快照持久化 |
+| [audit.py](../src/facet/gateway/audit.py)（97 行） | requests.jsonl 路由审计（仅元数据） |
+| [usage.py](../src/facet/gateway/usage.py)（255 行） | 每日每渠道用量桶，按 `usage_retention_days` 保留期修剪 |
+| [probe.py](../src/facet/gateway/probe.py)（311 行） | 控制台一次性探测（不动渠道状态） |
+| [responses.py](../src/facet/gateway/responses.py)（351 行） | Responses ↔ Chat 协议边缘适配（桥） |
+| [facts.py](../src/facet/gateway/facts.py)（84 行） | 事实表只读桥：名字解析 + quota_tier |
+| [freealign.py](../src/facet/gateway/freealign.py)（226 行） | 免费额度对齐 sweep（vendor CLI） |
+| [providers.py](../src/facet/gateway/providers.py)（390 行） | 厂家注册表：内置 + 用户覆盖层 |
+| [seed.py](../src/facet/gateway/seed.py)（101 行） | 零密钥首启种子配置 |
+| [cli.py](../src/facet/gateway/cli.py)（154 行） | `serve` 入口 |
+| [ark_quota.py](../src/facet/gateway/ark_quota.py)（321 行） | 火山 Ark 免费额度 CLI |
+| [_alias.py](../src/facet/gateway/_alias.py) | 弃用的 `planrouter` 命令别名（转 `facet serve` 语义） |
+| [providers.json](../src/facet/gateway/providers.json) | 内置厂家注册表（20 家） |
+| static/（index.html 867 / app.js 4571 / setup.js 669 / style.css 560 行） | 零构建中文控制台 |
 
 ### 3.3 其他目录
 
@@ -96,7 +96,7 @@
 | `planrouter` | planrouter._alias:main | 过渡别名，打印弃用提示后转 serve |
 | `facet-ark-quota` | planrouter.ark_quota:main | Ark 免费额度表 |
 
-`facet serve` 启动链：无 `router.json` 时 [seed.py](../src/planrouter/seed.py) 零密钥播种 →
+`facet serve` 启动链：无 `router.json` 时 [seed.py](../src/facet/gateway/seed.py) 零密钥播种 →
 `core.parse_config` → `server.make_server()` 构建 App + ThreadingHTTPServer →
 `App.start_background()` 拉起后台线程（目录刷新 / 每日维护 / freealign / 用量 / 到期提醒）→
 `serve_forever()`；退出时逐一停止。容器部署时由
@@ -120,7 +120,7 @@
 4. **逐候选转发**（`_forward`，≤ `max_failover` + 1 次；瞬时网络错误原地重试）：
    渠道 `proxy` 出站 + `defaults.timeout`；429 / 配额耗尽 → `parse_cooldown`
    （Retry-After / reset 头优先，日配额冷却到 UTC 零点）→ 标记冷却（half-open 探活）；
-   上一响应 remaining=0 时 [quota.py](../src/planrouter/quota.py) **提前抢占冷却**。
+   上一响应 remaining=0 时 [quota.py](../src/facet/gateway/quota.py) **提前抢占冷却**。
 5. **中继与记账**：成功 `_relay`（流式 SSE 从 usage 块汇总 token）→ 绑定粘性会话 →
    每次尝试写 requests.jsonl + usage.json → 全败返回 503（带逐渠道失败明细）。
 
@@ -165,7 +165,7 @@ listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置�
 | 文件 | 内容 | 谁写 |
 |---|---|---|
 | registry/model-registry.json | 事实表本体（217 厂家 / 约 2400 模型） | tools/ 周同步 |
-| src/planrouter/providers.json | 内置厂家注册表 | 随包发布 |
+| src/facet/gateway/providers.json | 内置厂家注册表 | 随包发布 |
 | data/router.json | 网关配置（容器挂载 `/data`） | 用户 / 控制台 |
 | data/router.state.json | 冷却 / 计数 / 评分 / 粘性会话快照 | persistence.py |
 | data/usage.json | 每日每渠道 requests / success / failed / tokens | usage.py |
@@ -178,11 +178,17 @@ listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置�
 
 - **每日维护**（MaintenanceRunner）：刷新模型目录 → 可确认修复自动应用（先备份）→
   刷新套餐与厂家模型清单 → LLM 顾问意见 → **applied / suggestions / alerts 三桶**，
-  落内存 + maintenance.jsonl。
+  落内存 + maintenance.jsonl。定时与控制台按钮共用互斥锁，重复触发直接跳过。
 - **免费池**：仅 tier:free 渠道捐候选 → 合成文档页测验（全对才入持久化队列）→
-  干活前复验，失败即除名。
+  干活前复验，失败即除名；全量体检（实测免费模型映射）定时每 6h 自动跑
+  （`defaults.free_verify_hours`，0 关闭），与控制台按钮互斥。
 - **维护调用直达不走路由**：优先第一个暴露目标模型的启用渠道（free 优先、单轮非流式、
   走渠道 proxy），无渠道暴露才回退网关自身路由——维护流量不污染业务路由统计。
+- **运行告警**（runtime_alerts → notifier）：链全冷却 / 免费额度用尽 / 渠道连续失败 /
+  磁盘水位不足（`disk_min_free_mb`）/ 本地状态写盘失败，经 webhook 外发并留本地记录；
+  通知通道未配置时自维护页显示「告警无法外发」横幅，不再静默。
+- **用量保留期**：usage.json 每日桶按 `usage_retention_days`（默认 180 天）在日切时修剪，
+  users 桶同步收缩，避免文件与 model_usage 扫描无限增长。
 - **套餐订阅**：月费换算、到期 webhook 提醒（去重）、全链接订阅过期自动停用渠道。
 
 ## 10. 功能清单（用户视角）
@@ -193,7 +199,8 @@ listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置�
    （facet-auto / facet-cheap）、精确匹配、fallback 链；priority 故障转移、429 / 配额
    冷却与抢占、粘性会话、评分轮换、渠道出站代理、全链路审计与响应头核对。
 3. **套餐订阅管理**：月费 / 到期 / 提醒 / 过期停用 / 月度报表。
-4. **自我维护**：每日三桶维护、免费池测验队列、免费额度对齐 sweep、维护日志查看器。
+4. **自我维护**：每日三桶维护、免费池测验队列、免费额度对齐 sweep、免费模型定时体检、
+   磁盘与写盘告警、维护日志查看器。
 5. **控制台**：零构建中文 UI（仪表板 / 渠道 / 路由链 / 模型接入 / 套餐订阅 / 厂家 /
    自维护 / 用量 / 请求日志）；搜索过滤、冷却高亮、行内测试、厂家手册页内浮窗。
 6. **首启与部署**：零密钥首启种子；多阶段 Docker 镜像 + compose 栈（mock 冒烟上游）、

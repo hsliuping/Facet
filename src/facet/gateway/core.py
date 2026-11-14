@@ -467,6 +467,18 @@ class Defaults:
     maintenance_model: str = ""
     # 0 disables the free-quota alignment sweep (freealign.py)
     free_align_hours: int = 24
+    # 0 disables the scheduled free-pool verification sweep: every enabled
+    # free channel's mappings are pinged, confirmed-dead ids get an expiring
+    # label so routing stops calling them (manual button keeps working).
+    free_verify_hours: int = 6
+    # Usage buckets (days/users) older than this are pruned on the day
+    # switch, keeping usage.json and the model_usage scans bounded.
+    # 0 keeps everything forever.
+    usage_retention_days: int = 180
+    # Alarm when the data directory's free space drops below this many MB:
+    # with a full volume every persisted artefact fails silently otherwise.
+    # 0 disables the check.
+    disk_min_free_mb: int = 512
     # 404 (model removed upstream) cools this many hours with no half-open
     # probing; 0 keeps the old 30-second transient behaviour.
     not_found_cooldown_hours: int = 24
@@ -756,6 +768,9 @@ def parse_config(raw: dict) -> Config:
         maintenance_hours=int(d.get("maintenance_hours", 24)),
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
         free_align_hours=int(d.get("free_align_hours", 24)),
+        free_verify_hours=int(d.get("free_verify_hours", 6)),
+        usage_retention_days=int(d.get("usage_retention_days", 180)),
+        disk_min_free_mb=int(d.get("disk_min_free_mb", 512)),
         not_found_cooldown_hours=int(d.get("not_found_cooldown_hours", 24)),
         daily_429_cooldown_hours=int(d.get("daily_429_cooldown_hours", 0)),
         network_retries=int(d.get("network_retries", 1)),

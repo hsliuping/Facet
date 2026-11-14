@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -76,6 +77,17 @@ ACCOUNT_SCOPED_MARKERS = (
 # A channel failing this many times in a row (no success in between) deserves
 # a runtime alert: something is broken even while cooldowns route around it.
 RUNTIME_ALERT_ERROR_THRESHOLD = 3
+# Human names for the persisted artefacts whose failed writes runtime_alerts
+# reports (see App._note_write_failure / usage / notifier write callbacks).
+PERSIST_KIND_LABELS = {
+    "usage": "用量统计 usage.json",
+    "notifier": "通知状态 notifications.json",
+    "vendor_quota": "厂家额度快照 vendorquota.json",
+    "maintenance_log": "维护日志 maintenance.jsonl",
+    "freealign_log": "免费额度日志 freealign.jsonl",
+    "config_backup": "配置备份 config.json.bak",
+    "maintenance_pool": "维护模型池 maintenance_models.json",
+}
 # Pay-as-you-go vendors report account usage to the same key the channel
 # already sends upstream. provider -> fetcher(creds) -> snapshot; the channel
 # config page renders the result. Vendors without an endpoint stay out, so a
@@ -643,6 +655,30 @@ class FreeAlignRunner(ScheduledTask):
         return _free_align_summary(self.app.run_free_align("scheduled"))
 
 
+class FreeVerifyRunner(ScheduledTask):
+    """Scheduled full verification of the free pool.
+
+    The console button did this by hand, so without a schedule a dead free
+    model kept getting routed to until someone happened to look. Shares
+    App.free_verify_lock with that button, so the two never overlap. Runs
+    once after startup settles, then every defaults.free_verify_hours.
+    """
+
+    key = "free_verify"
+    label = "免费模型体检"
+    description = "逐个实测免费渠道的模型映射，失效的自动打标签让路由避开"
+    hours_key = "free_verify_hours"
+    FIRST_DELAY = 240.0
+
+    def run_once(self) -> str:
+        report = self.app.verify_free_models(trigger="scheduled")
+        if report.get("skipped"):
+            return "已有体检在运行，本次跳过"
+        return (f"实测 {report.get('checked', 0)} 个模型："
+                f"可用 {report.get('alive', 0)} · 失效 {report.get('dead', 0)}"
+                f" · 无法判定 {report.get('inconclusive', 0)}")
+
+
 class HealthProber:
     """Background liveness probes for channels sitting in a short cooldown.
 
@@ -667,6 +703,26 @@ class HealthProber:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="planrouter-prober")
+        # Bookkeeping for the scheduled-tasks table (see status()).
+        self.last_run_at = 0.0
+        self.next_run_at = 0.0
+        self.last_summary = ""
+
+    def status(self) -> dict:
+        """Row for the console's scheduled-task table."""
+        return {
+            "key": "probe",
+            "label": "冷却探测",
+            "description": "对处于短冷却的渠道做可用性探测，成功即提前解除冷却",
+            "enabled": self.interval > 0,
+            "hours": 0,
+            "cycle": f"每 {int(self.interval)} 秒",
+            "state": "idle" if self.interval > 0 else "disabled",
+            "last_run_at": self.last_run_at,
+            "next_run_at": self.next_run_at,
+            "last_summary": self.last_summary,
+            "last_error": "",
+        }
 
     def start(self) -> None:
         self._thread.start()
@@ -703,6 +759,8 @@ class HealthProber:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
+            self.last_run_at = time.time()
+            self.next_run_at = self.last_run_at + self.interval
             self._cycle()
 
     def _cycle(self) -> None:
@@ -710,7 +768,9 @@ class HealthProber:
         targets = [c for c in self._targets(now)
                    if now >= self._deferred.get(c.name, 0.0)]
         if not targets:
+            self.last_summary = "当前无短冷却渠道需要探测"
             return
+        recovered = 0
         with ThreadPoolExecutor(
                 max_workers=min(self.MAX_WORKERS, len(targets))) as pool:
             futures = [(channel, pool.submit(self._probe, channel))
@@ -721,6 +781,7 @@ class HealthProber:
                 except Exception:
                     ok = False
                 if ok:
+                    recovered += 1
                     self._attempts.pop(channel.name, None)
                     self._deferred.pop(channel.name, None)
                     with self.app.store.lock:
@@ -732,6 +793,8 @@ class HealthProber:
                     self._attempts[channel.name] = k
                     self._deferred[channel.name] = time.time() + min(
                         self.BACKOFF_MAX, self.BACKOFF_START * (2 ** (k - 1)))
+        self.last_summary = (f"探测 {len(targets)} 个冷却渠道，{recovered} 个恢复"
+                             f"，{len(targets) - recovered} 个仍在冷却")
 
 
 class App:
@@ -791,11 +854,23 @@ class App:
         self.persistence = StatePersistence(state_file, lambda: self.store) if state_file else None
         if self.persistence:
             self.persistence.restore_from_disk()
-        self.usage = UsageRecorder(usage_file) if usage_file else None
+        # Persisted-state failures are counted here instead of vanishing into
+        # `except OSError: pass`; runtime_alerts turns them into an alarm and
+        # the next successful write clears it.
+        self._write_failure_lock = threading.Lock()
+        self.write_failures: dict[str, dict] = {}
+        self.usage = UsageRecorder(
+            usage_file,
+            retention_days=self.config.defaults.usage_retention_days,
+            on_error=self._note_write_failure,
+            on_ok=self._note_write_ok,
+        ) if usage_file else None
         self.notifier = ReminderService(
             self.subscriptions_path, notifications_file,
             lambda: self._sub_records(), lambda: self.subscription_settings,
             get_health=lambda: self.runtime_alerts(),
+            on_write_error=self._note_write_failure,
+            on_write_ok=self._note_write_ok,
         ) if notifications_file else None
         self.audit = RequestLog(audit_file) if audit_file else None
         # Member keys for small-team attribution; absent file -> no members,
@@ -823,9 +898,16 @@ class App:
         self.catalog_refresher: CatalogRefresher | None = None
         self.maintenance_runner: "MaintenanceRunner | None" = None
         self.free_align_runner: "FreeAlignRunner | None" = None
+        self.free_verify_runner: "FreeVerifyRunner | None" = None
         self.maintenance_reports: list[dict] = []
         self.free_align_reports: list[dict] = []
         self.maintenance_lock = threading.Lock()
+        # One maintenance sweep at a time: the scheduled runner and the console
+        # button share this lock, so a manual click during the daily run backs
+        # off instead of interleaving config patches and duplicate reports.
+        self.maintenance_run_lock = threading.Lock()
+        # Same for the free-pool verification sweep (scheduled + button).
+        self.free_verify_lock = threading.Lock()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
         self.maintenance_pool = maint.load_maintenance_pool(self)
         self.maintenance_pool_lock = threading.Lock()
@@ -857,12 +939,15 @@ class App:
         self.catalog_refresher = CatalogRefresher(self)
         self.maintenance_runner = MaintenanceRunner(self)
         self.free_align_runner = FreeAlignRunner(self)
+        self.free_verify_runner = FreeVerifyRunner(self)
         if self.config.defaults.catalog_refresh_hours:
             self.catalog_refresher.start()
         if self.config.defaults.maintenance_hours:
             self.maintenance_runner.start()
         if self.config.defaults.free_align_hours:
             self.free_align_runner.start()
+        if self.config.defaults.free_verify_hours:
+            self.free_verify_runner.start()
         # Created even when switched off, so the console can list the sweep;
         # the thread only runs with a positive probe_interval_seconds.
         self.health_prober = HealthProber(self, self.config.defaults.probe_interval_seconds)
@@ -874,6 +959,8 @@ class App:
             self.maintenance_runner.stop()
         if self.free_align_runner:
             self.free_align_runner.stop()
+        if self.free_verify_runner:
+            self.free_verify_runner.stop()
         if self.catalog_refresher:
             self.catalog_refresher.stop()
         if self.health_prober:
@@ -1003,8 +1090,25 @@ class App:
                  "plans": plans},
                 ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
-        except OSError:
-            pass  # quota display must never break the sweep
+        except OSError as exc:
+            # Quota display must never break the sweep, but a full disk must
+            # not stay invisible either: runtime_alerts reports the counter.
+            self._note_write_failure("vendor_quota", exc)
+        else:
+            self._note_write_ok("vendor_quota")
+
+    def _note_write_failure(self, kind: str, exc) -> None:
+        """Remember a failed persisted write for runtime_alerts."""
+        with self._write_failure_lock:
+            row = self.write_failures.setdefault(kind, {"count": 0})
+            row["count"] = int(row.get("count") or 0) + 1
+            row["last_at"] = time.time()
+            row["last_error"] = str(exc)[:160]
+
+    def _note_write_ok(self, kind: str) -> None:
+        """A successful write clears the alarm for that artefact."""
+        with self._write_failure_lock:
+            self.write_failures.pop(kind, None)
 
     # -------------------------------------------------- vendor plan usage
     def _plan_creds_for(self, record: dict) -> tuple[str, str, str]:
@@ -1379,6 +1483,42 @@ class App:
                                     f"渠道：{channel.name}\n模型：{wire}\n"
                                     "已停止路由该模型以避免按量计费。"),
                     })
+        # Disk headroom: usage, notification state, maintenance reports and
+        # config backups all fail once the data volume fills up. Warn while
+        # writes still succeed so the operator has time to act.
+        disk_min = self.config.defaults.disk_min_free_mb
+        if disk_min > 0:
+            root = self.config_path.parent if self.config_path else Path.cwd()
+            try:
+                free_mb = shutil.disk_usage(str(root)).free / (1024 * 1024)
+            except OSError:
+                free_mb = None
+            if free_mb is not None and free_mb < disk_min:
+                alerts.append({
+                    "kind": "disk_low",
+                    "key": "disk:data",
+                    "title": f"磁盘剩余空间不足：{free_mb:.0f} MB",
+                    "message": ("[PlanRouter 运行告警] 数据目录磁盘空间不足\n"
+                                f"目录：{root}\n剩余：{free_mb:.0f} MB\n"
+                                f"阈值：{disk_min} MB\n"
+                                "用量、通知历史与维护报告可能写盘失败。"),
+                })
+        # Failed persisted writes that have not succeeded since. A transient
+        # failure clears on the next successful write of the same artefact.
+        with self._write_failure_lock:
+            failures = {kind: dict(row)
+                        for kind, row in self.write_failures.items()}
+        for kind, row in failures.items():
+            label = PERSIST_KIND_LABELS.get(kind, kind)
+            alerts.append({
+                "kind": "persist_write_failed",
+                "key": f"write:{kind}",
+                "title": f"本地状态写入失败：{label}",
+                "message": ("[PlanRouter 运行告警] 本地状态写入失败\n"
+                            f"对象：{label}\n"
+                            f"累计失败：{row.get('count', 0)} 次\n"
+                            f"最近错误：{(row.get('last_error') or '—')[:160]}"),
+            })
         return alerts
 
     def _read_raw(self) -> dict:
@@ -2119,6 +2259,18 @@ class App:
         config backup); LLM output and quota heuristics become suggestions
         for the console. Never raises: failures land in the report.
         """
+        if not self.maintenance_run_lock.acquire(blocking=False):
+            # The scheduled runner and the console button must not interleave:
+            # both patch channel mappings and write reports.
+            return {"busy": True, "trigger": trigger, "patch": {},
+                    "applied": [], "suggestions": [], "alerts": [],
+                    "message": "上一次自维护仍在运行，本次已跳过"}
+        try:
+            return self._run_maintenance(trigger)
+        finally:
+            self.maintenance_run_lock.release()
+
+    def _run_maintenance(self, trigger: str) -> dict:
         refresh = self.refresh_all_catalogs()
         with self.store.lock:
             catalogs = {name: dict(entry) for name, entry in self.store.catalogs.items()}
@@ -2343,19 +2495,30 @@ class App:
         """Quiz candidate maintenance models now and rebuild the queue."""
         return maint.probe_maintenance_models(self)
 
-    def verify_free_models(self, channels=None) -> dict:
+    def verify_free_models(self, channels=None, trigger: str = "manual") -> dict:
         """Ping every free-channel mapping; dead ids get an expiring label
         that routing then skips (see maint.dead_model_set).
 
         channels narrows the sweep to the named free channels, so checking
         one tier does not wait on every other tier's mappings.
+
+        The scheduled sweep and the console button share one lock: with a
+        full pool a sweep takes minutes, and two overlapping sweeps would
+        double the upstream calls and race on the pool labels.
         """
-        pairs = None
-        if channels:
-            only = set(channels)
-            pairs = [pair for pair in maint.free_mapping_pairs(self)
-                     if pair[0].name in only]
-        return maint.verify_free_models(self, pairs)
+        if not self.free_verify_lock.acquire(blocking=False):
+            return {"skipped": "running", "trigger": trigger, "checked": 0,
+                    "alive": 0, "dead": 0, "inconclusive": 0,
+                    "scanned_at": 0, "results": [], "dead_models": []}
+        try:
+            pairs = None
+            if channels:
+                only = set(channels)
+                pairs = [pair for pair in maint.free_mapping_pairs(self)
+                         if pair[0].name in only]
+            return maint.verify_free_models(self, pairs)
+        finally:
+            self.free_verify_lock.release()
 
     def dsh_status(self) -> dict:
         """Report whether the DeepSeek Harness client shares this host."""
@@ -2422,8 +2585,12 @@ class App:
         try:
             backup = self.config_path.with_name(self.config_path.name + f".{tag}.bak")
             backup.write_bytes(self.config_path.read_bytes())
-        except OSError:
-            pass  # a failed backup must not block maintenance
+        except OSError as exc:
+            # A failed backup must not block maintenance, but it removes the
+            # rollback net for an auto-apply: report it as a runtime alert.
+            self._note_write_failure("config_backup", exc)
+        else:
+            self._note_write_ok("config_backup")
 
     def _record_maintenance(self, report: dict) -> None:
         """Keep the last reports in memory and append one JSON line to disk."""
@@ -2438,8 +2605,10 @@ class App:
             path = self.config_path.parent / "maintenance.jsonl"
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # logging must never break maintenance
+        except OSError as exc:
+            self._note_write_failure("maintenance_log", exc)
+        else:
+            self._note_write_ok("maintenance_log")
 
     # ----------------------------------------------------------- free align
     def run_free_align(self, trigger: str = "manual") -> dict:
@@ -2489,8 +2658,10 @@ class App:
             path = self.config_path.parent / "freealign.jsonl"
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # logging must never break the sweep
+        except OSError as exc:
+            self._note_write_failure("freealign_log", exc)
+        else:
+            self._note_write_ok("freealign_log")
 
     def maintenance_payload(self) -> dict:
         with self.maintenance_lock:
@@ -2525,13 +2696,52 @@ class App:
                 "hours": self.config.defaults.free_align_hours,
                 "reports": list(reversed(free_reports)),
             },
+            "free_verify": {
+                "enabled": bool(self.config.defaults.free_verify_hours),
+                "hours": self.config.defaults.free_verify_hours,
+            },
+            "notify": self._notify_delivery(),
+        }
+
+    def _notify_delivery(self) -> dict:
+        """Whether runtime alerts can actually reach anyone (see A1)."""
+        if not self.notifier:
+            return {"ok": False, "reason": "disabled",
+                    "hint": "通知服务未启动（启动时未指定 notifications 文件），运行告警不会外发。"}
+        return self.notifier.delivery()
+
+    def _notifier_task(self) -> dict:
+        """ReminderService loop as a scheduled-task row."""
+        status = self.notifier.status()
+        delivery = status.get("delivery") or {}
+        interval = max(1, int((status.get("settings") or {}).get("interval_minutes") or 30))
+        last = float(status.get("last_check") or 0)
+        return {
+            "key": "reminder",
+            "label": "续费与运行告警通知",
+            "description": "每分钟扫描运行告警，按订阅设置检查到期提醒",
+            "enabled": bool(status.get("settings", {}).get("notify_enabled")),
+            "hours": 0,
+            "cycle": f"运行告警每 60 秒 · 到期提醒每 {interval} 分钟",
+            "state": "ok" if delivery.get("ok") else "warn",
+            "last_run_at": last,
+            "next_run_at": last + 60 if last else 0,
+            "last_summary": ("告警外发正常" if delivery.get("ok")
+                             else f"告警无法外发：{delivery.get('hint') or '未配置'}"),
+            "last_error": status.get("last_error") or "",
         }
 
     def tasks_payload(self) -> dict:
         """The console's task list: cycle, latest outcome and next run."""
         runners = (self.catalog_refresher, self.maintenance_runner,
-                   self.free_align_runner)
-        return {"tasks": [runner.status() for runner in runners if runner]}
+                   self.free_align_runner, self.free_verify_runner)
+        tasks = [runner.status() for runner in runners if runner]
+        if self.notifier:
+            tasks.append(self._notifier_task())
+        prober = getattr(self, "health_prober", None)
+        if prober is not None:
+            tasks.append(prober.status())
+        return {"tasks": tasks}
 
     def recommend_models(self, purpose: str = "agent",
                          limit: int = 20) -> dict:

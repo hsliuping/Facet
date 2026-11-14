@@ -45,7 +45,8 @@ def alert_message(alert: dict) -> str:
 
 class ReminderService:
     def __init__(self, subscriptions_path, state_path, get_records, get_settings,
-                 sender=None, get_health=None):
+                 sender=None, get_health=None, on_write_error=None,
+                 on_write_ok=None):
         self.subscriptions_path = Path(subscriptions_path) if subscriptions_path else None
         self.state_path = Path(state_path) if state_path else None
         self.get_records = get_records
@@ -54,6 +55,10 @@ class ReminderService:
         # Live runtime conditions as [{kind, key, title, message}]; see
         # App.runtime_alerts. None keeps the service renewal-only.
         self.get_health = get_health
+        # Persistence outcome callbacks so a failed state write surfaces as a
+        # runtime alert instead of vanishing with the exception.
+        self._on_write_error = on_write_error
+        self._on_write_ok = on_write_ok
         self.lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -83,8 +88,12 @@ class ReminderService:
                            encoding="utf-8")
             import os
             os.replace(tmp, self.state_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            if self._on_write_error:
+                self._on_write_error("notifier", exc)
+        else:
+            if self._on_write_ok:
+                self._on_write_ok("notifier")
 
     def _post(self, url: str, message: str) -> None:
         payload = json.dumps({"msgtype": "text", "text": {"content": message}},
@@ -98,10 +107,32 @@ class ReminderService:
         if hasattr(result, "close"):
             result.close()
 
+    def delivery(self) -> dict:
+        """Whether an alert can actually leave this machine.
+
+        The console shows this on the self-maintenance page: a webhook that
+        was never configured looks exactly like a healthy system until the
+        day an alarm matters, so stay explicit about the gap.
+        """
+        settings = self.get_settings()
+        url = resolve_secret(settings.get("webhook_url"))
+        if not settings.get("notify_enabled"):
+            return {
+                "ok": False, "reason": "disabled",
+                "hint": "通知已在「通知」页关闭（notify_enabled=false），运行告警只留在本地记录，不会外发。",
+            }
+        if not url:
+            return {
+                "ok": False, "reason": "no_webhook",
+                "hint": "未配置 webhook_url，运行告警只留在本地记录，不会外发；到「通知」页填写后点「发送测试」验证。",
+            }
+        return {"ok": True, "reason": "", "hint": ""}
+
     def status(self) -> dict:
         state = self._read_state()
         settings = self.get_settings()
         pending = subs.summarize(self.get_records())["alerts"]
+        delivery = self.delivery()
         return {
             "settings": {
                 **settings,
@@ -112,6 +143,7 @@ class ReminderService:
             "last_error": state["last_error"],
             "history": state["history"][:MAX_HISTORY],
             "runtime": state["runtime"],
+            "delivery": delivery,
             "enabled": bool(settings["notify_enabled"] and settings["webhook_url"]),
         }
 
@@ -161,7 +193,9 @@ class ReminderService:
         if not settings["notify_enabled"] or not url:
             state["last_error"] = ""
             self._write_state(state)
-            return {"sent": 0, "skipped": "disabled", "history": state["history"]}
+            return {"sent": 0, "skipped": "disabled",
+                    "reason": "no_webhook" if not url else "notify_disabled",
+                    "history": state["history"]}
 
         alerts = subs.summarize(self.get_records())["alerts"]
         sent = 0

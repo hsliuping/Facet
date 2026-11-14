@@ -866,8 +866,16 @@ def save_maintenance_pool(app) -> None:
             json.dumps(app.maintenance_pool, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
         os.replace(tmp, path)
-    except OSError:
-        pass  # a failed pool write must never break maintenance
+    except OSError as exc:
+        # A failed pool write must never break maintenance, but a full disk
+        # should not go unnoticed either: the app counts it for runtime_alerts.
+        note = getattr(app, "_note_write_failure", None)
+        if note:
+            note("maintenance_pool", exc)
+    else:
+        note = getattr(app, "_note_write_ok", None)
+        if note:
+            note("maintenance_pool")
 
 
 def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:

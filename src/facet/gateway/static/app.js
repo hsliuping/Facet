@@ -2666,6 +2666,8 @@ $('recommend-body').addEventListener('click', async (e) => {
 const TASK_STATES = {
   running: ['运行中', 'unknown'],
   idle: ['等待中', 'active'],
+  ok: ['正常', 'active'],
+  warn: ['需注意', 'expiring'],
   disabled: ['已关闭', 'expired'],
 };
 
@@ -2678,7 +2680,7 @@ function renderTasks() {
   }
   body.innerHTML = tasks.map((t) => {
     const [stateText, cls] = TASK_STATES[t.state] || ['—', 'unknown'];
-    const cycle = t.enabled ? `每 ${t.hours} 小时` : '未启用';
+    const cycle = t.enabled ? (t.cycle || `每 ${t.hours} 小时`) : '未启用';
     const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '—');
     const result = t.last_error
       ? `<span class="tag expired">失败</span> ${esc(t.last_error)}`
@@ -2700,9 +2702,28 @@ function maintItem(tag, cls, html) {
   return `<div class="maint-item"><span class="tag ${cls}">${tag}</span><span>${html}</span></div>`;
 }
 
+function renderNotifyBanner(notify) {
+  // Alerts that cannot leave the box look exactly like a healthy system, so
+  // the self-maintenance page says it out loud instead of staying silent.
+  const el = $('maintenance-notify-banner');
+  if (!el) return;
+  if (!notify || notify.ok) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div class="banner critical">
+    <span class="banner-title">运行告警无法外发</span>
+    <div class="banner-items">${esc(notify.hint || '未配置通知通道，告警只留在本地记录。')}</div>
+    <button class="btn small" id="banner-goto-notify">去配置</button>
+  </div>`;
+  const btn = $('banner-goto-notify');
+  if (btn) btn.onclick = () => switchPage('subscriptions');
+}
+
 function renderMaintenance() {
   const data = state.maintenance;
   if (!data) return;
+  renderNotifyBanner(data.notify);
   const queue = data.llm_queue || [];
   const queueText = queue.length
     ? `自动队列 ${queue.length} 个（${queue.slice(0, 3).map(esc).join('、')}${queue.length > 3 ? '…' : ''}）`
@@ -2710,7 +2731,9 @@ function renderMaintenance() {
   const llm = data.llm_model
     ? esc(data.llm_model) + (data.llm_available ? '' : '（暂无可用渠道承担）')
     : queueText;
+  const verify = data.free_verify || {};
   $('maintenance-note').textContent = `调度：${data.enabled ? `每 ${data.hours} 小时` : '未启用'}`
+    + ` · 免费模型体检：${verify.enabled ? `每 ${verify.hours} 小时` : '未启用'}`
     + ` · LLM 分析：${llm} · 由 defaults.maintenance_model 控制（留空自动探测）`;
   // Probe detail: the status payload carries every candidate's quiz outcome
   // (model, pass, extraction hits, error) — render it instead of only the
@@ -2814,8 +2837,12 @@ $('btn-verify-free').onclick = async (e) => {
   b.textContent = '校验中…';
   try {
     const r = await api('/api/maintenance/verify-free', { method: 'POST' });
-    toast(`免费模型校验：检查 ${r.checked} 个，可用 ${r.alive}，失效 ${r.dead}，`
-      + `无法判定 ${r.inconclusive}`, r.dead ? 'warn' : 'ok');
+    if (r.skipped) {
+      toast('免费模型校验：已有体检在运行，本次已跳过', 'warn');
+    } else {
+      toast(`免费模型校验：检查 ${r.checked} 个，可用 ${r.alive}，失效 ${r.dead}，`
+        + `无法判定 ${r.inconclusive}`, r.dead ? 'warn' : 'ok');
+    }
     await loadMaintenance();
   } catch (err) {
     toast(err.message, 'bad');
@@ -3169,9 +3196,10 @@ $('btn-run-maintenance').onclick = async (e) => {
   b.disabled = true;
   b.textContent = '运行中…';
   try {
-    await api('/api/maintenance/run', { method: 'POST' });
+    const r = await api('/api/maintenance/run', { method: 'POST' });
     await loadMaintenance();
-    toast('运维分析完成');
+    toast(r.busy ? (r.message || '上一次自维护仍在运行，本次已跳过') : '运维分析完成',
+      r.busy ? 'warn' : 'ok');
   } catch (err) {
     toast(err.message, 'bad');
   } finally {

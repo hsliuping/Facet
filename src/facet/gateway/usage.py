@@ -13,14 +13,24 @@ TOKEN_COUNTERS = ("input_tokens", "cached_tokens")
 
 
 class UsageRecorder:
-    def __init__(self, path, interval: float = 5.0):
+    def __init__(self, path, interval: float = 5.0, retention_days: int = 180,
+                 on_error=None, on_ok=None):
         self.path = Path(path)
         self.interval = interval
+        # Prune buckets older than this on the day switch; 0 keeps all days.
+        self.retention_days = max(0, int(retention_days or 0))
+        # Persistence outcome callbacks (kind, exc) / (kind): the caller turns
+        # a failed write into a runtime alert instead of a silent drop.
+        self._on_error = on_error
+        self._on_ok = on_ok
         self.lock = threading.Lock()
         self.data = self._read()
         self.dirty = False
+        self._last_prune_day = date.today().isoformat()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="planrouter-usage")
+        if self.retention_days:
+            self._prune(date.today())
 
     def _read(self) -> dict:
         if self.path.is_file():
@@ -58,6 +68,9 @@ class UsageRecorder:
         the per-channel data under a parallel top-level `users` key.
         """
         day = (on or date.today()).isoformat()
+        if self.retention_days and day != self._last_prune_day:
+            self._prune(on or date.today())
+            self._last_prune_day = day
         with self.lock:
             bucket = self.data["days"].setdefault(day, {})
             entry = bucket.setdefault(channel, {key: 0 for key in COUNTERS})
@@ -89,6 +102,34 @@ class UsageRecorder:
             row["cached_tokens"] = int(row.get("cached_tokens") or 0) + int(cached_tokens or 0)
             row["last_used"] = time.time()
 
+    def _prune(self, on: date) -> None:
+        """Drop day buckets older than the retention window.
+
+        Both the per-channel `days` map and the parallel `users` map are
+        trimmed so neither grows without bound; a user left with no days is
+        removed entirely. ISO dates compare correctly as strings.
+        """
+        if not self.retention_days:
+            return
+        cutoff = (on - timedelta(days=self.retention_days)).isoformat()
+        with self.lock:
+            days = self.data.get("days") or {}
+            stale = [day for day in days if day < cutoff]
+            for day in stale:
+                del days[day]
+            changed = bool(stale)
+            users = self.data.get("users") or {}
+            for name in list(users):
+                bucket = users[name]
+                gone = [day for day in bucket if day < cutoff]
+                for day in gone:
+                    del bucket[day]
+                changed = changed or bool(gone)
+                if not bucket:
+                    del users[name]
+            if changed:
+                self.dirty = True
+
     def flush(self) -> None:
         with self.lock:
             if not self.dirty:
@@ -99,8 +140,17 @@ class UsageRecorder:
         try:
             tmp.write_text(payload, encoding="utf-8")
             os.replace(tmp, self.path)
-        except OSError:
-            pass
+        except OSError as exc:
+            # Keep the in-memory data marked dirty so the next tick retries,
+            # and let the caller raise a runtime alert instead of losing it
+            # without a trace.
+            with self.lock:
+                self.dirty = True
+            if self._on_error:
+                self._on_error("usage", exc)
+        else:
+            if self._on_ok:
+                self._on_ok("usage")
 
     def model_usage(self, channel: str, model: str, period: str = "total",
                     on: date | None = None) -> dict:
