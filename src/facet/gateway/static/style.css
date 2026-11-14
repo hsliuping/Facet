@@ -99,7 +99,6 @@ body {
 .btn.small { padding: 5px 10px; font-size: 12px; }
 .btn.danger { color: #ffb4b8; }
 .btn.danger:hover { border-color: var(--bad); }
-.btn.dirty { box-shadow: 0 0 0 2px rgba(224, 166, 58, .5); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .icon { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 3px 6px; }
 .icon:hover { color: var(--text); }

@@ -42,9 +42,7 @@ const state = {
   adminKey: readStoredKey('admin'),
   requests: null,
   editing: -1,
-  dirty: false,
   subs: null,
-  subDirty: false,
   editingSub: -1,
   providers: null,
   usage: null,
@@ -190,13 +188,9 @@ function toast(message, kind = 'ok') {
   setTimeout(() => el.remove(), 4200);
 }
 
-const DRAFT_CONFIG = 'facet_draft_config';
 const DRAFT_SUBS = 'facet_draft_subs';
 const saveTimers = { config: null, subs: null };
 
-function stashDraft(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* quota */ }
-}
 function dropDraft(key) {
   try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
 }
@@ -216,33 +210,20 @@ function copyText(value) {
   }
 }
 
-// Every edit is persisted on its own; there is no separate "save and apply"
-// step. Debounced so typing in the model-policy box does not POST per keystroke.
+// The channel config persists on its own after every edit; there is no
+// separate "save and apply" step. Debounced so typing in the model-policy
+// box does not POST per keystroke. (Subscription edits commit immediately
+// on confirm; they do not go through this scheduler.)
 function scheduleSave(kind) {
   clearTimeout(saveTimers[kind]);
   saveTimers[kind] = setTimeout(() => {
     saveTimers[kind] = null;
-    if (kind === 'subs') saveSubscriptions(); else saveConfig();
+    saveConfig();
   }, 600);
 }
 
-function holdDirty() {
-  state.dirty = true;
-  $('btn-save').classList.add('dirty');
-  $('btn-save').textContent = '立即保存 *';
-  stashDraft(DRAFT_CONFIG, state.config);
-}
-
 function markDirty() {
-  holdDirty();
   scheduleSave('config');
-}
-
-function clearDirty() {
-  state.dirty = false;
-  $('btn-save').classList.remove('dirty');
-  $('btn-save').textContent = '立即保存';
-  dropDraft(DRAFT_CONFIG);
 }
 
 function normalizeConfig() {
@@ -566,25 +547,6 @@ function addMonthsISO(iso, months, fromToday) {
   return `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(Math.min(d, lastDay)).padStart(2, '0')}`;
 }
 
-function holdSubDirty() {
-  state.subDirty = true;
-  $('btn-save-subs').classList.add('dirty');
-  $('btn-save-subs').textContent = '立即保存订阅 *';
-  stashDraft(DRAFT_SUBS, state.subs ? state.subs.subscriptions : []);
-}
-
-function markSubDirty() {
-  holdSubDirty();
-  scheduleSave('subs');
-}
-
-function clearSubDirty() {
-  state.subDirty = false;
-  $('btn-save-subs').classList.remove('dirty');
-  $('btn-save-subs').textContent = '立即保存订阅';
-  dropDraft(DRAFT_SUBS);
-}
-
 async function loadSubscriptions() {
   state.subs = await api('/api/subscriptions');
   renderSubscriptions();
@@ -673,7 +635,7 @@ function switchPage(name) {
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
-    if (!state.subDirty) loadSubscriptions().catch((e) => toast(e.message, 'bad'));
+    loadSubscriptions().catch((e) => toast(e.message, 'bad'));
   }
   if (name === 'vendors') {
     loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
@@ -1201,11 +1163,12 @@ function openSubEditor(index) {
   f.onsubmit = (e) => { e.preventDefault(); saveSubEditor(); };
 }
 
-function saveSubEditor() {
+async function saveSubEditor() {
   const f = $('sub-form');
   const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
+  let record;
   try {
-    const record = {
+    record = {
       ...(state.editingSub >= 0 ? { id: state.subs.subscriptions[state.editingSub].id } : {}),
       account: val('account'), account_id: val('account_id'),
       business_line: val('business_line'), plan: val('plan'), tier: val('tier'),
@@ -1224,34 +1187,27 @@ function saveSubEditor() {
       note: val('note'),
     };
     if (!record.plan) throw new Error('套餐名称不能为空');
-    // Keep the display names on the local row (the server returns them too).
-    record.channel_names = record.channels.map((ref) =>
-      (state.config?.channels || []).find((c) => String(c.id || c.name) === ref)?.name || ref);
-    if (state.editingSub >= 0) state.subs.subscriptions[state.editingSub] = record;
-    else state.subs.subscriptions.push(record);
-    closeModal();
-    markSubDirty();
-    renderSubscriptions();
   } catch (err) {
     toast(err.message, 'bad');
+    return;
   }
-}
-
-async function saveSubscriptions() {
+  const list = state.subs.subscriptions.slice();
+  if (state.editingSub >= 0) list[state.editingSub] = record;
+  else list.push(record);
+  // Confirm = commit: the modal POSTs immediately; on failure it stays open
+  // so nothing can silently live in page memory only.
   try {
     state.subs = await api('/api/subscriptions', {
-      method: 'POST', body: { subscriptions: state.subs.subscriptions },
+      method: 'POST', body: { subscriptions: list },
     });
-    clearSubDirty();
-    renderSubscriptions();
-    await loadState();
-    toast('订阅已保存');
-    return true;
   } catch (err) {
-    holdSubDirty();
-    toast('订阅未保存：' + err.message + '（改动已暂存，刷新后可恢复）', 'bad');
-    return false;
+    toast('订阅未保存：' + err.message, 'bad');
+    return;
   }
+  closeModal();
+  renderSubscriptions();
+  await loadState();
+  toast('订阅已保存');
 }
 
 function openRenewModal(id) {
@@ -1297,9 +1253,19 @@ function openRenewModal(id) {
 async function deleteSub(id) {
   const record = state.subs.subscriptions.find((x) => x.id === id);
   if (!record || !(await askConfirm('删除订阅', `删除订阅「${record.plan}」？`))) return;
-  state.subs.subscriptions = state.subs.subscriptions.filter((x) => x.id !== id);
-  markSubDirty();
+  // Confirm = commit: the row is removed server-side immediately.
+  try {
+    state.subs = await api('/api/subscriptions', {
+      method: 'POST',
+      body: { subscriptions: state.subs.subscriptions.filter((x) => x.id !== id) },
+    });
+  } catch (err) {
+    toast('删除失败：' + err.message, 'bad');
+    return;
+  }
   renderSubscriptions();
+  await loadState();
+  toast('订阅已删除');
 }
 
 // ---------------------------------------------------------- vendor registry
@@ -1492,7 +1458,7 @@ function saveAccount(providerId, existing) {
   closeModal();
   renderVendors();
   renderChannels();
-  toast(`账号 ${id} 已${existing ? '更新' : '新增'}，点「保存配置」后生效`, 'warn');
+  toast(`账号 ${id} 已${existing ? '更新' : '新增'}`);
 }
 
 async function deleteAccount(accountId) {
@@ -1511,7 +1477,7 @@ async function deleteAccount(accountId) {
   markDirty();
   renderVendors();
   renderChannels();
-  toast(`账号 ${accountId} 已删除（保存配置后生效）`, 'warn');
+  toast(`账号 ${accountId} 已删除`);
 }
 
 async function maintainVendor(id) {
@@ -4456,14 +4422,12 @@ async function resetCooldown(name) {
 async function saveConfig() {
   try {
     const result = await api('/api/config', { method: 'POST', body: state.config });
-    clearDirty();
     await loadConfig();
     await loadState();
     toast(`已保存并热加载：${result.channels} 个渠道，${result.routes.length} 条链`);
     return true;
   } catch (err) {
-    holdDirty();
-    toast('配置未保存：' + err.message + '（改动已暂存，刷新后可恢复）', 'bad');
+    toast('配置未保存：' + err.message + '（改动仍在页面中，保持页面会再次自动保存）', 'bad');
     return false;
   }
 }
@@ -4478,7 +4442,6 @@ function bindEvents() {
     if (name && name !== state.tab) switchPage(name);
   });
 
-  $('btn-save').onclick = saveConfig;
   $('btn-add-channel').onclick = () => openChannelEditor(-1);
   $('channel-filter').addEventListener('input', (e) => {
     state.channelFilter = e.target.value;
@@ -4492,10 +4455,9 @@ function bindEvents() {
   $('btn-add-route').onclick = openRouteModal;
   $('btn-refresh').onclick = () => loadState().catch((e) => toast(e.message, 'bad'));
   $('btn-reload').onclick = async () => {
-    if (state.dirty && !(await askConfirm('放弃修改', '有未保存的修改，确认放弃并从磁盘重载？'))) return;
     try {
       await api('/api/reload', { method: 'POST' });
-      await loadConfig(); await loadState(); clearDirty();
+      await loadConfig(); await loadState();
       toast('已从磁盘重载');
     } catch (err) { toast(err.message, 'bad'); }
   };
@@ -4536,7 +4498,7 @@ function bindEvents() {
     c.models = { ...(c.models || {}), auto: sel.value };
     markDirty();
     renderChannels();
-    toast(`「${c.name}」默认模型已切换为 ${sel.value}，点「保存配置」后生效`, 'warn');
+    toast(`「${c.name}」默认模型已切换为 ${sel.value}`);
   });
 
   $('channel-list').addEventListener('click', async (e) => {
@@ -4672,7 +4634,6 @@ function bindEvents() {
   $('btn-test-notify').onclick = () => saveSettings(true);
   $('btn-check-notify').onclick = checkNotifications;
 
-  $('btn-save-subs').onclick = saveSubscriptions;
   $('btn-add-sub').onclick = () => openSubEditor(-1);
   $('btn-export-subs').onclick = () => {
     const blob = new Blob([JSON.stringify({ subscriptions: state.subs.subscriptions }, null, 2)],
@@ -4721,24 +4682,22 @@ function bindEvents() {
 }
 
 async function restoreDrafts() {
-  const config = readDraft(DRAFT_CONFIG);
-  if (config && await askConfirm('恢复草稿', '检测到上次未保存的渠道配置，是否恢复并重新保存？')) {
-    state.config = config;
-    normalizeConfig();
-    holdDirty();
-    renderAll();
-    saveConfig();
-  } else if (config) {
-    dropDraft(DRAFT_CONFIG);
-  }
   const subs = readDraft(DRAFT_SUBS);
-  if (subs && await askConfirm('恢复草稿', '检测到上次未保存的订阅修改，是否恢复并重新保存？')) {
-    state.subs = state.subs || { subscriptions: [] };
-    state.subs.subscriptions = subs;
-    holdSubDirty();
-    renderSubscriptions();
-    saveSubscriptions();
-  } else if (subs) {
+  if (subs) {
+    // Subscriptions now commit on confirm; a leftover draft means an old
+    // page never managed to POST. Offer it once, then clear it either way.
+    if (await askConfirm('恢复草稿', '检测到上次未保存的订阅修改，是否恢复并重新保存？')) {
+      state.subs = state.subs || { subscriptions: [] };
+      state.subs.subscriptions = subs;
+      renderSubscriptions();
+      try {
+        state.subs = await api('/api/subscriptions', {
+          method: 'POST', body: { subscriptions: subs },
+        });
+        renderSubscriptions();
+        toast('订阅已保存');
+      } catch (err) { toast('订阅未保存：' + err.message, 'bad'); }
+    }
     dropDraft(DRAFT_SUBS);
   }
 }
