@@ -70,10 +70,37 @@ PLAN_RESET_CAP_HOURS = 45 * 24
 # called; the sibling models of the same channel keep their own quotas. An
 # account out of credit or with an invalid key is different: every model
 # behind it fails, so those failures freeze the whole channel.
-ACCOUNT_SCOPED_MARKERS = (
-    "insufficient_quota", "billing", "credit", "balance", "arrearage",
+ACCOUNT_BALANCE_MARKERS = (
+    "billing", "credit", "balance", "arrearage",
     "payment", "余额不足", "欠费", "账户", "账号",
 )
+ACCOUNT_SCOPED_MARKERS = ("insufficient_quota",) + ACCOUNT_BALANCE_MARKERS
+# A free-tier vendor rejecting one model ("Free quota exhausted, please use
+# free tier only") is metering that model's grant, not the account — even
+# though the body also carries insufficient_quota. Treating it as
+# account-scoped froze the whole channel for hours while its siblings still
+# had headroom.
+MODEL_QUOTA_MARKERS = (
+    "free quota", "free-tier", "free tier", "免费额度", "免费模型",
+)
+
+
+def _account_scoped_failure(quota: bool, low: str, channel) -> bool:
+    """True when the upstream blames the account, not a single model.
+
+    Vendors that hand every model its own free grant (百炼 / 火山引擎) report
+    exhaustion per model; a channel flagged ``per_model_quota`` therefore
+    cools only the model that failed, so its siblings keep serving. Balance
+    and billing text still means the whole account and freezes the channel.
+    """
+    if any(marker in low for marker in MODEL_QUOTA_MARKERS):
+        return False
+    if (quota and getattr(channel, "per_model_quota", False)
+            and not any(marker in low for marker in ACCOUNT_BALANCE_MARKERS)):
+        return False
+    return any(marker in low for marker in ACCOUNT_SCOPED_MARKERS)
+
+
 # A channel failing this many times in a row (no success in between) deserves
 # a runtime alert: something is broken even while cooldowns route around it.
 RUNTIME_ALERT_ERROR_THRESHOLD = 3
@@ -600,9 +627,14 @@ class ScheduledTask:
             return
         while True:
             self._run()
-            self.next_run_at = time.time() + self.interval()
-            if self._stop.wait(self.interval()):
+            delay = self.next_delay()
+            self.next_run_at = time.time() + delay
+            if self._stop.wait(delay):
                 return
+
+    def next_delay(self) -> float:
+        """Seconds until the next cycle; overridable for short retries."""
+        return self.interval()
 
     def _run(self) -> None:
         self.running = True
@@ -704,9 +736,21 @@ class FreeAlignRunner(ScheduledTask):
     description = "重跑厂家免费额度工具，改写免费渠道的模型映射"
     hours_key = "free_align_hours"
     FIRST_DELAY = 150.0
+    # The first cycle often collides with the startup maintenance sweep, which
+    # holds the config-apply lock for as long as its LLM analysis runs. A busy
+    # skip must retry soon: waiting a whole free_align_hours left vendor numbers
+    # (and the resulting quota calibration) stale for a day.
+    RETRY_AFTER_BUSY = 900.0
+
+    _busy = False
 
     def run_once(self) -> str:
-        return _free_align_summary(self.app.run_free_align("scheduled"))
+        report = self.app.run_free_align("scheduled")
+        self._busy = bool(report.get("busy"))
+        return _free_align_summary(report)
+
+    def next_delay(self) -> float:
+        return self.RETRY_AFTER_BUSY if self._busy else self.interval()
 
 
 class FreeVerifyRunner(ScheduledTask):
@@ -1423,16 +1467,28 @@ class App:
         except ValueError:
             return None
 
+    def _vendor_quota_for(self, channel, wire: str) -> dict:
+        """Vendor-reported quota row for this wire (exact model id only).
+
+        A dated variant (``deepseek-v4.1-flash-1017``) does not inherit the
+        family row (``deepseek-v4.1-flash``): the vendor answers HTTP 403 for
+        variants outside its free list, so assuming a shared grant only bought
+        a needless upstream error. Stale ``auto`` ids are repointed by the
+        alignment sweep instead.
+        """
+        return (self.vendor_quota.get(channel.name) or {}).get(wire) or {}
+
     def free_quota_status(self, channel, wire: str, exposed: str = "") -> dict | None:
         """Local usage vs the free allowance; exhausted means "never route it".
 
         The vendor's own numbers (last alignment sweep) are carried alongside
         the gateway counter: they are the only truth for account-level quotas
-        that other clients also draw from, so zero vendor remaining blocks the
-        model exactly like a locally reached cap does.
+        that other clients also draw from, so a positive vendor remainder
+        overrides the local counter, and zero vendor remaining blocks the model
+        even while the local counter still has headroom.
         """
         spec = self.free_quota_spec(channel, wire, exposed)
-        vendor = (self.vendor_quota.get(channel.name) or {}).get(wire) or {}
+        vendor = self._vendor_quota_for(channel, wire)
         if spec is None and not vendor:
             return None
         used = (self.usage.model_usage(channel.name, wire, spec.period)
@@ -1444,13 +1500,21 @@ class App:
                             else max(0, spec.tokens - tokens_used))
         remaining_requests = (None if spec is None or spec.requests is None
                               else max(0, spec.requests - requests_used))
-        exhausted = bool(
+        local_exhausted = bool(
             (spec is not None and spec.tokens is not None
              and tokens_used >= spec.tokens)
             or (spec is not None and spec.requests is not None
                 and requests_used >= spec.requests)
-            or (vendor and (vendor.get("remaining") or 0) <= 0)
         )
+        # The vendor's number wins whenever it exists: the gateway counter sums
+        # raw prompt tokens (cache hits included), so it routinely reads higher
+        # than what the vendor actually debited. Letting the local counter
+        # override a positive vendor remainder kept dead models blocked for a
+        # whole sweep cycle despite quota still being available upstream.
+        vendor_remaining = vendor.get("remaining")
+        exhausted = (vendor_remaining <= 0 if isinstance(vendor_remaining, (int, float))
+                     and not isinstance(vendor_remaining, bool)
+                     else local_exhausted)
         ratios = []
         if spec is not None and spec.tokens:
             ratios.append(tokens_used / spec.tokens)
@@ -3269,28 +3333,81 @@ class App:
             return candidates, []
         return kept, skipped
 
+    def _free_channel_substitute(self, channel, wire: str) -> str:
+        """Another free model of the same channel with headroom left ("" if none).
+
+        Only models the vendor meters in tokens like the free baseline qualify:
+        image/3D/video models report a different unit (``total`` 50 or 2000000),
+        so they are never silently swapped in for a chat request.
+        """
+        best, best_ratio = "", None
+        for alt in dict.fromkeys(str(w) for w in channel.models.values()):
+            if not alt or alt in ("*", wire):
+                continue
+            status = self.free_quota_status(channel, alt)
+            if status is None or status["exhausted"]:
+                continue
+            spec = self.free_quota_spec(channel, alt)
+            vendor_total = status.get("vendor_total")
+            if (spec is not None and spec.tokens and vendor_total is not None
+                    and int(vendor_total) != int(spec.tokens)):
+                continue
+            ratio = float(status.get("ratio") or 0.0)
+            if best_ratio is None or ratio < best_ratio:
+                best, best_ratio = alt, ratio
+        return best
+
+    def _spare_after_failure(self, channel, wire: str, decision, swapped: set) -> str:
+        """Another model of the same channel after a model-scoped failure.
+
+        A vendor can withdraw one model's free grant at request time (HTTP 403
+        "Free quota exhausted") while its siblings still have headroom. The
+        attempt loop walks a fixed candidate list, so without a spare the
+        whole channel was lost for that request; in auto/agent mode one
+        sibling is tried before the router moves on. A client-pinned model
+        (exact/fallback) is never swapped, and each channel is swapped at
+        most once per request so a channel full of dead ids cannot stall the
+        failover.
+        """
+        if getattr(decision, "mode", "") not in ("auto", "agent"):
+            return ""
+        if channel.name in swapped:
+            return ""
+        swapped.add(channel.name)
+        return self._free_channel_substitute(channel, wire)
+
     def _apply_free_quota_filter(self, candidates, decision) -> tuple[list, list]:
         """Hard stop once a free model has used its allowance.
 
-        Unlike the catalog/dead filters this never backs off: the whole point
-        is to prevent a free channel from silently switching to per-call
-        billing once the vendor's grant is gone.
+        A spent mapping chosen by internal scheduling (auto/agent) is replaced
+        by another model of the same channel that still has free headroom: one
+        exhausted model must not freeze the whole free channel. A model the
+        client pinned by name (exact/fallback mode) is never swapped. Unlike
+        the catalog/dead filters this never backs off without a substitute: the
+        whole point is to prevent a free channel from silently switching to
+        per-call billing once the vendor's grant is gone.
         """
         if not candidates:
             return candidates, []
+        can_swap = getattr(decision, "mode", "") in ("auto", "agent")
         kept, skipped = [], []
         for channel, wire in candidates:
             status = self.free_quota_status(
                 channel, wire, getattr(decision, "exposed", "") or "")
-            if status and status["exhausted"]:
-                skipped.append({
-                    "channel": channel.name,
-                    "wire_model": wire,
-                    "reason": "free_quota_exhausted",
-                    "quota": status,
-                })
+            if not (status and status["exhausted"]):
+                kept.append((channel, wire))
                 continue
-            kept.append((channel, wire))
+            alt = self._free_channel_substitute(channel, wire) if can_swap else ""
+            entry = {
+                "channel": channel.name,
+                "wire_model": wire,
+                "reason": "free_quota_exhausted",
+                "quota": status,
+            }
+            if alt:
+                entry["substituted"] = alt
+                kept.append((channel, alt))
+            skipped.append(entry)
         return kept, skipped
 
     def _apply_vision_filter(self, candidates) -> tuple[list, list]:
@@ -3712,7 +3829,10 @@ class App:
 
         attempt = 0
         failures: list[dict] = []
-        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+        queue = list(candidates[: self.config.defaults.max_failover + 1])
+        swapped: set[str] = set()
+        while queue:
+            channel, wire = queue.pop(0)
             for try_no in range(self.config.defaults.network_retries + 1):
                 now = time.time()
                 with self.store.lock:
@@ -3748,6 +3868,9 @@ class App:
                     "cooldown_seconds": round(error[2], 1),
                 })
                 if reason != "transient_network":
+                    spare = self._spare_after_failure(channel, wire, decision, swapped)
+                    if spare:
+                        queue.insert(0, (channel, spare))
                     break
 
         _json(h, 503, {
@@ -3795,7 +3918,7 @@ class App:
             )
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
-            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            account_scoped = _account_scoped_failure(quota, low, channel)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -3977,7 +4100,10 @@ class App:
 
         attempt = 0
         failures: list[dict] = []
-        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+        queue = list(candidates[: self.config.defaults.max_failover + 1])
+        swapped: set[str] = set()
+        while queue:
+            channel, wire = queue.pop(0)
             for try_no in range(self.config.defaults.network_retries + 1):
                 now = time.time()
                 with self.store.lock:
@@ -4013,6 +4139,9 @@ class App:
                     "cooldown_seconds": round(error[2], 1),
                 })
                 if reason != "transient_network":
+                    spare = self._spare_after_failure(channel, wire, decision, swapped)
+                    if spare:
+                        queue.insert(0, (channel, spare))
                     break
 
         _json(h, 503, {
@@ -4061,7 +4190,7 @@ class App:
             )
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
-            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            account_scoped = _account_scoped_failure(quota, low, channel)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -4110,7 +4239,7 @@ class App:
                 )
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
-                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                account_scoped = _account_scoped_failure(quota, low, channel)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -4269,7 +4398,10 @@ class App:
 
         attempt = 0
         failures: list[dict] = []
-        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+        queue = list(candidates[: self.config.defaults.max_failover + 1])
+        swapped: set[str] = set()
+        while queue:
+            channel, wire = queue.pop(0)
             for try_no in range(self.config.defaults.network_retries + 1):
                 now = time.time()
                 with self.store.lock:
@@ -4304,6 +4436,9 @@ class App:
                     "cooldown_seconds": round(error[2], 1),
                 })
                 if reason != "transient_network":
+                    spare = self._spare_after_failure(channel, wire, decision, swapped)
+                    if spare:
+                        queue.insert(0, (channel, spare))
                     break
 
         _json(h, 503, {
@@ -4353,7 +4488,7 @@ class App:
             )
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
-            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            account_scoped = _account_scoped_failure(quota, low, channel)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -4401,7 +4536,7 @@ class App:
                 )
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
-                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                account_scoped = _account_scoped_failure(quota, low, channel)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -4588,7 +4723,10 @@ class App:
 
         attempt = 0
         failures: list[dict] = []
-        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+        queue = list(candidates[: self.config.defaults.max_failover + 1])
+        swapped: set[str] = set()
+        while queue:
+            channel, wire = queue.pop(0)
             for try_no in range(self.config.defaults.network_retries + 1):
                 now = time.time()
                 with self.store.lock:
@@ -4623,6 +4761,9 @@ class App:
                     "cooldown_seconds": round(error[2], 1),
                 })
                 if reason != "transient_network":
+                    spare = self._spare_after_failure(channel, wire, decision, swapped)
+                    if spare:
+                        queue.insert(0, (channel, spare))
                     break
 
         _json(h, 503, {
@@ -4694,7 +4835,7 @@ class App:
             )
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
-            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            account_scoped = _account_scoped_failure(quota, low, channel)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -4742,7 +4883,7 @@ class App:
                 )
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
-                account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+                account_scoped = _account_scoped_failure(quota, low, channel)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -5025,7 +5166,10 @@ class App:
         sticky = self.store.session_channel(session, time.time())
         failures: list[dict] = []
         attempt = 0
-        for channel, wire in candidates[: self.config.defaults.max_failover + 1]:
+        queue = list(candidates[: self.config.defaults.max_failover + 1])
+        swapped: set[str] = set()
+        while queue:
+            channel, wire = queue.pop(0)
             # Transient network errors (URLError/timeout/OSError) happen before
             # any byte reaches the client, so the same channel is retried
             # immediately (half_open lets the re-check pass). Any other failure
@@ -5072,6 +5216,9 @@ class App:
                     "cooldown_seconds": round(error[2], 1),
                 })
                 if reason != "transient_network":
+                    spare = self._spare_after_failure(channel, wire, decision, swapped)
+                    if spare:
+                        queue.insert(0, (channel, spare))
                     break
 
         _json(h, 503, {
@@ -5135,7 +5282,7 @@ class App:
             )
             excerpt = raw.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
-            account_scoped = any(m in low for m in ACCOUNT_SCOPED_MARKERS)
+            account_scoped = _account_scoped_failure(quota, low, channel)
             per_model = quota and not account_scoped
             if quota:
                 # A vendor plan window that already reads exhausted means the

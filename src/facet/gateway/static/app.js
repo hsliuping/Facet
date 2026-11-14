@@ -440,6 +440,7 @@ function channelCard(c, i) {
       <div><dt>端点</dt><dd>${esc(c.base_url)}</dd></div>
       <div><dt>优先级</dt><dd>${esc(c.priority ?? 100)}</dd></div>
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
+      <div><dt>额度计量</dt><dd>${c.per_model_quota ? '按模型（只冻结该模型）' : '按渠道'}</dd></div>
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
       <div><dt>账号 / 业务线</dt><dd>${c.account ? esc(accountLabel(c.account)) : '—'}${c.business_line ? ' · ' + esc(c.business_line) : ''}</dd></div>
@@ -4413,6 +4414,7 @@ function openChannelEditor(index) {
         </div>
         <div id="catalog-list" class="channel-picker" hidden></div>
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
+        <div class="field wide"><label class="check"><input type="checkbox" name="per_model_quota" ${c.per_model_quota ? 'checked' : ''}> 额度按模型计量（某个模型额度用完只冻结该模型，不冻结整个渠道；余额/欠费错误仍冻结渠道）</label></div>
       </div>
       <div class="test-row">
         <div class="tm-wrap">
@@ -4517,6 +4519,7 @@ function saveChannelEditor() {
       mode: provider ? val('mode') : '',
       account: val('account'),
       business_line: val('business_line'),
+      ...(f.elements.namedItem('per_model_quota').checked ? { per_model_quota: true } : {}),
       ...(Object.keys(ownCreds).length ? { creds: ownCreds } : {}),
       ...(val('editor-test-model') ? { test_model: val('editor-test-model') } : {}),
       ...(val('upstream_path') ? { upstream_path: val('upstream_path') } : {}),

@@ -413,6 +413,11 @@ class Channel:
     # Free-tier allowance per upstream model. Explicit channel config wins;
     # otherwise the vendor registry mode supplies the baseline.
     free_quota: FreeQuota | None = None
+    # True for vendors that hand every model its own quota (百炼 / 火山引擎):
+    # a model running out of allowance then cools only that model instead of
+    # freezing the whole channel. Balance/billing errors still freeze the
+    # channel — the account itself is out.
+    per_model_quota: bool = False
     # Optional link to a config.accounts entry. Empty means "this channel is
     # its own account" — the legacy model every single-key vendor uses.
     account: str = ""
@@ -482,8 +487,10 @@ class Defaults:
     # Model name routed through (preferably free) channels for the LLM part of
     # self-maintenance; empty disables LLM analysis, deterministic rules still run.
     maintenance_model: str = ""
-    # 0 disables the free-quota alignment sweep (freealign.py)
-    free_align_hours: int = 24
+    # 0 disables the free-quota alignment sweep (freealign.py). Six hours
+    # matches the free-pool verification cadence: a day-long gap left a
+    # revoked model's grant stale long enough for routing to keep choosing it.
+    free_align_hours: int = 6
     # 0 disables the scheduled free-pool verification sweep: every enabled
     # free channel's mappings are pinged, confirmed-dead ids get an expiring
     # label so routing stops calling them (manual button keeps working).
@@ -784,7 +791,7 @@ def parse_config(raw: dict) -> Config:
         catalog_refresh_hours=int(d.get("catalog_refresh_hours", 24)),
         maintenance_hours=int(d.get("maintenance_hours", 24)),
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
-        free_align_hours=int(d.get("free_align_hours", 24)),
+        free_align_hours=int(d.get("free_align_hours", 6)),
         free_verify_hours=int(d.get("free_verify_hours", 6)),
         usage_retention_days=int(d.get("usage_retention_days", 180)),
         disk_min_free_mb=int(d.get("disk_min_free_mb", 512)),
@@ -939,6 +946,7 @@ def parse_config(raw: dict) -> Config:
             creds=creds,
             proxy=proxy,
             free_quota=free_quota,
+            per_model_quota=bool(item.get("per_model_quota", False)),
             account=str(item.get("account") or "").strip(),
             business_line=str(item.get("business_line") or "").strip(),
             id=str(item.get("id") or "").strip(),

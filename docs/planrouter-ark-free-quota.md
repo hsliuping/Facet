@@ -50,7 +50,8 @@ PlanRouter 的 free-align sweep 需要知道「哪些模型还有免费额度」
   框）；overlay 缺这些字段时会从内置注册表继承（`INHERIT_LISTS`）。
 - **sweep 联动**：只有 `tier == "free"` 且关联到带 `free_quota_cmd`
   模式的渠道会被对齐（如运行时渠道「火山引擎免费」，provider=volcengine,
-  mode=payg）。调度周期 `defaults.free_align_hours`（默认 24h），
+  mode=payg）。调度周期 `defaults.free_align_hours`（默认 6h），
+  被自维护占锁而跳过时 15 分钟后重试（不再等满一个周期），
   手动触发 `POST /api/freealign/run`（管理员）。命令失败不抛出：记入
   report 告警并保留旧映射，下次 sweep 重试。
 

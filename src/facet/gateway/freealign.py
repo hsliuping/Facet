@@ -112,9 +112,19 @@ def run_vendor_cmd(cmd: list[str], timeout: float = CMD_TIMEOUT,
 
 
 def align_mapping(channel, models: list[str]) -> dict[str, str]:
-    """New mapping for a channel: identity for free models, auto keys kept."""
+    """New mapping for a channel: identity for free models, auto keys kept.
+
+    An ``auto`` target that fell out of the vendor's free list is repointed at
+    the first surviving free model: a stale id kept every request on a model
+    the vendor now rejects (HTTP 403) or no longer grants, long after the rest
+    of the channel still had allowance.
+    """
     keep = {k: v for k, v in channel.models.items() if k in (AUTO_MODEL, "*")}
-    return {**keep, **{m: m for m in models}}
+    mapping = {**keep, **{m: m for m in models}}
+    auto = mapping.get(AUTO_MODEL)
+    if auto and models and auto not in models:
+        mapping[AUTO_MODEL] = models[0]
+    return mapping
 
 
 def _mode_for(app, channel) -> list[str] | None:

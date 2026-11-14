@@ -516,6 +516,36 @@ class ModelScopedFailureTests(unittest.TestCase):
         self.assertFalse(state.available(now, self.channel.rate)[0])
         self.assertTrue(state.cooldown_until > now)
 
+    def test_free_quota_403_cools_only_that_model(self):
+        # A vendor withdrawing one model's free grant says "Free quota
+        # exhausted ... use free tier only" — the body also matches
+        # insufficient_quota, but only the model is out, not the account.
+        self.forward(
+            403,
+            '{"error":{"type":"insufficient_quota","message":'
+            '"Free quota exhausted, please use free tier only"}}')
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertTrue(state.available(now, self.channel.rate)[0])
+        self.assertFalse(state.model_available(now, "wire-a"))
+        self.assertTrue(state.model_available(now, "model-a"))
+
+    def test_per_model_quota_channel_cools_only_the_model(self):
+        # 百炼 / 火山引擎 hand every model its own allowance: a plain
+        # insufficient_quota then belongs to that model, not the account.
+        data = json.loads(json.dumps(BASE))
+        data["channels"][0]["per_model_quota"] = True
+        self.app = App(load_config(write_config(data)))
+        self.channel = self.app.config.channel("plan-a")
+        self.forward(
+            403,
+            '{"error":{"type":"insufficient_quota","message":"quota exceeded"}}')
+        state = self.app.store.states["plan-a"]
+        now = time.time()
+        self.assertTrue(state.available(now, self.channel.rate)[0])
+        self.assertFalse(state.model_available(now, "wire-a"))
+        self.assertTrue(state.model_available(now, "model-a"))
+
 
 class PlanWindowCooldownTests(unittest.TestCase):
     """A 429 on a plan whose vendor window already reads exhausted cools the

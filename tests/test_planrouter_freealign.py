@@ -377,7 +377,7 @@ class ApplyTests(unittest.TestCase):
             self.app.run_free_align("scheduled")
         payload = self.app.maintenance_payload()
         self.assertTrue(payload["free_align"]["enabled"])
-        self.assertEqual(payload["free_align"]["hours"], 24)
+        self.assertEqual(payload["free_align"]["hours"], 6)
         self.assertEqual(payload["free_align"]["reports"][0]["trigger"],
                          "scheduled")
 
@@ -564,7 +564,7 @@ class RegistryTests(unittest.TestCase):
 class DefaultsTests(unittest.TestCase):
     def test_free_align_hours_defaults_and_zero(self):
         config = parse_config(align_config())
-        self.assertEqual(config.defaults.free_align_hours, 24)
+        self.assertEqual(config.defaults.free_align_hours, 6)
         raw = align_config()
         raw["defaults"] = {"free_align_hours": 0}
         self.assertEqual(parse_config(raw).defaults.free_align_hours, 0)
