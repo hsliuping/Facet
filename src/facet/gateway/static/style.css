@@ -290,6 +290,19 @@ tr:last-child td { border-bottom: none; }
 #catalog-items { max-height: 280px; overflow: auto; display: grid; gap: 4px 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin: 8px 0 0; padding-right: 4px; }
 .test-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 15px; }
 .test-row input { flex: 1; min-width: 180px; }
+/* Custom test-model dropdown: replaces the native <datalist>, which filters
+   its suggestions by the typed value (empty list = dead-looking arrow). */
+.tm-wrap { position: relative; flex: 1; min-width: 180px; display: flex; align-items: stretch; }
+.tm-wrap input { flex: 1; min-width: 0; }
+.tm-toggle { border: 1px solid var(--border); border-left: 0; border-radius: 0 8px 8px 0;
+  background: var(--panel-2); color: var(--muted); cursor: pointer; padding: 0 10px; font-size: 11px; }
+.tm-toggle:hover, .tm-toggle:focus { color: var(--text); }
+.tm-drop { position: absolute; top: 100%; left: 0; right: 0; z-index: 40; margin-top: 4px;
+  max-height: 220px; overflow: auto; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px; }
+.tm-item { padding: 6px 10px; font-size: 12px; cursor: pointer; word-break: break-all; }
+.tm-item:hover { color: var(--accent); }
+.tm-empty { padding: 6px 10px; font-size: 12px; color: var(--muted); }
 .catalog-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .catalog-row .hint { flex: 1; min-width: 160px; }
 .test-hint { flex: 1; color: var(--muted); font-size: 12px; }

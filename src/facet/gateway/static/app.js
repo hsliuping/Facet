@@ -702,6 +702,12 @@ document.addEventListener('click', (e) => {
   if (link) switchPage(link.dataset.gotoTab);
 });
 
+// Click-away for the channel editor's test-model dropdown.
+document.addEventListener('click', (e) => {
+  const drop = $('editor-test-model-drop');
+  if (drop && !drop.hidden && !e.target.closest('.tm-wrap')) drop.hidden = true;
+});
+
 // Dashboard: the landing page. Pure frontend aggregation over existing
 // endpoints — /api/state carries channels, the subscription summary and the
 // maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
@@ -3700,8 +3706,15 @@ async function fetchChannelModels() {
     }
     renderCatalogList(result.models || []);
     const where = result.source === 'registry' ? '（厂家套餐清单）'
-      : result.source === 'ark-quota' ? '（协作奖励免费额度清单）' : '';
+      : result.source === 'ark-quota' ? '（协作奖励免费额度清单）'
+      : result.source === 'free-quota' ? '（免费额度清单）' : '';
     toast(`拉取成功：${result.count} 个模型${where}`);
+    if (result.hint && !(result.models || []).length) {
+      // quota-driven pulls legitimately return an empty list (quota used up);
+      // the vendor's own reason beats the generic "empty list" note below.
+      list.hidden = false;
+      list.innerHTML = `<div class="hint">${esc(result.hint)}</div>`;
+    }
   } catch (err) {
     list.hidden = false;
     list.innerHTML = `<div class="hint">${esc(err.message)}</div>`;
@@ -3850,12 +3863,34 @@ function renderModelTierRows() {
   }).join('');
 }
 
-// Test-model input doubles as a dropdown: options mirror the mapping
-// textarea's exposed names; free typing is still allowed.
+// Test-model dropdown: the native <datalist> filters its suggestions by the
+// typed value, so with a value present the ▼ arrow looked dead. A custom
+// panel mirrors the mapping textarea's exposed names instead — the arrow
+// always shows every name, typing narrows it, free typing stays allowed.
+let testModelNames = [];
+
 function refreshTestModelList(names) {
-  const dl = $('editor-test-model-list');
-  if (!dl) return;
-  dl.innerHTML = names.map((m) => `<option value="${esc(m)}"></option>`).join('');
+  testModelNames = names;
+  const drop = $('editor-test-model-drop');
+  if (drop && !drop.hidden) renderTestModelDrop($('editor-test-model').value);
+}
+
+function renderTestModelDrop(filter) {
+  const drop = $('editor-test-model-drop');
+  if (!drop) return;
+  const q = (filter || '').trim().toLowerCase();
+  const hits = testModelNames.filter((m) => !q || m.toLowerCase().includes(q));
+  drop.innerHTML = hits.length
+    ? hits.map((m) => `<div class="tm-item" data-model="${esc(m)}">${esc(m)}</div>`).join('')
+    : '<div class="tm-empty">模型映射中还没有匹配的模型</div>';
+}
+
+function toggleTestModelDrop(force) {
+  const drop = $('editor-test-model-drop');
+  if (!drop) return;
+  const show = force === undefined ? drop.hidden : force;
+  if (show) renderTestModelDrop($('editor-test-model')?.value || '');
+  drop.hidden = !show;
 }
 
 function providerOptions(selected) {
@@ -4374,14 +4409,17 @@ function openChannelEditor(index) {
         </div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
-          <small class="hint">按密钥请求上游 /models；火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名写入映射</small>
+          <small class="hint">免费渠道按免费额度拉取，其余渠道按密钥请求上游 /models：火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名；百炼（免费）配置 AccessKey 后执行 bl usage free，只保留仍有免费额度且未过期的 Text 模型</small>
         </div>
         <div id="catalog-list" class="channel-picker" hidden></div>
         <div class="field wide"><label class="check"><input type="checkbox" name="enabled" ${c.enabled === false ? '' : 'checked'}> 启用该渠道</label></div>
       </div>
       <div class="test-row">
-        <input id="editor-test-model" list="editor-test-model-list" placeholder="测试模型（可下拉选映射中的模型或手动填写，留空自动选择）" value="${esc(c.test_model || '')}">
-        <datalist id="editor-test-model-list"></datalist>
+        <div class="tm-wrap">
+          <input id="editor-test-model" placeholder="测试模型（点 ▾ 选映射中的模型或手动填写，留空自动选择）" value="${esc(c.test_model || '')}">
+          <button type="button" class="tm-toggle" id="editor-test-model-btn" tabindex="-1" title="展开模型列表">▾</button>
+          <div id="editor-test-model-drop" class="tm-drop" hidden></div>
+        </div>
         <button type="button" class="btn ghost" id="editor-test">测试连接</button>
       </div>
       <div id="test-result" class="test-result" hidden></div>
@@ -4392,6 +4430,19 @@ function openChannelEditor(index) {
     </form>`);
   $('editor-cancel').onclick = closeModal;
   $('editor-test').onclick = testChannelEditor;
+  const tmInput = $('editor-test-model');
+  $('editor-test-model-btn').onclick = () => toggleTestModelDrop();
+  tmInput.oninput = () => {
+    if (!$('editor-test-model-drop').hidden) renderTestModelDrop(tmInput.value);
+  };
+  // mousedown on the panel keeps input focus (no blur), so the click below fires.
+  $('editor-test-model-drop').onmousedown = (e) => e.preventDefault();
+  $('editor-test-model-drop').onclick = (e) => {
+    const item = e.target.closest('.tm-item');
+    if (!item) return;
+    tmInput.value = item.dataset.model;
+    toggleTestModelDrop(false);
+  };
   $('editor-fetch-models').onclick = fetchChannelModels;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
   $('f-models').addEventListener('input', renderModelTierRows);
@@ -4600,7 +4651,11 @@ function bindEvents() {
   )).filter((el) => el.offsetParent !== null);
   document.addEventListener('keydown', (e) => {
     if ($('modal').hidden) return;
-    if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+    if (e.key === 'Escape') {
+      const drop = $('editor-test-model-drop');
+      if (drop && !drop.hidden) { drop.hidden = true; return; }
+      e.preventDefault(); closeModal(); return;
+    }
     if (e.key !== 'Tab') return;
     const box = $('modal').querySelector('.modal');
     const list = focusable(box);

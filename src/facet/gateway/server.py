@@ -2278,6 +2278,108 @@ class App:
                               "确认渠道 api_key 与 IAM 属同一账号")
         return result
 
+    def _free_quota_mode(self, channel: dict) -> tuple[list[str], list[str]] | None:
+        """Registry (free_quota_cmd, credential_envs) for a free-tier channel.
+
+        volcengine keeps its dedicated two-plane flow (_probe_ark_quota): its
+        CLI reports family names that still need data-plane resolution. Other
+        vendors (bailian) name callable models directly, so their CLI output
+        alone defines what the free channel may map.
+        """
+        pid = str(channel.get("provider") or "")
+        mode_key = str(channel.get("mode") or "")
+        if not pid or not mode_key or pid == "volcengine":
+            return None
+        if str(channel.get("tier") or "") != "free":
+            return None
+        provider = next((p for p in getattr(self, "providers", None) or []
+                         if isinstance(p, dict) and p.get("id") == pid), None)
+        mode = (provider or {}).get("modes", {}).get(mode_key) if provider else None
+        if not isinstance(mode, dict):
+            return None
+        cmd = mode.get("free_quota_cmd")
+        if not (isinstance(cmd, list) and cmd
+                and all(isinstance(x, str) for x in cmd)):
+            return None
+        envs = []
+        for entry in mode.get("credential_envs") or []:
+            env = str((entry.get("env") if isinstance(entry, dict) else entry)
+                      or "").strip()
+            if env:
+                envs.append(env)
+        return cmd, envs
+
+    def _free_quota_credentials(self, channel: dict,
+                                envs: list[str]) -> dict[str, str]:
+        """Management-plane credentials for a free-quota CLI pull.
+
+        Per key, first non-empty source wins: unsaved editor draft (plain
+        value or env:VAR) > channel-bound creds (channel = account) > account
+        credentials > vendor-level config.credentials > process environment.
+        """
+        from .accounts import account_lookup
+        provider = str(channel.get("provider") or "")
+        draft = (channel.get("credentials") or {}).get(provider) or {}
+        own = channel.get("creds") if isinstance(channel.get("creds"), dict) else {}
+        account_id = str(channel.get("account") or "")
+        account: dict = {}
+        if account_id:
+            account = (account_lookup(self.config, account_id) or {}).get(
+                "credentials") or {}
+        vendor = (getattr(self.config, "credentials", None) or {}).get(provider) or {}
+        out: dict[str, str] = {}
+        for key in envs:
+            for source in (draft, own, account, vendor):
+                value = str(source.get(key) or "").strip()
+                if value == "***":
+                    continue
+                value = resolve_secret(value) or ""
+                if value:
+                    out[key] = value
+                    break
+            else:
+                value = os.environ.get(key, "").strip()
+                if value:
+                    out[key] = value
+        return out
+
+    def _probe_free_quota(self, channel: dict, cmd: list[str],
+                          envs: list[str]) -> dict:
+        """Catalog pull for a non-volcengine free channel, quota-driven.
+
+        Same principle as _probe_ark_quota: the free channel's mapping is
+        defined by the quota the vendor still grants, so the data-plane
+        /models dump is never used as a fallback — mapping a billed model
+        onto a free channel would silently charge per token. The vendor CLI
+        (bailian: ``bl usage free``) already names callable models, so no
+        family→version resolution is needed.
+        """
+        name = channel.get("name")
+        creds = self._free_quota_credentials(channel, envs)
+        missing = [key for key in envs if not creds.get(key)]
+        if missing:
+            return {"ok": False, "name": name,
+                    "error": "未配置免费额度查询凭据（%s）" % "、".join(missing),
+                    "hint": ("在渠道编辑器的凭据区填写并保存后重试"
+                             "（或设置环境变量 %s）；免费渠道的映射以免费额度为准，"
+                             "上游全量清单不用于映射" % " / ".join(missing))}
+        try:
+            rows = freealign_mod.parse_free_quota_output(
+                freealign_mod.run_vendor_cmd(list(cmd), extra_env=creds))
+        except Exception as exc:
+            return {"ok": False, "name": name,
+                    "error": f"免费额度命令执行失败：{str(exc)[:200]}",
+                    "hint": "确认厂家 CLI 已安装、AK/SK 属于该厂家账号，"
+                            "且子账号有免费额度查询权限"}
+        models = freealign_mod.free_models_from_rows(rows)
+        result = {"ok": True, "name": name, "source": "free-quota",
+                  "endpoint": "cmd:" + " ".join(cmd),
+                  "models": models, "count": len(models)}
+        if not models:
+            result["hint"] = ("免费额度接口没有返回仍可用的 Text 模型"
+                              "（额度已用尽或已过期）")
+        return result
+
     def probe_channel_models(self, channel, allow_ark_quota: bool = False) -> dict:
         """Fetch one channel's upstream model list for the console.
 
@@ -2285,10 +2387,12 @@ class App:
         marked *** are merged from the saved config; a successful fetch for a
         saved channel name is recorded in the channel's catalog.
 
-        allow_ark_quota=True (console-initiated pulls) lets volcengine payg
-        channels take their catalog from the IAM-signed management plane when
-        credentials are available; the background catalog sweep keeps using
-        the data-plane route.
+        allow_ark_quota=True (console-initiated pulls) lets free channels
+        take their catalog from the vendor's quota source instead of the
+        data-plane /models dump: volcengine payg uses the IAM-signed
+        management plane, other vendors declaring a registry free_quota_cmd
+        (bailian) run that CLI and keep only models with free quota left.
+        The background catalog sweep keeps using the data-plane route.
         """
         if not isinstance(channel, dict):
             raise ValueError("channel 必须是对象")
@@ -2314,6 +2418,8 @@ class App:
         elif allow_ark_quota and str(merged.get("provider") or "") == "volcengine" \
                 and str(merged.get("mode") or "") == "payg":
             result = self._probe_ark_quota(merged)
+        elif allow_ark_quota and (quota_mode := self._free_quota_mode(merged)):
+            result = self._probe_free_quota(merged, *quota_mode)
         else:
             result = probe_models(merged)
         if result.get("ok") and isinstance(name, str) and self.config.channel(name):

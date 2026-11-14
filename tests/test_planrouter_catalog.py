@@ -421,6 +421,155 @@ class CatalogAppTests(unittest.TestCase):
         self.assertIn("未配置 IAM AK/SK", result["error"])
         self.assertEqual(self.upstream.seen, [])
 
+    def _bailian_providers(self):
+        self.app.providers = [{
+            "id": "bailian", "name": "阿里云百炼",
+            "modes": {"payg": {
+                "label": "按量付费", "models": [],
+                "free_quota_cmd": ["bl", "usage", "free", "--output", "json"],
+                "credential_envs": [
+                    {"env": "BAILIAN_ACCESS_KEY_ID", "label": "AccessKey ID（AK）"},
+                    {"env": "BAILIAN_ACCESS_KEY_SECRET", "label": "AccessKey Secret（SK）"},
+                ],
+            }},
+        }]
+
+    def test_probe_channel_models_free_quota_cli_filters_models(self):
+        import dataclasses
+        self._bailian_providers()
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"bailian": {"BAILIAN_ACCESS_KEY_ID": "ak-ui",
+                                     "BAILIAN_ACCESS_KEY_SECRET": "sk-ui"}})
+        rows = [
+            {"model": "deepseek-v4.1-flash", "type": "Text", "remaining": 900000,
+             "total": 1000000, "expires": "2099-12-31"},
+            {"model": "qwen3.8-max-0902", "type": "Text", "remaining": 0,
+             "total": 1000000, "expires": "2099-12-31"},
+            {"model": "wanx-video", "type": "Video", "remaining": 500,
+             "total": 500, "expires": "2099-12-31"},
+            {"model": "qwen-old", "type": "Text", "remaining": 10,
+             "total": 10, "expires": "2000-01-01"},
+        ]
+        with mock.patch("facet.gateway.server.freealign_mod.run_vendor_cmd",
+                        return_value=json.dumps({"data": rows})) as rc, \
+             mock.patch("facet.gateway.server.probe_models") as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "bailian", "mode": "payg",
+                 "tier": "free"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "free-quota")
+        self.assertEqual(result["endpoint"], "cmd:bl usage free --output json")
+        # only rows that are Text, still have quota and are not expired
+        self.assertEqual(result["models"], ["deepseek-v4.1-flash"])
+        self.assertEqual(result["count"], 1)
+        # the paid /models dump is never consulted for a free channel
+        pm.assert_not_called()
+        self.assertEqual(self.upstream.seen, [])
+        rc.assert_called_once()
+        self.assertEqual(rc.call_args.kwargs.get("extra_env"),
+                         {"BAILIAN_ACCESS_KEY_ID": "ak-ui",
+                          "BAILIAN_ACCESS_KEY_SECRET": "sk-ui"})
+        view = self.app.store.catalog_view("plan-a")
+        self.assertEqual(view["endpoint"], "cmd:bl usage free --output json")
+
+    def test_probe_channel_models_free_quota_without_credentials_refuses(self):
+        import os
+        self._bailian_providers()
+        env = dict(os.environ)
+        env["BAILIAN_ACCESS_KEY_ID"] = ""
+        env["BAILIAN_ACCESS_KEY_SECRET"] = ""
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch("facet.gateway.server.probe_models") as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "bailian", "mode": "payg",
+                 "tier": "free"},
+                allow_ark_quota=True)
+        # Refuse instead of falling back to the full data-plane catalog.
+        self.assertFalse(result["ok"])
+        self.assertIn("未配置免费额度查询凭据", result["error"])
+        self.assertIn("BAILIAN_ACCESS_KEY_ID", result["error"])
+        pm.assert_not_called()
+        self.assertEqual(self.upstream.seen, [])
+
+    def test_probe_channel_models_free_quota_draft_credentials_win(self):
+        import dataclasses
+        self._bailian_providers()
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"bailian": {"BAILIAN_ACCESS_KEY_ID": "ak-saved",
+                                     "BAILIAN_ACCESS_KEY_SECRET": "sk-saved"}})
+        draft = {"name": "plan-a", "provider": "bailian", "mode": "payg",
+                 "tier": "free",
+                 "credentials": {"bailian": {
+                     "BAILIAN_ACCESS_KEY_ID": "ak-draft",
+                     "BAILIAN_ACCESS_KEY_SECRET": "sk-draft"}}}
+        with mock.patch("facet.gateway.server.freealign_mod.run_vendor_cmd",
+                        return_value="[]") as rc:
+            result = self.app.probe_channel_models(draft, allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 0)
+        self.assertIn("免费额度", result["hint"])
+        self.assertEqual(rc.call_args.kwargs.get("extra_env"),
+                         {"BAILIAN_ACCESS_KEY_ID": "ak-draft",
+                          "BAILIAN_ACCESS_KEY_SECRET": "sk-draft"})
+
+    def test_probe_channel_models_free_quota_command_failure_reported(self):
+        import dataclasses
+        self._bailian_providers()
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"bailian": {"BAILIAN_ACCESS_KEY_ID": "ak-bad",
+                                     "BAILIAN_ACCESS_KEY_SECRET": "sk-bad"}})
+        with mock.patch("facet.gateway.server.freealign_mod.run_vendor_cmd",
+                        side_effect=RuntimeError(
+                            "命令退出码 3：No console access token found.")) as rc, \
+             mock.patch("facet.gateway.server.probe_models") as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "bailian", "mode": "payg",
+                 "tier": "free"},
+                allow_ark_quota=True)
+        self.assertFalse(result["ok"])
+        self.assertIn("免费额度命令执行失败", result["error"])
+        self.assertIn("No console access token", result["error"])
+        rc.assert_called_once()
+        pm.assert_not_called()
+
+    def test_probe_channel_models_free_quota_ignores_paid_tier(self):
+        import dataclasses
+        self._bailian_providers()
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"bailian": {"BAILIAN_ACCESS_KEY_ID": "ak-ui",
+                                     "BAILIAN_ACCESS_KEY_SECRET": "sk-ui"}})
+        # same vendor/mode but not a free-tier channel -> plain /models pull
+        with mock.patch("facet.gateway.server.freealign_mod.run_vendor_cmd") as rc:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "bailian", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertNotEqual(result.get("source"), "free-quota")
+        rc.assert_not_called()
+
+    def test_probe_channel_models_free_quota_requires_console_flag(self):
+        import dataclasses
+        self._bailian_providers()
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            credentials={"bailian": {"BAILIAN_ACCESS_KEY_ID": "ak-ui",
+                                     "BAILIAN_ACCESS_KEY_SECRET": "sk-ui"}})
+        # the scheduled catalog sweep has no console flag -> stays on /models;
+        # quota alignment for free channels belongs to the free-align sweep
+        with mock.patch("facet.gateway.server.freealign_mod.run_vendor_cmd") as rc:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "bailian", "mode": "payg",
+                 "tier": "free"})
+        self.assertTrue(result["ok"])
+        self.assertNotEqual(result.get("source"), "free-quota")
+        self.assertEqual(result["models"], ["model-a", "model-b"])
+        rc.assert_not_called()
+
     def test_background_catalog_sweep_keeps_data_plane(self):
         import dataclasses
         self.app.config = dataclasses.replace(
