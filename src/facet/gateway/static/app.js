@@ -4792,21 +4792,37 @@ async function boot() {
   bindEvents();
   try {
     await loadConfig();
-    await loadSubscriptions();
-    await loadProviders();
     await restoreDrafts();
     await loadState();
-    await loadUsage();
-    await loadNotifications();
-    await loadRequests();
-    await loadMaintenance().catch(() => {});
-    $('report-month').value = todayISO().slice(0, 7);
-    await loadReport();
+    // Paint the shell first: switchPage makes the dashboard fetch its own
+    // data on entry, so the console renders immediately and the rest of the
+    // boot payload lands in parallel behind it — a cold vendor snapshot
+    // (subscriptions/report) never delays first paint by seconds.
     switchPage(pageFromHash() || 'dashboard');
   } catch (err) {
     toast(err.message, 'bad');
     $('conn-badge').textContent = '连接失败';
     $('conn-badge').className = 'badge bad';
+  }
+  const rest = await Promise.allSettled([
+    loadSubscriptions(),
+    loadProviders(),
+    loadUsage(),
+    loadNotifications(),
+    loadRequests(),
+    loadMaintenance().catch(() => {}),
+    (async () => {
+      $('report-month').value = todayISO().slice(0, 7);
+      await loadReport();
+    })(),
+  ]);
+  for (const r of rest) {
+    if (r.status === 'rejected') {
+      toast(r.reason.message, 'bad');
+      $('conn-badge').textContent = '连接失败';
+      $('conn-badge').className = 'badge bad';
+      break;
+    }
   }
   setInterval(() => {
     // Live pages poll on their own cadence; other pages stay static.

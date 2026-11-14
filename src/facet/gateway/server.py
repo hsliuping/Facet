@@ -814,6 +814,11 @@ class App:
         # fallback therefore each get their own cache slot.
         self.plan_entries: dict[str, dict] = {}
         self._plan_lock = threading.Lock()
+        # Stale-while-revalidate workers: expired plan/usage snapshots are
+        # served immediately and refreshed off-thread, so a console poll or
+        # a 429-cooldown lookup never waits on the vendor management plane.
+        self._plan_pool = ThreadPoolExecutor(max_workers=2,
+                                             thread_name_prefix="vendor-refresh")
         self._load_vendor_quota()
         self.catalog_refresher: CatalogRefresher | None = None
         self.maintenance_runner: "MaintenanceRunner | None" = None
@@ -1059,7 +1064,14 @@ class App:
         is remembered for PLAN_ERROR_TTL and keeps the last good snapshot
         (marked stale) so the console shows both the numbers and the error
         that needs fixing; a success is persisted through vendorquota.json.
+
+        Stale-while-revalidate: a cleanly expired snapshot is served at once
+        and refreshed on a background thread — only a key with no snapshot
+        at all (first run, new creds) or one shadowed by an error still
+        fetches inline, because those callers want the authoritative answer
+        in this very response.
         """
+        submitted = False
         with self._plan_lock:
             now = time.time()
             entry = self.plan_entries.get(cache_key) or {}
@@ -1071,21 +1083,65 @@ class App:
                 if error and snapshot:
                     return {**snapshot, "stale": True, "error": error}
                 return snapshot
-            try:
-                plan = fetch()
-            except Exception as exc:
-                error = str(exc)[:160]
-                self.plan_entries[cache_key] = {"snapshot": snapshot,
-                                                "error": error, "ts": now}
-                if snapshot:
-                    return {**snapshot, "stale": True, "error": error}
-                return {"error": error}
-            snapshot = {**plan, "fetched_at": datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S")}
+            if snapshot and not error:
+                # Serve the stale snapshot now and refresh off-thread. The
+                # submit happens outside the lock because the refresh takes
+                # the lock itself — a synchronous pool (tests) must be able
+                # to complete within this call.
+                if not entry.get("refreshing"):
+                    self.plan_entries[cache_key] = {**entry, "refreshing": True}
+                    submitted = True
+        if submitted:
+            self._plan_pool.submit(self._refresh_vendor, cache_key, fetch)
+        if snapshot and not error:
+            # Re-read after submit: a synchronous refresh that already
+            # landed surfaces its error here; a landed success serves clean.
+            entry = self.plan_entries.get(cache_key) or {}
+            if entry.get("ts", 0.0) > ts and not entry.get("error"):
+                return entry.get("snapshot") or snapshot
+            out = {**(entry.get("snapshot") or snapshot), "stale": True}
+            if entry.get("error"):
+                out["error"] = entry["error"]
+            return out
+        try:
+            plan = fetch()
+        except Exception as exc:
+            error = str(exc)[:160]
+            self.plan_entries[cache_key] = {"snapshot": snapshot,
+                                            "error": error, "ts": now}
+            if snapshot:
+                return {**snapshot, "stale": True, "error": error}
+            return {"error": error}
+        snapshot = {**plan, "fetched_at": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S")}
+        self.plan_entries[cache_key] = {"snapshot": snapshot, "error": "",
+                                        "ts": now}
+        self._save_vendor_quota()
+        return snapshot
+
+    def _refresh_vendor(self, cache_key: str, fetch) -> None:
+        """Background half of the stale-while-revalidate vendor cache.
+
+        Runs on the refresh pool without holding the lock; a failure keeps
+        the last good snapshot and is remembered for PLAN_ERROR_TTL, which
+        also routes the next read back onto the inline (authoritative)
+        path instead of another background attempt.
+        """
+        try:
+            plan = fetch()
+        except Exception as exc:
+            with self._plan_lock:
+                entry = self.plan_entries.get(cache_key) or {}
+                self.plan_entries[cache_key] = {"snapshot": entry.get("snapshot"),
+                                                "error": str(exc)[:160],
+                                                "ts": time.time()}
+            return
+        snapshot = {**plan, "fetched_at": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S")}
+        with self._plan_lock:
             self.plan_entries[cache_key] = {"snapshot": snapshot, "error": "",
-                                            "ts": now}
-            self._save_vendor_quota()
-            return snapshot
+                                            "ts": time.time()}
+        self._save_vendor_quota()
 
     def plan_for(self, record: dict) -> dict | None:
         """Vendor plan usage for one subscription row, TTL-cached per creds.

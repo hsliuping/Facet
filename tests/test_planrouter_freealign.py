@@ -475,7 +475,9 @@ class PlanQuotaTests(unittest.TestCase):
             self.app.subscriptions_payload()
         with mock.patch.object(
                 ark_quota, "fetch_coding_plan",
-                side_effect=RuntimeError("API 错误 ResourceNotFound.Plan")):
+                side_effect=RuntimeError("API 错误 ResourceNotFound.Plan")), \
+             mock.patch.object(self.app._plan_pool, "submit",
+                               side_effect=lambda fn, *a: fn(*a)):
             for entry in self.app.plan_entries.values():
                 entry["ts"] = 0.0  # force a live retry, keep the snapshot
             plan = self.app.plan_for(self.record("s1"))
@@ -489,7 +491,9 @@ class PlanQuotaTests(unittest.TestCase):
             "volcengine": {"VOLC_ACCESSKEY": "ak", "VOLC_SECRETKEY": "sk"}})
         with mock.patch.object(
                 ark_quota, "fetch_coding_plan",
-                side_effect=RuntimeError("down")):
+                side_effect=RuntimeError("down")), \
+             mock.patch.object(reloaded._plan_pool, "submit",
+                               side_effect=lambda fn, *a: fn(*a)):
             plan = reloaded.plan_for(self.record("s1"))
         self.assertEqual(plan["plan_type"], "Pro")
         self.assertEqual(plan["error"], "down")
