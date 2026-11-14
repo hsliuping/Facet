@@ -26,7 +26,8 @@ from . import dsh as dsh_mod
 from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import facts as facts_mod
-from . import ark_quota, opencode_quota
+from . import (ark_quota, deepseek_quota, minimax_quota, moonshot_quota,
+               opencode_quota, openrouter_quota, zhipu_quota)
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -75,6 +76,17 @@ ACCOUNT_SCOPED_MARKERS = (
 # A channel failing this many times in a row (no success in between) deserves
 # a runtime alert: something is broken even while cooldowns route around it.
 RUNTIME_ALERT_ERROR_THRESHOLD = 3
+# Pay-as-you-go vendors report account usage to the same key the channel
+# already sends upstream. provider -> fetcher(creds) -> snapshot; the channel
+# config page renders the result. Vendors without an endpoint stay out, so a
+# missing entry simply means "no usage display".
+CHANNEL_USAGE_FETCHERS = {
+    "openrouter": openrouter_quota.fetch_key_usage,
+    "deepseek": deepseek_quota.fetch_balance,
+    "zhipu": zhipu_quota.fetch_account_report,
+    "minimax": minimax_quota.fetch_usage,
+    "moonshot": moonshot_quota.fetch_balance,
+}
 
 
 def _header_safe(value) -> str:
@@ -1018,6 +1030,41 @@ class App:
         sk = str(creds.get(ark_quota.SK_ENV) or "")
         return kind, ak, sk
 
+    def _cached_vendor(self, cache_key: str, fetch) -> dict:
+        """TTL-cached vendor snapshot, shared by plans and channel usage.
+
+        ``fetch`` takes no arguments and returns the snapshot dict. A failure
+        is remembered for PLAN_ERROR_TTL and keeps the last good snapshot
+        (marked stale) so the console shows both the numbers and the error
+        that needs fixing; a success is persisted through vendorquota.json.
+        """
+        with self._plan_lock:
+            now = time.time()
+            entry = self.plan_entries.get(cache_key) or {}
+            snapshot, error, ts = (entry.get("snapshot"), entry.get("error", ""),
+                                   entry.get("ts", 0.0))
+            if now - ts < (PLAN_TTL if snapshot else PLAN_ERROR_TTL):
+                if error and not snapshot:
+                    return {"error": error}
+                if error and snapshot:
+                    return {**snapshot, "stale": True, "error": error}
+                return snapshot
+            try:
+                plan = fetch()
+            except Exception as exc:
+                error = str(exc)[:160]
+                self.plan_entries[cache_key] = {"snapshot": snapshot,
+                                                "error": error, "ts": now}
+                if snapshot:
+                    return {**snapshot, "stale": True, "error": error}
+                return {"error": error}
+            snapshot = {**plan, "fetched_at": datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")}
+            self.plan_entries[cache_key] = {"snapshot": snapshot, "error": "",
+                                            "ts": now}
+            self._save_vendor_quota()
+            return snapshot
+
     def plan_for(self, record: dict) -> dict | None:
         """Vendor plan usage for one subscription row, TTL-cached per creds.
 
@@ -1030,38 +1077,43 @@ class App:
         kind, ak, sk = self._plan_creds_for(record)
         if not ak or (kind != "opencode" and not sk):
             return None
+        if kind == "opencode":
+            fetch = lambda: opencode_quota.fetch_go_plan(ak)
+        else:
+            ark_fetch = (ark_quota.fetch_agent_plan if kind == "agent"
+                         else ark_quota.fetch_coding_plan)
+            fetch = lambda: ark_fetch(ak, sk)
         key = f"{kind}:{hashlib.sha1(f'{ak}:{sk}'.encode()).hexdigest()[:12]}"
-        with self._plan_lock:
-            now = time.time()
-            entry = self.plan_entries.get(key) or {}
-            snapshot, error, ts = (entry.get("snapshot"), entry.get("error", ""),
-                                   entry.get("ts", 0.0))
-            if now - ts < (PLAN_TTL if snapshot else PLAN_ERROR_TTL):
-                if error and not snapshot:
-                    return {"error": error}
-                if error and snapshot:
-                    return {**snapshot, "stale": True, "error": error}
-                return snapshot
-            try:
-                if kind == "opencode":
-                    plan = opencode_quota.fetch_go_plan(ak)
-                else:
-                    fetch = ark_quota.fetch_agent_plan if kind == "agent" \
-                        else ark_quota.fetch_coding_plan
-                    plan = fetch(ak, sk)
-            except Exception as exc:
-                error = str(exc)[:160]
-                self.plan_entries[key] = {"snapshot": snapshot, "error": error,
-                                          "ts": now}
-                if snapshot:
-                    return {**snapshot, "stale": True, "error": error}
-                return {"error": error}
-            snapshot = {**plan, "fetched_at": datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S")}
-            self.plan_entries[key] = {"snapshot": snapshot, "error": "",
-                                      "ts": now}
-            self._save_vendor_quota()
-            return snapshot
+        return self._cached_vendor(key, fetch)
+
+    def channel_usage(self, channel) -> dict | None:
+        """Pay-as-you-go usage for one channel key (OpenRouter, DeepSeek).
+
+        The key the channel already sends upstream also authenticates the
+        vendor's usage endpoint, so the existing credential chain is enough;
+        None means there is nothing to show (no fetcher for the vendor, or
+        no key configured), which the channel card renders as no row.
+        """
+        fetch = CHANNEL_USAGE_FETCHERS.get(channel.provider)
+        if fetch is None:
+            return None
+        from .accounts import resolve_creds
+        creds: dict = resolve_creds(channel, self.config)
+        key = str(creds.get("api_key") or channel.api_key or "")
+        if not key:
+            return None
+        cache_key = (f"usage:{channel.provider}:"
+                     + hashlib.sha1(key.encode()).hexdigest()[:12])
+        return self._cached_vendor(cache_key, lambda: fetch(key))
+
+    def channels_usage_payload(self) -> dict:
+        """Per-channel pay-as-you-go usage for the channel config page."""
+        usage = {}
+        for channel in self.config.channels:
+            snapshot = self.channel_usage(channel)
+            if snapshot:
+                usage[channel.name] = snapshot
+        return {"usage": usage}
 
     def _plan_reset_cooldown(self, channel, now: float) -> tuple[float, str]:
         """Cooldown seconds + reason when a linked plan window is exhausted.

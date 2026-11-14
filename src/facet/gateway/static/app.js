@@ -57,6 +57,7 @@ const state = {
   freealignLogs: null,
   backups: null,
   dashUsage: null,
+  channelUsage: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -244,6 +245,15 @@ async function loadConfig() {
   renderAll();
 }
 
+// Pay-as-you-go vendors (OpenRouter, DeepSeek) report account usage to the
+// same key the channel already uses. Loaded on demand by the channel page;
+// the backend caches snapshots with a TTL, so re-entering the page is cheap.
+async function loadChannelUsage() {
+  const res = await api('/api/channels/usage');
+  state.channelUsage = (res && res.usage) || {};
+  renderChannels();
+}
+
 async function loadState() {
   state.snapshot = await api('/api/state');
   renderSummary();
@@ -372,6 +382,9 @@ function channelCard(c, i) {
   // Runtime status (cooling/blocked) lives in the state snapshot, not the config.
   const st = (state.snapshot?.channels || []).find((x) => x.name === c.name);
   const cooling = !!(st && st.cooling);
+  // Vendor-reported usage for pay-as-you-go keys (OpenRouter spend, DeepSeek
+  // balance); null until the channel page's usage fetch lands.
+  const vuHtml = vendorUsageHtml(state.channelUsage?.[c.name]);
   const bit = ([k, v]) => {
     const badge = tierBadge(tierFor(c.name, c.tier, k));
     return `${esc(k)} → ${esc(v)}${badge}${scoreBadge(st?.scores?.[v], c.name, v)}`;
@@ -407,6 +420,7 @@ function channelCard(c, i) {
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
       <div><dt>账号 / 业务线</dt><dd>${c.account ? esc(accountLabel(c.account)) : '—'}${c.business_line ? ' · ' + esc(c.business_line) : ''}</dd></div>
+      ${vuHtml ? `<div><dt>厂家用量</dt><dd class="wrap">${vuHtml}</dd></div>` : ''}
       <div><dt>模型目录</dt><dd class="wrap">${esc(catalogSummary(c.name))}</dd></div>
     </dl>
     <dl class="models-line"><div><dt>默认模型</dt><dd>
@@ -607,6 +621,7 @@ function switchPage(name) {
   // Each page loads its own data on entry, so opening the console stays cheap.
   if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
   if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
+  if (name === 'channels') loadChannelUsage().catch(() => {});
   if (name === 'models') {
     renderModels();
     loadState().catch(() => {});
@@ -925,28 +940,30 @@ $('btn-dsh-open').onclick = async (ev) => {
   await startDshOnly();
 };
 
-// Vendor plan usage cell, shared by the subscriptions table and the dashboard.
-// Vendor-reported windows (Volcengine plans, OpenCode Go) replace the
-// hand-typed remainder when available; the local number stays in the editor
-// and the banner logic, it just loses the display slot.
-function planQuotaCell(r) {
-  const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
-    ? '—'
-    : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
-  const vp = r.vendor_plan;
-  if (vp && vp.error && !vp.windows) {
+// Vendor usage snapshot rendering, shared by the subscriptions table (plan
+// rows) and the channel cards (pay-as-you-go keys). Vendor-reported windows
+// (Volcengine plans, OpenCode Go) replace the hand-typed remainder when
+// available; the local number stays in the editor and the banner logic, it
+// just loses the display slot.
+function vendorUsageHtml(vp) {
+  if (!vp) return '';
+  if (vp.error && !vp.windows) {
     return `<span class="sub-note">厂家余量获取失败：${esc(vp.error)}${vp.stale ? '（显示上次快照）' : ''}</span>`;
   }
-  if (vp && Array.isArray(vp.windows) && vp.windows.length) {
+  if (Array.isArray(vp.windows) && vp.windows.length) {
     const levels = { session: '会话', weekly: '周', monthly: '月',
-      five_hour: '5小时', daily: '日' };
+      five_hour: '5小时', daily: '日', budget: '消费限额' };
+    // Pre-formatted lines win: pay-as-you-go vendors (OpenRouter) express
+    // budgets the generic math below cannot.
+    const texts = vp.windows.filter((w) => w.text);
+    if (texts.length) return texts.map((w) => esc(w.text)).join(' · ');
     // Coding Plan windows report Percent only; Agent Plan (AFP) reports the
     // absolute Quota/Used, which reads better so it wins when present.
     const absolute = vp.windows.some((w) => w.quota !== undefined && w.quota !== null);
     const win = absolute
       ? vp.windows.map((w) =>
           `${levels[w.level] || esc(w.level)} 已用 ${fmtNum(w.used)} / ${fmtNum(w.quota)}`)
-          .join(' · ')
+        .join(' · ')
       : vp.windows
           .filter((w) => w.percent !== null && w.percent !== undefined)
           .map((w) => {
@@ -966,10 +983,21 @@ function planQuotaCell(r) {
       .filter(Boolean).join(' · ');
     return `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
   }
-  if (vp && vp.windows && !vp.windows.length) {
+  if (vp.windows && !vp.windows.length) {
+    // Pay-as-you-go balances (DeepSeek) carry no windows, only a summary.
+    if (vp.summary) return esc(vp.summary);
     return '<span class="sub-note">厂家无用量窗口（可能未订阅）</span>';
   }
-  return esc(quota);
+  return '';
+}
+
+function planQuotaCell(r) {
+  const quota = (r.quota_remaining === null || r.quota_remaining === undefined)
+    ? '—'
+    : `${r.quota_remaining} ${r.quota_unit || ''}${r.quota_ratio !== null && r.quota_ratio !== undefined ? ` · ${Math.round(r.quota_ratio * 100)}%` : ''}`;
+  const vp = r.vendor_plan;
+  const html = vp ? vendorUsageHtml(vp) : '';
+  return html || esc(quota);
 }
 
 function renderSubscriptions() {

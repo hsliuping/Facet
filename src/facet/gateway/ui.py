@@ -513,6 +513,10 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.subscriptions_payload())
         return True
 
+    if path == "/api/channels/usage" and method == "GET":
+        _json(h, 200, app.channels_usage_payload())
+        return True
+
     if path == "/api/subscriptions" and method == "POST":
         try:
             incoming = json.loads(raw)

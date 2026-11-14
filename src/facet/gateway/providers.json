@@ -102,6 +102,31 @@
       }
     },
     {
+      "id": "minimax",
+      "name": "MiniMax",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.minimax.cn/v1",
+          "docs_url": "https://platform.minimaxi.com/docs",
+          "keys_url": "https://platform.minimaxi.com/user-center/basic/api-key",
+          "models_url": "https://api.minimax.cn/v1/models",
+          "tier": "paid",
+          "models": []
+        },
+        "agent": {
+          "label": "Token Plan",
+          "protocol": "openai",
+          "base_url": "https://api.minimax.cn/v1",
+          "docs_url": "https://platform.minimaxi.com/docs/token-plan/quickstart",
+          "keys_url": "https://platform.minimaxi.com/user-center/payment/token-plan",
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
       "id": "moonshot",
       "name": "Kimi",
       "modes": {
