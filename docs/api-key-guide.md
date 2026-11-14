@@ -4,7 +4,7 @@
 文中所有 📷 是**截图位**——按说明操作到对应页面时截图，保存到
 `docs/images/api-key-guide/` 目录并使用标注的文件名，图片会自动显示在本文档中。
 
-**为什么值得照着注册（不花您的钱）**：国内主流厂家（百炼、火山、魔搭、智谱、千帆、DeepSeek、Kimi）
+**为什么值得照着注册（不花您的钱）**：国内主流厂家（百炼、火山、魔搭、智谱、千帆、DeepSeek、Kimi、MiniMax）
 都给实名个人账号**免费额度**——新模型 90 天窗口、每日登录领魔粒、新人 100 万 token……
 这些额度**不用就作废，用了不扣您的钱**。用户不知道有免费、也不知道去哪领，是普遍痛点；
 本手册把注册入口、Key 位置、免费额度规则聚合在一起，照着点一遍即可。Facet 还会**每日自动对齐**
@@ -48,7 +48,7 @@
 | 模式键 | 对应计费类型 | 典型厂家 |
 |---|---|---|
 | `payg` | 按量付费 | 大部分厂家 |
-| `agent` / `token_plan` | Token 包月/套餐 | xiaomi、bailian、hunyuan、qianfan |
+| `agent` / `token_plan` | Token 包月/套餐 | xiaomi、bailian、hunyuan、qianfan、minimax |
 | `coding` / `coding_plan` | 编程套餐 | zhipu、volcengine、zai、commandcode |
 
 ---
@@ -77,6 +77,7 @@
 | 18 | OVHcloud AI Endpoints | ⚠️ 非真免费层（匿名2rpm限速试用） | payg（按token后付） | tier标注需修正 |
 | 19 | NVIDIA NIM | ✅ 1000 credits(个人)/5000(企业) | ❌ 官方无按量付费通道 | free准确；无付费选项 |
 | 20 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
+| 21 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
 
 ---
 
@@ -200,6 +201,34 @@
 
 **适用场景**：企业级应用开发、代码辅助、对话式 AI 等。
 
+#### 套餐使用说明（Coding Plan / Agent Plan）
+
+Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板「订阅用量」卡里可直接看余量。
+
+**Coding Plan**（编程包月）：
+
+| 项目 | 说明 |
+|---|---|
+| 档位 | Lite / Pro（个人版），Team Lite / Team Pro（企业版） |
+| 用量窗口 | **会话窗口**（session）、**周窗口**（weekly）、**月窗口**（monthly） |
+| 余量口径 | 百分比（已用百分比，上限 100%）；不显示绝对 token 数 |
+| 重置时间 | 厂家返回 `ResetTimestamp`（epoch 秒，`-1` 表示无重置计划） |
+| 可用模型 | 以控制台套餐页实际显示为准；Facet 订阅行 `models` 字段记录当前映射（如 `doubao-seed-evolving`、`doubao-seed-2.1-pro`、`glm-5.3`、`deepseek-v4-pro`、`kimi-k3.1-pro` 等） |
+| 用量查询 | 管理面 OpenAPI `GetCodingPlanUsage`（AK/SK 签名）；Facet 用渠道绑定的 AK/SK 自动拉取，TTL 5 分钟 |
+
+**Agent Plan**（Agent 包月，AFP）：
+
+| 项目 | 说明 |
+|---|---|
+| 档位 | Small / Medium / Large / Max |
+| 用量窗口 | **5 小时窗口**（five_hour）、**日窗口**（daily）、**周窗口**（weekly）、**月窗口**（monthly） |
+| 余量口径 | **绝对值**（Quota / Used，可显示已用 X / Y tokens），比 Coding Plan 的百分比更直观 |
+| 重置时间 | 滚动窗口，厂家返回 `ResetTime`（毫秒时间戳自动转秒） |
+| 可用模型 | 以控制台 Agent Plan 页为准（待官网核实：完整模型清单） |
+| 用量查询 | 管理面 OpenAPI `GetAFPUsage`（AK/SK 签名）；Facet 自动拉取，TTL 5 分钟 |
+
+**冷却联动**：套餐窗口的 `reset_ts` 会驱动渠道 429 冷却——某窗口到 100% 时，Facet 自动把该渠道冷却到窗口重置时间（最长 45 天），避免无意义重试。
+
 ---
 
 ### 4.2 智谱 GLM
@@ -233,6 +262,11 @@
 **常见模型**：`glm-4`, `glm-4-flash`, `glm-4.5-flash`, `glm-4.7-flash` 等。
 
 **适用场景**：自然语言理解、代码生成、多模态交互等。
+
+#### 套餐使用说明
+
+- **按量付费（payg）**：Facet 已接入账户余额查询，渠道配置页渠道卡「厂家用量」行显示「余额 / 充值 / 累计消费」（接口 `GET /api/biz/account/query-customer-account-report`，用渠道 key 直查）。
+- **GLM Coding Plan（积分制）**：待接入套餐用量查询。需调研项：Coding Plan 的积分消耗窗口（日/周/月）、积分余额接口、可用模型清单（待官网核实）。
 
 ---
 
@@ -268,6 +302,11 @@
 **常见模型**：`qwen-turbo`, `qwen-plus`, `qwen-max`, `embedding` 等。
 
 **适用场景**：企业级应用、大规模并发、长文本处理等。
+
+#### 套餐使用说明
+
+- **Token Plan（个人/团队版）**：待接入套餐用量查询。需调研项：Token Plan 的额度窗口（日/月）、用量查询接口（阿里云百炼控制台）、各档位可用模型清单（待官网核实）。
+- **按量付费**：余额/欠费查询待接入（需确认百炼是否提供 API key 可查的余额接口）。
 
 ---
 
@@ -351,7 +390,7 @@
 |---|---|---|
 | **kimi-k3.1-pro** | 输入¥13/输出¥68 每百万 tokens | - |
 
-**渠道参数**：协议 `openai`，端点 `https://platform.kimi.com/api/v1`。
+**渠道参数**：协议 `openai`，端点 `https://api.moonshot.cn/v1`（与注册表一致，`/v1/models` 支撑模型自动同步）。
 
 📷 **截图 4-12** ｜ 拍取按量计费页（打码） ｜ 存为：`kimi-02-pricing.png`
 
@@ -363,6 +402,14 @@
 **适用场景**：长文本对话、知识库检索、代码辅助等。
 
 **⚠️ 备注**：payg 建议加免费标注（15 元券），帮助用户理解实际可用额度。
+
+#### 套餐使用说明
+
+- **无套餐，仅余额展示**：Kimi 开放平台没有包月/Token Plan 类 API 套餐（Kimi Code 订阅与 API 不互通），Facet 只注册了 `payg` 模式，渠道配置页渠道卡「厂家用量」行显示账户余额。
+- **余额查询**：Facet 已接入 `GET https://api.moonshot.cn/v1/users/me/balance`（用渠道 Key 直查，TTL 5 分钟），显示「可用 / 现金 / 代金券」三项（CNY）：
+  - 现金余额可为负（欠费状态），摘要会标注「欠费」；
+  - 可用余额 ≤ 0 时推理会报 `exceeded_current_quota_error`，Facet 在摘要追加「余额不足，调用将失败」并按账户级失败冻结渠道。
+- **可用模型**：以 `GET https://api.moonshot.cn/v1/models` 实时返回为准，由每日自动维护任务同步写入注册表。
 
 ---
 
@@ -436,7 +483,65 @@
 
 **适用场景**：企业级大模型应用、8模型混合调度、需要按月预算的场景。
 
+#### 套餐使用说明
+
+- **Token Plan（Hy Token Plan / 通用 Token Plan）**：待接入套餐用量查询。需调研项：套餐额度窗口、用量查询接口、各档位可用模型清单（待官网核实）。
+- **按量付费**：开通送 100 万 tokens（1 年有效），余量查询待接入。
+
 **⚠️ 备注**：注册表已补全 token_plan mode + payg 免费额度 100万 tokens/1年（见前文更新记录）。
+
+---
+
+### 4.9 MiniMax
+
+**官方入口**：[https://platform.minimaxi.com](https://platform.minimaxi.com)
+
+**免费额度**：
+
+- 无固定长期免费层；新注册账号有一次性新人赠金（以账户页实际到账为准，有效期短），适合先跑通接入验证。
+
+**付费形态**：
+
+| 形态 | 说明 | 价格 |
+|---|---|---|
+| **按量付费（PAYG）** | 普通 API Key（`sk-api-` 开头），按实际 token 计费 | 以官网定价页为准 |
+| **Token Plan** | 订阅 Key（非 `sk-api-` 前缀，如 `sk-cp-`），按「5 小时窗口 + 每周窗口」限流 | Plus ¥49/月 · Max ¥119/月 · Ultra ¥469/月（老用户保留档 Starter ¥29 / Plus-极速 ¥98） |
+
+**渠道参数**（与注册表一致）：
+
+| 模式 | 协议 | 端点 |
+|---|---|---|
+| `payg` | `openai` | `https://api.minimax.cn/v1`（`/v1/models` 支撑模型自动同步） |
+| `agent`（Token Plan） | `openai` | `https://api.minimax.cn/v1`，Key 填**订阅 Key** |
+| （可选）Anthropic 协议 | `anthropic` | `https://api.minimax.cn/anthropic` |
+
+📷 **截图 4-17** ｜ 拍取 Token Plan 订阅页（打码） ｜ 存为：`minimax-01-token-plan.png`
+
+**模式说明**：
+
+- `payg`：`tier: "paid"`，无长期免费额度标注（新人赠金可在渠道备注里自行记录）
+- `agent`：Token Plan 包月，`tier: "paid"`；**Key 必须是订阅 Key**，普通按量 Key 查 Token Plan 余量会报登录失败
+- **双 Key 体系**：`sk-api-` 开头是按量付费 Key，其余前缀是 Token Plan 订阅 Key；Facet 按前缀自动选择对应用量接口，无需手工指定
+
+**常见模型**：`MiniMax-M3`、`MiniMax-M2.1`、`MiniMax-Text-01` 等（以 `/v1/models` 同步结果为准）。
+
+**适用场景**：高频编程 Agent、多模态调用、包月预算可控的日常使用等。
+
+**⚠️ 备注**：同一厂家两种 Key 各建一个渠道即可；订阅 Key 渠道选「Token Plan」模式，按量 Key 渠道选「按量付费」模式。
+
+#### 套餐使用说明
+
+Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂家用量」行（TTL 5 分钟）：
+
+| 模式 | 查询接口 | 展示内容 |
+|---|---|---|
+| `payg`（`sk-api-` Key） | `GET https://api.minimax.cn/account/query_balance`（注意**不在 `/v1` 下**） | 可用 / 现金 / 代金券 / 信用 / 欠费（CNY，非零项才显示） |
+| `agent`（Token Plan Key） | `GET https://api.minimax.cn/v1/token_plan/remains` | 5 小时窗口与每周窗口的已用百分比、已用量、重置时间；「不限额」「已耗尽」窗口各有状态标注 |
+
+- 上游 `current_interval_remaining_percent` / `current_weekly_remaining_percent` 是**剩余**百分比，Facet 统一换算为**已用**百分比渲染，与其它厂家口径一致。
+- 窗口重置时间取自 `end_time` / `weekly_end_time`（毫秒时间戳自动转秒）；`weekly_boost_permille`（如 1500 = 显示余量的 150%）已参与换算。
+- 计数字段（`*_usage_count`）上游语义存在「已用/剩余」二义性，Facet 用百分比仲裁，保证绝对值与百分比不矛盾。
+- 查询失败时渠道卡保留上一次成功快照并标注 `stale`，不会抛错打断页面。
 
 ---
 
@@ -533,6 +638,20 @@
 | Go 订阅套餐 | `https://opencode.ai/inference/go/openai/v1` |
 | 按量（Models） | `https://opencode.ai/inference/openai/v1` |
 
+#### 套餐使用说明（Go 订阅）
+
+Facet 已接入 Go 套餐用量查询，在「套餐订阅」页和仪表板「订阅用量」卡里可直接看余量。
+
+| 项目 | 说明 |
+|---|---|
+| 档位 | Go（$10/月）、Plus、Teams |
+| 用量窗口 | **滚动 5 小时窗口**（rolling）、**周窗口**（weekly）、**月窗口**（monthly） |
+| 余量口径 | 百分比（已用百分比） |
+| 重置时间 | ISO-8601 时间戳（厂家返回 `resetsAt`，Facet 自动转 epoch 秒） |
+| 可用模型 | Go 套餐可用模型以 Console 套餐页为准（待官网核实：完整模型清单） |
+| 用量查询 | 推理网关 `GET https://opencode.ai/inference/go/v1/usage`，用渠道的 `oc_sk_` Go key 直查（无需额外 AK/SK）；Facet 自动拉取，TTL 5 分钟 |
+| 注意 | Console 管理面（`/console/api/...`）对 Bearer key 返回 403（仅登录态），所以走推理网关路由 |
+
 ---
 
 ### 6.2 Command Code
@@ -622,3 +741,5 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-13 | - | 新增 Z.AI Coding Plan 订阅信息 |
 | 2026-11-13 | - | 新增 Anthropic $5 试用金说明 |
 | 2026-11-13 | - | 更新千魔免费额度：¥10 体验金、¥20 代金券等 |
+| 2026-11-14 | - | 新增 4.9 MiniMax 章节（按量 + Token Plan，双 Key 体系，用量查询已接入） |
+| 2026-11-14 | - | 4.6 Kimi 补「套餐使用说明」：余额接口已接入，端点对齐注册表 api.moonshot.cn/v1 |
