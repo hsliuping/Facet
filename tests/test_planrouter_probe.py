@@ -433,9 +433,8 @@ class ConsoleAssetsTests(unittest.TestCase):
         self.assertNotIn("改动后点右上角", html)
         self.assertIn("scheduleSave", js)
         self.assertIn("restoreDrafts()", js)
-        self.assertIn("stashDraft(DRAFT_CONFIG", js)
-        self.assertIn("holdDirty()", js)
-        self.assertIn("holdSubDirty()", js)
+        # Channel edits autosave via markDirty -> scheduleSave('config').
+        self.assertIn("function markDirty()", js)
         self.assertIn(">保存</button>", js)
         # A 401 must show the real URL and whether an auth header was sent.
         self.assertIn("r.auth", js)

@@ -1174,13 +1174,14 @@ class StateStore:
         # Last rotation performed by _rotate_tier, formatted "offset/tier_size"
         # for the [route] selection log; empty when rotation was not possible.
         self.last_rotate = ""
-        # channel name -> (billing group, expiry epoch) fed by the App from the
-        # subscription file: 0 = monthly plan (soonest expiry first), 1 =
+        # channel name -> (billing group, expiry epoch, burn tiebreak) fed by
+        # the App from the subscription file: 0 = monthly plan (soonest expiry
+        # first; third slot is -remaining%/day for same-day tiebreaks), 1 =
         # monthly without a renewal date, 2 = free tier, 3 = pay-as-you-go.
-        # Only explicit model requests consult this map; auto/free routing keeps
-        # the console chain order. Replaced wholesale on refresh, so a pick
-        # always sees one consistent snapshot.
-        self.billing_ranks: dict[str, tuple[int, float]] = {}
+        # Only explicit model requests consult this map; auto/free routing
+        # keeps the console chain order. Replaced wholesale on refresh, so a
+        # pick always sees one consistent snapshot.
+        self.billing_ranks: dict[str, tuple[int, float, float]] = {}
 
     def _halflife_seconds(self) -> float:
         return self.config.defaults.score_halflife_hours * 3600.0
@@ -1531,15 +1532,18 @@ class StateStore:
 
         Ranks come from App._refresh_billing_ranks: monthly plans first
         (soonest linked subscription expiry first, undated plans next), then
-        free-tier channels, then pay-as-you-go. Known-bad pairs still sink
-        behind healthy ones, and the sticky session channel stays pinned. The
-        sort is stable, so equal ranks keep the console chain order.
+        free-tier channels, then pay-as-you-go. Within one expiry day, plans
+        holding more remaining quota per remaining day sort first (the
+        subscription most at risk of going unused drains before it lapses).
+        Known-bad pairs still sink behind healthy ones, and the sticky
+        session channel stays pinned. The sort is stable, so equal ranks
+        keep the console chain order.
         """
         if len(pairs) < 2:
             return pairs
         head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
         body = pairs[head:]
-        rank = lambda pair: self.billing_ranks.get(pair[0].name, (3, 0.0))
+        rank = lambda pair: self.billing_ranks.get(pair[0].name, (3, 0.0, 0.0))
         healthy, bad = [], []
         for pair in body:
             if self.score(pair[0].name, pair[1]) <= DEMOTE_SCORE:

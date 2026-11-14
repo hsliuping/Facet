@@ -2,8 +2,9 @@
 
 A request that names a model (deepseek-flash, glm-4.6, ...) must drain quota
 that would otherwise expire before spending cash: monthly plans first (soonest
-subscription expiry first), then free-tier channels, then pay-as-you-go.
-Internal aliases (auto/free) keep the console chain order untouched.
+subscription expiry first; among plans lapsing the same day, the one with more
+remaining quota per remaining day goes first), then free-tier channels, then
+pay-as-you-go. Internal aliases (auto/free) keep the console chain order.
 """
 from __future__ import annotations
 
@@ -47,7 +48,10 @@ def billing_config() -> dict:
 
 
 def subscription(plan: str, expires: str, channels: list[str]) -> dict:
-    return {"id": plan, "plan": plan, "expires_at": expires,
+    # Field set mirrors what the subscriptions page stores; price/currency
+    # stay None because summarize() reads them for its dashboard alerts.
+    return {"id": plan, "plan": plan, "tier": "paid", "price": None,
+            "currency": None, "account": "", "expires_at": expires,
             "channels": channels}
 
 
@@ -79,7 +83,7 @@ class BillingOrderTests(unittest.TestCase):
             subscription("soon", "2026-11-20", ["plan-soon"]),
             subscription("old", "2026-01-01", ["plan-late"]),
         ])
-        self.assertEqual(app.store.billing_ranks["plan-late"], (1, 0.0))
+        self.assertEqual(app.store.billing_ranks["plan-late"], (1, 0.0, 0.0))
         self.assertEqual(picked(app, "deepseek-flash"),
                          ["plan-soon", "plan-late", "plan-undated",
                           "free-c", "payg-a"])
@@ -100,11 +104,33 @@ class BillingOrderTests(unittest.TestCase):
 
     def test_free_tier_beats_payg_but_not_plans(self):
         ranks = app_with([]).store.billing_ranks
-        self.assertEqual(ranks["free-c"], (2, 0.0))
-        self.assertEqual(ranks["payg-a"], (3, 0.0))
+        self.assertEqual(ranks["free-c"], (2, 0.0, 0.0))
+        self.assertEqual(ranks["payg-a"], (3, 0.0, 0.0))
         self.assertEqual(picked(app_with([]), "deepseek-flash"),
                          ["plan-late", "plan-soon", "plan-undated",
                           "free-c", "payg-a"])
+
+    def test_same_expiry_fuller_plan_drains_first(self):
+        soon = subscription("soon", "2026-11-20", ["plan-soon"])
+        tied = subscription("tied", "2026-11-20", ["plan-late"])
+        # Both plans lapse on the same day, but plan-late still holds 90% of
+        # its quota while plan-soon holds 10%: the fuller plan is the one at
+        # risk of going unused, so it drains first within the shared day.
+        soon["quota_limit"], soon["quota_used"] = 100, 90
+        tied["quota_limit"], tied["quota_used"] = 100, 10
+        app = app_with([soon, tied])
+        self.assertLess(app.store.billing_ranks["plan-late"],
+                        app.store.billing_ranks["plan-soon"])
+        self.assertEqual(picked(app, "deepseek-flash")[:2],
+                         ["plan-late", "plan-soon"])
+
+    def test_ui_state_exposes_billing(self):
+        app = app_with([subscription("soon", "2026-11-20", ["plan-soon"])])
+        items = {c["name"]: c for c in app.ui_state()["channels"]}
+        self.assertEqual(items["plan-soon"]["billing"]["group"], 0)
+        self.assertEqual(items["plan-soon"]["billing"]["expiry"], "2026-11-20")
+        self.assertEqual(items["payg-a"]["billing"]["group"], 3)
+        self.assertEqual(items["payg-a"]["billing"]["expiry"], "")
 
 
 if __name__ == "__main__":

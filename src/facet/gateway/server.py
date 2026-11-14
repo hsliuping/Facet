@@ -103,6 +103,27 @@ def _audit_headers(decision) -> dict:
     }
 
 
+def _burn_ratio(record: dict, stamp: datetime) -> float:
+    """Remaining quota fraction per remaining day of one subscription.
+
+    Drives the same-expiry tiebreak of the billing ranks: among plans
+    lapsing on the same day, the one with more quota left per day left is
+    drained first — it is the one most likely to go unused before it
+    expires. Plans without quota accounting return 0.0 and keep console
+    chain order among themselves.
+    """
+    try:
+        limit = float(record.get("quota_limit") or 0)
+        used = float(record.get("quota_used") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if limit <= 0:
+        return 0.0
+    remaining = max(0.0, min(1.0, (limit - used) / limit))
+    days = max((stamp.date() - datetime.now().date()).days, 0) + 1
+    return remaining / days
+
+
 def _part_tag(part) -> str:
     """Compact descriptor of one content part — types and sizes, never base64."""
     if not isinstance(part, dict):
@@ -1398,14 +1419,17 @@ class App:
         An explicit model name (e.g. deepseek-flash) should drain quota that
         would otherwise expire before spending cash: monthly plans first
         (soonest linked subscription expiry first, undated plans next), then
-        free-tier channels, then pay-as-you-go. Internal aliases (auto/free)
-        ignore this map and keep the console chain order.
+        free-tier channels, then pay-as-you-go. Plans sharing an expiry day
+        tiebreak on remaining quota per remaining day (the plan most at risk
+        of going unused drains first). Internal aliases (auto/free) ignore
+        this map and keep the console chain order.
         """
-        ranks: dict[str, tuple[int, float]] = {}
+        ranks: dict[str, tuple[int, float, float]] = {}
         for channel in self.config.channels:
             line = channel.business_line or channel.mode
             monthly = line in ("coding", "agent")
             expiry = float("inf")
+            burn = 0.0
             for record in self.subscriptions:
                 refs = record.get("channels") or []
                 if channel_ref(channel) not in refs and channel.name not in refs:
@@ -1421,14 +1445,18 @@ class App:
                         str(record.get("expires_at") or ""), "%Y-%m-%d")
                 except ValueError:
                     continue  # undated plan: still monthly, just no deadline
-                expiry = min(expiry, stamp.timestamp())
+                when = stamp.timestamp()
+                ratio = _burn_ratio(record, stamp)
+                # Earliest expiry wins; on a tie the fuller plan does.
+                if when < expiry or (when == expiry and ratio > burn):
+                    expiry, burn = when, ratio
             if monthly:
-                ranks[channel.name] = ((0, expiry) if expiry != float("inf")
-                                       else (1, 0.0))
+                ranks[channel.name] = ((0, expiry, -burn) if expiry != float("inf")
+                                       else (1, 0.0, 0.0))
             elif channel.tier == "free":
-                ranks[channel.name] = (2, 0.0)
+                ranks[channel.name] = (2, 0.0, 0.0)
             else:
-                ranks[channel.name] = (3, 0.0)
+                ranks[channel.name] = (3, 0.0, 0.0)
         self.store.billing_ranks = ranks
 
     def save_subscriptions(self, raw) -> list[dict]:
@@ -2810,6 +2838,13 @@ class App:
                 },
                 "configured": has_key,
             })
+            rank = self.store.billing_ranks.get(channel.name)
+            item["billing"] = None if not rank else {
+                "group": rank[0],
+                "expiry": (datetime.fromtimestamp(rank[1]).date().isoformat()
+                           if rank[0] == 0 else ""),
+                "burn": -rank[2] if rank[0] == 0 else 0.0,
+            }
             channels.append(item)
         return {
             "channels": channels,

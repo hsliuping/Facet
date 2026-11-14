@@ -344,6 +344,29 @@ function catalogSummary(name) {
   return `${cat.count} 个模型 · 检查于 ${when}${diff}`;
 }
 
+// Billing-priority badge fed by the router's billing_ranks snapshot: the
+// order an EXPLICIT model name drains candidates in — monthly plans
+// (soonest expiry first, fuller plan first on a same-day tie), then free
+// tiers, then pay-as-you-go. Internal aliases (facet-auto/facet-free) do
+// not consult this order.
+function billingBadge(c) {
+  const b = (state.snapshot?.channels || []).find((x) => x.name === c.name)?.billing;
+  if (!b) return '';
+  const tip = '显式模型请求的计费优先级：包月（快到期优先）→ 免费档 → 按量';
+  if (b.group === 0) {
+    let extra = '';
+    if (b.expiry && b.burn > 0) {
+      const days = Math.max(Math.floor((new Date(b.expiry) - new Date()) / 86400000), 0) + 1;
+      const pct = Math.round(b.burn * days * 100);
+      if (pct > 0) extra = ` · 剩约${pct}%`;
+    }
+    return `<span class="tag plan" title="${tip}；同日到期时剩余额度多者优先">包月${b.expiry ? '·' + b.expiry : ''}${extra}</span>`;
+  }
+  if (b.group === 1) return `<span class="tag plan" title="${tip}">包月·未登记到期</span>`;
+  if (b.group === 2) return `<span class="tag free" title="${tip}">免费档</span>`;
+  return `<span class="tag off" title="${tip}">按量</span>`;
+}
+
 // Per-(channel, model) stability score: served +1, non-quota failure -5.
 // Quota exhaustion only cools and never scores, so this badge is stability.
 function scoreBadge(score, channel, wire) {
@@ -400,7 +423,7 @@ function channelCard(c, i) {
     <div class="row-head">
       <h3 class="ch-name ${c.enabled === false ? 'off' : esc(c.tier === 'free' ? 'free' : c.tier === 'paid' ? 'paid' : '')}">${esc(c.name)}</h3>
       <span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span>
-      ${channelTierBadge(c.name, c.tier)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}
+      ${channelTierBadge(c.name, c.tier)}${billingBadge(c)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
       ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>` : ''}
       <span class="row-actions">
