@@ -43,6 +43,23 @@ FREE_CHANNEL_MACRO = "$free"
 # decays toward zero, which restores the pair to its chain position.
 DEMOTE_SCORE = -3.0
 
+# Per-call routing trace. FACET_ROUTE_DEBUG=1 adds one [route:debug] block per
+# pick listing every channel of the route with its priority, wire model and
+# verdict — the "why was channel X never chosen" question is answered from the
+# log instead of from guesswork. Off by default (it is one line per channel
+# per request).
+ROUTE_DEBUG_ENV = "FACET_ROUTE_DEBUG"
+
+
+def route_debug_enabled() -> bool:
+    return bool(os.environ.get(ROUTE_DEBUG_ENV, "").strip())
+
+
+def _cooldown_left(until: float, now: float) -> str:
+    """Remaining cooldown as a short human string (90s / 4.9h)."""
+    secs = int(max(0.0, until - now))
+    return f"{secs}s" if secs < 3600 else f"{secs / 3600:.1f}h"
+
 # Providers such as Volcengine Ark expose https://host/api/v3 (or
 # /api/coding/v3) as the OpenAI-compatible base. Appending the usual
 # /v1/chat/completions would produce /v3/v1/chat/completions and a 404.
@@ -1387,6 +1404,35 @@ class StateStore:
         parts.append(f"chain={self._fmt_pairs(result)}")
         print(" ".join(parts), flush=True)
 
+    def _debug_detail(self, protocol: str, route: Route, ordered: list[str],
+                      detail: dict[str, str],
+                      result: list[tuple[Channel, str]]) -> None:
+        """[route:debug] block: every route channel, its priority and verdict.
+
+        Printed only when FACET_ROUTE_DEBUG is set. The two questions this
+        answers that the compact [route] line cannot: which channels share the
+        head priority tier (only that tier rotates), and which position each
+        channel actually holds after the rotation.
+        """
+        if not route_debug_enabled():
+            return
+        head = self.config.channel(ordered[0]) if ordered else None
+        tier = [name for name in ordered
+                if (c := self.config.channel(name)) is not None
+                and head is not None and c.priority == head.priority]
+        print(f"[route:debug] {protocol}:{route.name} "
+              f"head_prio={head.priority if head else '-'} "
+              f"rotate_tier={len(tier)}[{','.join(tier)}] "
+              f"rotate={self.last_rotate or '-'}", flush=True)
+        for i, name in enumerate(ordered):
+            channel = self.config.channel(name)
+            prio = channel.priority if channel else "-"
+            print(f"[route:debug]   #{i} {name} prio={prio} "
+                  f"{detail.get(name, 'wire=- queued')}", flush=True)
+        final = " ".join(f"#{i}:{ch.name}->{wire}"
+                         for i, (ch, wire) in enumerate(result[:12]))
+        print(f"[route:debug]   attempt-order {final or 'none'}", flush=True)
+
     def pick(
         self,
         protocol: str,
@@ -1438,43 +1484,59 @@ class StateStore:
             scheduled: list[tuple[Channel, str]] = []
             reachable: dict[str, Channel] = {}
             skipped: list[str] = []
+            detail: dict[str, str] = {}
             for name in ordered:
                 channel = self.config.channel(name)
                 if channel is None:
                     skipped.append(f"{name}(missing)")
+                    detail[name] = "skip:missing"
                     continue
                 if not channel.enabled:
                     skipped.append(f"{name}(disabled)")
+                    detail[name] = "skip:disabled"
                     continue
                 if name in excluded:
                     skipped.append(f"{name}(blocked)")
+                    detail[name] = "skip:blocked"
                     continue
                 if channel.protocol != protocol:
                     skipped.append(f"{name}(protocol={channel.protocol})")
+                    detail[name] = f"skip:protocol={channel.protocol}"
                     continue
                 ok, why = self.states[name].available(now, channel.rate)
                 if not ok:
                     skipped.append(f"{name}({why or 'unavailable'})")
+                    left = _cooldown_left(self.states[name].cooldown_until, now)
+                    detail[name] = f"skip:{why or 'unavailable'}({left})"
                     continue
                 reachable[name] = channel
                 if decision.mode == "exact" and name in decision.exact_channels:
                     wire = wire_model(channel, decision.exposed)
                     if wire and self.states[name].model_available(now, wire):
                         exact.append((channel, wire))
+                        detail[name] = f"wire={wire} exact"
                     elif wire:
                         skipped.append(f"{name}({wire}:cooling)")
+                        detail[name] = (f"wire={wire} skip:model-cooling"
+                                        f"({_cooldown_left(self.states[name].model_cooldown_until.get(wire, 0.0), now)})")
                     else:
                         skipped.append(f"{name}(no-wire)")
+                        detail[name] = "skip:no-wire"
                     continue
                 if decision.mode == "agent":
+                    detail[name] = "reachable (agent candidates)"
                     continue  # filled from the caller's ranked list below
                 wire = dispatch_wire_model(channel, decision.requested)
                 if wire and self.states[name].model_available(now, wire):
                     scheduled.append((channel, wire))
+                    detail[name] = f"wire={wire} queued"
                 elif wire:
                     skipped.append(f"{name}({wire}:cooling)")
+                    detail[name] = (f"wire={wire} skip:model-cooling"
+                                    f"({_cooldown_left(self.states[name].model_cooldown_until.get(wire, 0.0), now)})")
                 else:
                     skipped.append(f"{name}(no-wire)")
+                    detail[name] = "skip:no-wire"
             if decision.mode == "agent":
                 for name, wire in (agent_candidates or ()):
                     channel = reachable.get(name)
@@ -1494,6 +1556,8 @@ class StateStore:
                             scheduled.append((channel, wire))
                 self._log_pick(protocol, route, model, decision, sticky,
                                skipped, "", scheduled)
+                self._debug_detail(protocol, route, ordered, detail,
+                                   scheduled)
                 return scheduled, route
             # Stability reordering: within each group, higher score first;
             # equal scores keep the chain order. The sticky session channel
@@ -1516,6 +1580,7 @@ class StateStore:
                           else self._by_score(ordered_pairs, sticky))
             self._log_pick(protocol, route, model, decision, sticky,
                            skipped, strategy, result)
+            self._debug_detail(protocol, route, ordered, detail, result)
             return result, route
 
     def _by_score(self, pairs: list[tuple[Channel, str]],
