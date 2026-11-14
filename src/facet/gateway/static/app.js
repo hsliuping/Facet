@@ -4002,22 +4002,21 @@ function applyProviderPreset() {
 // docs stays available inside the overlay.
 
 // Heading text in the guide that documents each builtin vendor; vendors not
-// listed here fall back to the whole manual.
+// listed here fall back to the whole manual. Values must match the guide's
+// ### headings exactly (extractGuideSection compares verbatim).
 const GUIDE_SECTIONS = {
-  pollinations: '3.1 Pollinations（免注册、免 Key）',
-  nvidia: '3.2 NVIDIA NIM（免费层）',
-  openrouter: '3.3 OpenRouter（免费池）',
-  google: '3.4 Google AI Studio',
-  llm7: '3.5 LLM7（免注册、免 Key）',
-  ovhcloud: '3.6 OVHcloud AI Endpoints（免注册、免 Key）',
-  volcengine: '4.1 火山引擎方舟（豆包）',
+  pollinations: '3.1 Pollinations——免注册免 Key',
+  nvidia: '3.2 NVIDIA NIM——免费层',
+  openrouter: '3.3 OpenRouter——免费池',
+  volcengine: '4.1 火山引擎方舟',
   zhipu: '4.2 智谱 GLM',
   bailian: '4.3 阿里云百炼',
-  hunyuan: '4.4 腾讯元宝（混元）',
-  qianfan: '4.5 百度千帆',
-  deepseek: '4.6 DeepSeek',
-  moonshot: '4.7 Kimi（Moonshot）',
-  xiaomi: '4.8 小米 MiMo',
+  modelscope: '4.4 魔搭 ModelScope',
+  xiaomi: '4.5 小米 MiMo',
+  moonshot: '4.6 Kimi（月之暗面）',
+  deepseek: '4.7 DeepSeek',
+  hunyuan: '4.8 腾讯混元',
+  minimax: '4.9 MiniMax',
   anthropic: '5.1 Anthropic 直连',
   openai: '5.2 OpenAI 直连',
   xai: '5.3 xAI Grok',
