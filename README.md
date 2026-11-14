@@ -337,7 +337,8 @@ facet --free --tools --limit 10     # 按条件筛选免费模型
 ## 开发
 
 ```bash
-python -m pytest tests/ -q          # 全量回归
+python -m pytest tests/ -q          # 全量回归（单元/接口测试）
+python -m pytest tests/web/test_smoke.py -v --tb=short  # Web UI 冒烟测试（Playwright，需自行启动 gateway）
 python tools/sync_models_dev.py     # models.dev -> 事实表（每周或按需）
 python tools/validate_registry.py   # 事实表质量门（体积、null、结构、数量）
 python tools/verify_claims.py gpt-5 --dry-run   # 实测验证模型能力声明
