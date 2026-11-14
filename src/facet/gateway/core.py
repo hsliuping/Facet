@@ -1174,6 +1174,13 @@ class StateStore:
         # Last rotation performed by _rotate_tier, formatted "offset/tier_size"
         # for the [route] selection log; empty when rotation was not possible.
         self.last_rotate = ""
+        # channel name -> (billing group, expiry epoch) fed by the App from the
+        # subscription file: 0 = monthly plan (soonest expiry first), 1 =
+        # monthly without a renewal date, 2 = free tier, 3 = pay-as-you-go.
+        # Only explicit model requests consult this map; auto/free routing keeps
+        # the console chain order. Replaced wholesale on refresh, so a pick
+        # always sees one consistent snapshot.
+        self.billing_ranks: dict[str, tuple[int, float]] = {}
 
     def _halflife_seconds(self) -> float:
         return self.config.defaults.score_halflife_hours * 3600.0
@@ -1478,12 +1485,19 @@ class StateStore:
             # strategy additionally ranks by success rate, latency and
             # consecutive errors; "order" (default) is unchanged.
             strategy = route.lb or self.config.defaults.lb_strategy
-            ordered_pairs = exact or scheduled
-            if decision.mode != "exact":
-                ordered_pairs = scheduled
-            result = (self._weighted_order(ordered_pairs, sticky, now)
-                      if strategy == "weighted"
-                      else self._by_score(ordered_pairs, sticky))
+            if decision.mode == "exact" and exact:
+                # A request that names a model exactly prefers quota that
+                # would otherwise expire: monthly plans (soonest expiry
+                # first), then free tiers, then pay-as-you-go. Internal
+                # aliases (auto/free) keep the chain-order strategies below.
+                result = self._billing_order(exact, sticky)
+            else:
+                ordered_pairs = exact or scheduled
+                if decision.mode != "exact":
+                    ordered_pairs = scheduled
+                result = (self._weighted_order(ordered_pairs, sticky, now)
+                          if strategy == "weighted"
+                          else self._by_score(ordered_pairs, sticky))
             self._log_pick(protocol, route, model, decision, sticky,
                            skipped, strategy, result)
             return result, route
@@ -1509,6 +1523,31 @@ class StateStore:
             else:
                 healthy.append(pair)
         bad.sort(key=lambda pair: -self.score(pair[0].name, pair[1]))
+        return pairs[:head] + healthy + bad
+
+    def _billing_order(self, pairs: list[tuple[Channel, str]],
+                       sticky: str | None) -> list[tuple[Channel, str]]:
+        """Explicit model requests drain expiring quota before paying cash.
+
+        Ranks come from App._refresh_billing_ranks: monthly plans first
+        (soonest linked subscription expiry first, undated plans next), then
+        free-tier channels, then pay-as-you-go. Known-bad pairs still sink
+        behind healthy ones, and the sticky session channel stays pinned. The
+        sort is stable, so equal ranks keep the console chain order.
+        """
+        if len(pairs) < 2:
+            return pairs
+        head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
+        body = pairs[head:]
+        rank = lambda pair: self.billing_ranks.get(pair[0].name, (3, 0.0))
+        healthy, bad = [], []
+        for pair in body:
+            if self.score(pair[0].name, pair[1]) <= DEMOTE_SCORE:
+                bad.append(pair)
+            else:
+                healthy.append(pair)
+        healthy.sort(key=rank)
+        bad.sort(key=lambda pair: (-self.score(pair[0].name, pair[1]), rank(pair)))
         return pairs[:head] + healthy + bad
 
     # Weighted-strategy rank weights: stability score dominates, the 24h

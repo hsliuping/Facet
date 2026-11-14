@@ -759,6 +759,7 @@ class App:
                                self.subscription_settings)
             except OSError:
                 pass
+        self._refresh_billing_ranks()
         # Vendor registry (builtin providers.json + optional user overlay in
         # the config dir); a broken overlay must not keep the gateway down.
         try:
@@ -1391,6 +1392,45 @@ class App:
             "path": str(self.subscriptions_path) if self.subscriptions_path else None,
         }
 
+    def _refresh_billing_ranks(self) -> None:
+        """Feed the router the billing priority of every channel.
+
+        An explicit model name (e.g. deepseek-flash) should drain quota that
+        would otherwise expire before spending cash: monthly plans first
+        (soonest linked subscription expiry first, undated plans next), then
+        free-tier channels, then pay-as-you-go. Internal aliases (auto/free)
+        ignore this map and keep the console chain order.
+        """
+        ranks: dict[str, tuple[int, float]] = {}
+        for channel in self.config.channels:
+            line = channel.business_line or channel.mode
+            monthly = line in ("coding", "agent")
+            expiry = float("inf")
+            for record in self.subscriptions:
+                refs = record.get("channels") or []
+                if channel_ref(channel) not in refs and channel.name not in refs:
+                    continue
+                try:
+                    if subs.enrich(record).get("status") == "expired":
+                        continue
+                except (TypeError, ValueError, KeyError):
+                    continue
+                monthly = True
+                try:
+                    stamp = datetime.strptime(
+                        str(record.get("expires_at") or ""), "%Y-%m-%d")
+                except ValueError:
+                    continue  # undated plan: still monthly, just no deadline
+                expiry = min(expiry, stamp.timestamp())
+            if monthly:
+                ranks[channel.name] = ((0, expiry) if expiry != float("inf")
+                                       else (1, 0.0))
+            elif channel.tier == "free":
+                ranks[channel.name] = (2, 0.0)
+            else:
+                ranks[channel.name] = (3, 0.0)
+        self.store.billing_ranks = ranks
+
     def save_subscriptions(self, raw) -> list[dict]:
         settings = self.subscription_settings
         if isinstance(raw, dict) and "settings" in raw:
@@ -1403,6 +1443,7 @@ class App:
         if self.subscriptions_path:
             subs.save_file(self.subscriptions_path, self.subscriptions, settings)
         self.subscription_settings = settings
+        self._refresh_billing_ranks()
         return records
 
     def save_subscription_settings(self, settings) -> dict:
@@ -1422,6 +1463,7 @@ class App:
                 self.subscriptions[index] = updated
                 if self.subscriptions_path:
                     subs.save_file(self.subscriptions_path, self.subscriptions)
+                self._refresh_billing_ranks()
                 return subs.enrich(updated)
         raise ValueError(f"订阅不存在: {subscription_id}")
 
@@ -1738,6 +1780,7 @@ class App:
                           if key.split("|", 1)[0] in new.states}
             self.config = config
             self.store = new
+        self._refresh_billing_ranks()
 
     def reset_channel(self, name: str) -> bool:
         with self.store.lock:

@@ -114,6 +114,9 @@
 3. **渠道选择**（`StateStore.pick`）：粘性会话优先 → free 档优先轮换
    （`_rotate_tier`）→ 过滤冷却 / 限速 / 禁用渠道 → exact 全冷却时回退调度链 →
    组内按时间衰减分数稳定排序；目录确证缺该模型则软跳过该渠道。
+   **显式模型名（exact）另有计费优先规则**：包月套餐（快到期的在前）→ 免费层 → 按量付费，
+   内部别名（`facet-auto` / `facet-free`）不适用，详见
+   [planrouter-billing-priority.md](planrouter-billing-priority.md)。
 4. **逐候选转发**（`_forward`，≤ `max_failover` + 1 次；瞬时网络错误原地重试）：
    渠道 `proxy` 出站 + `defaults.timeout`；429 / 配额耗尽 → `parse_cooldown`
    （Retry-After / reset 头优先，日配额冷却到 UTC 零点）→ 标记冷却（half-open 探活）；
@@ -215,5 +218,6 @@ listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置�
 | [planrouter-dsh-integration.md](planrouter-dsh-integration.md) | DSH 接入实操样例 |
 | [planrouter-superagent-integration.md](planrouter-superagent-integration.md) | super_agent 调研与三层对接方案 |
 | [planrouter-vendor-binding-and-docker-seed.md](planrouter-vendor-binding-and-docker-seed.md) | 厂家强关联校验 + 容器种子设计 |
+| [planrouter-billing-priority.md](planrouter-billing-priority.md) | 显式模型名的计费优先路由（包月到期升序 → 免费 → 按量） |
 | [api-key-guide.md](api-key-guide.md) | 20 家厂家 key 获取手册 |
 | [planrouter-competitive-analysis.md](planrouter-competitive-analysis.md) | 竞品分析 |
