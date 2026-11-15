@@ -47,7 +47,8 @@ from .core import (
 from .keys import KeyStore
 from .notifier import ReminderService
 from .persistence import StatePersistence
-from .probe import MAX_CHANNELS, pick_model, probe_channel, probe_models
+from .probe import (MAX_CHANNELS, pick_model, pick_probe_model,
+                    probe_channel, probe_models)
 from .quota import parse_quota, quota_exhaustion_wait
 from .report import build_member_costs, build_report
 from .responses import ResponsesAdapter, to_chat_request
@@ -2707,6 +2708,11 @@ class App:
             result = self._probe_free_quota(merged, *quota_mode)
         else:
             result = probe_models(merged)
+        if result.get("ok") and result.get("models"):
+            # Catalogs are alphabetical: speech/embedding ids can lead, and a
+            # chat-completion test against them is rejected upstream. Callers
+            # (setup wizard, console) use this instead of models[0].
+            result["suggested"] = pick_probe_model(result["models"])
         if result.get("ok") and isinstance(name, str) and self.config.channel(name):
             self.store.record_catalog(name, result["models"], result["endpoint"])
             view = self.store.catalog_view(name)

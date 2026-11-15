@@ -353,6 +353,27 @@ const WIZARD_STEPS = [
         enabled: true,
       };
       try {
+        // 厂家目录里 models 常为空（清单由上游动态维护）：空映射过不了渠道
+        // 校验（至少一条模型映射）。先拉一次真实模型清单（渠道配置页「拉取
+        // 模型清单」同款接口，支持注册表套餐/免费额度/上游 /models），再测试。
+        if (!Object.keys(models).length) {
+          status.innerHTML = '正在拉取该厂家的模型清单…';
+          const cat = await api('/api/probe/models',
+            { method: 'POST', body: { channel: draft } });
+          if (!cat.ok || !(cat.models || []).length) {
+            throw new Error((cat.error || '上游未返回模型清单')
+              + (cat.hint ? ' — ' + cat.hint : ''));
+          }
+          // auto 指向第一个可对话模型（目录是字母序，asr/tts/embedding 可能
+          // 排在前面，拿它们做对话测试会被上游拒绝）。
+          const ids = cat.suggested ? [cat.suggested] : [];
+          cat.models.slice(0, 20).forEach((m) => {
+            if (!ids.includes(m)) ids.push(m);
+          });
+          ids.forEach((m) => { models[m] = m; });
+          models.auto = ids[0];
+        }
+        status.innerHTML = '正在测试并保存，请稍候…';
         const data = await api('/api/test/channels', { method: 'POST', body: { channels: [draft] } });
         const r = (data.results || [])[0] || {};
         if (r.ok) {
@@ -370,8 +391,8 @@ const WIZARD_STEPS = [
         }
       } catch (e) {
         wizardState.testResult = { ok: false, error: e.message, saved: false };
-        status.innerHTML = `测试请求失败：${esc(e.message)}<br>`
-          + '渠道暂未保存。可点「上一步」检查 Key 后重试。';
+        status.innerHTML = `未能完成测试：${esc(e.message)}<br>`
+          + '渠道暂未保存。可点「上一步」检查 Key 后重试，或继续下一步稍后在「渠道配置」页手动配置。';
         status.className = 'wizard-test-result bad';
       }
     },

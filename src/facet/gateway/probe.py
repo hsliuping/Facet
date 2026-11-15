@@ -295,6 +295,36 @@ def parse_model_list(payload) -> list[str]:
     return sorted(ids)
 
 
+# Vendor catalogs list every registered id; ids matching these fragments are
+# embedding/speech/OCR/guard utilities that cannot answer a chat completion.
+NON_CHAT_PATTERNS = (
+    "embed", "reward", "rerank", "clip", "riva", "guard", "content-safety",
+    "parse", "detector", "diffusion", "kosmos", "deplot", "fuyu", "neva",
+    "vila", "transcribe", "tts", "asr", "speech", "whisper", "ocr",
+)
+
+
+def is_chat_model(model: str) -> bool:
+    """Heuristic: False for ids that cannot serve chat completions."""
+    low = str(model).lower()
+    return not any(p in low for p in NON_CHAT_PATTERNS)
+
+
+def pick_probe_model(models) -> str:
+    """First chat-capable id for a probe/wizard test.
+
+    Catalogs come back sorted alphabetically, so speech or embedding ids
+    (xiaomi's mimo-v2.5-asr, openrouter's MiniMax/speech-02-hd, ...) can lead
+    the list and a chat-completion probe against them is rejected upstream.
+    Falls back to the first id when nothing looks like a chat model.
+    """
+    ids = [str(m) for m in (models or []) if m]
+    for model in ids:
+        if is_chat_model(model):
+            return model
+    return ids[0] if ids else ""
+
+
 def probe_models(raw, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Fetch one channel's upstream model catalog (GET .../models).
 

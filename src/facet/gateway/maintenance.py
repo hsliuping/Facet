@@ -1075,17 +1075,8 @@ def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
 
 # Vendor catalogs list every registered id; ids matching these fragments are
 # embedding/reward/rerank/guard/vision utilities that cannot answer the quiz.
-NON_CHAT_PATTERNS = (
-    "embed", "reward", "rerank", "clip", "riva", "guard", "content-safety",
-    "parse", "detector", "diffusion", "kosmos", "deplot", "fuyu", "neva",
-    "vila", "transcribe", "tts",
-)
-
-
-def is_chat_model(model: str) -> bool:
-    """Heuristic: False for ids that cannot serve chat completions."""
-    low = model.lower()
-    return not any(p in low for p in NON_CHAT_PATTERNS)
+# The patterns live in probe.py (single source, shared with the wizard test).
+from .probe import is_chat_model
 
 
 def _free_mapping_values(app, channel) -> tuple[list[str], int, int]:
