@@ -36,7 +36,10 @@ PY
 # 2. venv + 安装（Facet 零第三方依赖，venv 只有标准库+本项目）
 log "安装 Facet 到 $VENV（来源：$SRC）"
 mkdir -p "$FACET_HOME/data" "$FACET_HOME/logs"
-[ -d "$VENV" ] || python3 -m venv "$VENV"
+if [ ! -x "$VENV/bin/pip" ]; then
+  rm -rf "$VENV"   # 清掉上次失败留下的半成品目录
+  python3 -m venv "$VENV"
+fi
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet --force-reinstall "$SRC"
 "$VENV/bin/facet" --help >/dev/null 2>&1 || err "facet 命令不可用，安装失败"
@@ -46,6 +49,7 @@ log "注册 launchd 服务 $LABEL（端口 $FACET_PORT，开机自启 + 崩溃�
 mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|__FACET_HOME__|$FACET_HOME|g" \
     -e "s|__FACET_VENV__|$VENV|g" \
+    -e "s|__FACET_HOST__|$FACET_HOST|g" \
     -e "s|__FACET_PORT__|$FACET_PORT|g" \
     "$PLIST_SRC" > "$PLIST_DST"
 launchctl bootout "gui/$UID_N" "$PLIST_DST" 2>/dev/null || true
