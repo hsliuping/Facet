@@ -26,7 +26,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import Request
 
 from . import maintenance as maint
@@ -43,6 +43,10 @@ FETCH_WORKERS = 12
 # (append_jsonl trims at 2 MiB to the same cap as the other report logs).
 EVENTS_VIEW_LIMIT = 100
 EXCERPT_MAX = 300
+# Dedup identity keeps this many recent event keys per source, so a sweep
+# that fired added+removed at once does not re-fire the earlier event on a
+# later flip-flop (only the newest key would survive otherwise).
+EVENT_KEY_KEEP = 8
 # Read markers outlive their events once the JSONL trims; this keeps the
 # snapshots file bounded regardless.
 READ_MARKS_KEEP = 2000
@@ -160,9 +164,37 @@ def snapshot_source(source: dict) -> dict:
                 raw = resp.read(2_000_000).decode("utf-8", "replace")
             models = maint.parse_models_payload(raw)
             head = raw[:EXCERPT_MAX]
+            # Bailian-style payloads advertise a larger total and page via
+            # page_no/page_size; follow the pages exactly like the registry
+            # refresh does, so the watched set matches the authoritative
+            # catalog instead of under-reporting the first page forever.
+            total = maint._pagination_total(raw)
+            if total > len(models):
+                try:
+                    merged = set(models)
+                    for page_no in range(2, 11):
+                        req = Request(maint._page_url(url, page_no),
+                                      headers=headers)
+                        with open_with_proxy(req, FETCH_TIMEOUT,
+                                             source["proxy"]) as resp:
+                            page_raw = resp.read(2_000_000).decode(
+                                "utf-8", "replace")
+                        page_ids = maint.parse_models_payload(page_raw)
+                        if not page_ids:
+                            break
+                        merged.update(page_ids)
+                        if len(merged) >= total:
+                            break
+                    models = sorted(merged)
+                except Exception:
+                    pass  # keep the first page; the next sweep retries
         return {"url": url, "sha256": _sha256(raw), "models": models,
                 "text_head": head, "ok": True, "error": ""}
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+    except Exception as exc:
+        # Boundary: one bad source must never abort the whole sweep, and
+        # urllib raises exotic types (http.client.IncompleteRead is not an
+        # OSError) that no fixed tuple can fully cover. HTTPError bodies
+        # still contribute their excerpt to the error line.
         detail = ""
         if isinstance(exc, HTTPError):
             try:
@@ -182,8 +214,13 @@ def diff_snapshot(old: dict | None, new: dict, kind: str) -> list[dict]:
     pages (JSON payloads churn on vendor metadata, so only docs pages report
     this) or a ``catalog_changed`` when only the duplicate structure moved.
     The first sighting of a source is the baseline and produces nothing.
+    A failed sweep with an empty inherited model set is not a baseline
+    either: the success after it rebuilds silently instead of flooding
+    ``new_model`` events for a catalog that was merely invisible.
     """
     if not old:
+        return []
+    if old.get("ok") is False and not old.get("models"):
         return []
     old_models = {str(m) for m in old.get("models") or []}
     new_models = {str(m) for m in new.get("models") or []}
@@ -266,30 +303,49 @@ def load_events(app, limit: int = EVENTS_VIEW_LIMIT) -> list[dict]:
     return list(reversed(events))
 
 
+def _prune_marks(marks: dict) -> dict:
+    """Read markers older than the JSONL's history are dead weight; prune."""
+    if len(marks) > READ_MARKS_KEEP:
+        ordered = sorted(marks.items(), key=lambda kv: kv[1], reverse=True)
+        return dict(ordered[:READ_MARKS_KEEP])
+    return marks
+
+
 def mark_read(app, ids: list[str], read: bool = True) -> int:
-    """Flip the read flag of events by id (in-file; the JSONL is not rewritten)."""
+    """Flip the read flag of events by id (in-file; the JSONL is not rewritten).
+
+    A sweep runs for minutes and saves the snapshots file when it finishes,
+    so this re-reads the freshest on-disk state and rewrites only the
+    ``read_events`` field — the sweep's snapshots and dedup keys are never
+    clobbered, and read marks flipped mid-sweep are never rolled back.
+    """
     data = load_snapshots(app)
-    marks = data.get("read_events")
-    if not isinstance(marks, dict):
-        marks = {}
+    marks = data.get("read_events") if isinstance(data.get("read_events"), dict) else {}
     changed = 0
+    touched: dict[str, str] = {}
+    removed: list[str] = []
     for event_id in ids:
         if not isinstance(event_id, str) or not event_id:
             continue
         if read:
             if event_id not in marks:
                 changed += 1
-            marks[event_id] = time.strftime("%Y-%m-%dT%H:%M:%S",
-                                            time.localtime())
+            touched[event_id] = time.strftime("%Y-%m-%dT%H:%M:%S",
+                                              time.localtime())
         elif event_id in marks:
-            del marks[event_id]
+            removed.append(event_id)
             changed += 1
-    # Older read markers than the JSONL keeps are dead weight; prune to cap.
-    if len(marks) > READ_MARKS_KEEP:
-        ordered = sorted(marks.items(), key=lambda kv: kv[1], reverse=True)
-        marks = dict(ordered[:READ_MARKS_KEEP])
-    data["read_events"] = marks
-    save_snapshots(app, data)
+    fresh = load_snapshots(app)
+    base = fresh.get("read_events") if isinstance(fresh.get("read_events"), dict) else {}
+    if read:
+        base.update(touched)
+    else:
+        for event_id in removed:
+            base.pop(event_id, None)
+    fresh["read_events"] = _prune_marks(base)
+    if "snapshots" not in fresh and isinstance(data.get("snapshots"), dict):
+        fresh["snapshots"] = data["snapshots"]
+    save_snapshots(app, fresh)
     return changed
 
 
@@ -313,7 +369,6 @@ def run_watch(app) -> dict:
 
     old_data = load_snapshots(app)
     old_snaps = old_data.get("snapshots") if isinstance(old_data.get("snapshots"), dict) else {}
-    read_marks = old_data.get("read_events") if isinstance(old_data.get("read_events"), dict) else {}
 
     events: list[dict] = []
     new_snaps: dict[str, dict] = {}
@@ -328,11 +383,18 @@ def run_watch(app) -> dict:
             "url": source["url"], "kind": source["kind"],
             "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
         }
-        # The dedup key survives failed sweeps and unchanged ones: a diff that
+        # Dedup keys survive failed sweeps and unchanged ones: a diff that
         # fired once must not re-fire three sweeps later just because the
-        # entries in between carried no events of their own.
-        if old and old.get("last_event_key"):
-            entry["last_event_key"] = old["last_event_key"]
+        # entries in between carried no events of their own. The last
+        # EVENT_KEY_KEEP keys are kept, so a sweep that fired added+removed
+        # at once keeps every event's identity (the legacy single
+        # last_event_key field migrates into the list).
+        keys = [k for k in (old or {}).get("last_event_keys") or []
+                if isinstance(k, str) and k]
+        legacy = (old or {}).get("last_event_key")
+        if isinstance(legacy, str) and legacy and legacy not in keys:
+            keys.append(legacy)
+        entry["last_event_keys"] = keys
         if not result["ok"]:
             error_count += 1
             entry.update({"ok": False, "error": result["error"],
@@ -348,9 +410,9 @@ def run_watch(app) -> dict:
                       "model_count": len(result["models"])})
         for diff in diff_snapshot(old, result, source["kind"]):
             key_hash = event_key(diff, key)
-            # Same event as the source's last one (page re-served the same
-            # diff, or doc chrome keeps churning): skip the duplicate.
-            if old and old.get("last_event_key") == key_hash:
+            # Page re-served the same diff (or doc chrome keeps churning):
+            # an already-known key means the duplicate is skipped.
+            if key_hash in keys:
                 continue
             now = time.time()
             events.append({
@@ -365,11 +427,17 @@ def run_watch(app) -> dict:
                 "detail": diff["detail"],
                 "status": "unread",
             })
-            entry["last_event_key"] = key_hash
+            keys.append(key_hash)
+            entry["last_event_keys"] = keys[-EVENT_KEY_KEEP:]
             entry["last_event_at"] = entry["checked_at"]
         new_snaps[key] = entry
 
-    data = {"snapshots": new_snaps, "read_events": read_marks,
+    # Read marks may have been flipped while this sweep was fetching (a full
+    # sweep takes minutes); the marks seen at the start are stale, so re-read
+    # them instead of rolling the user's actions back on save.
+    fresh_marks = load_snapshots(app).get("read_events")
+    data = {"snapshots": new_snaps,
+            "read_events": fresh_marks if isinstance(fresh_marks, dict) else {},
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())}
     save_snapshots(app, data)
 

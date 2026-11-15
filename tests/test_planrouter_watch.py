@@ -6,6 +6,7 @@ data survive a sweep untouched.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import tempfile
 import unittest
@@ -188,6 +189,37 @@ class SnapshotSourceTests(unittest.TestCase):
             snap = watch_mod.snapshot_source(source)
         self.assertEqual(snap["models"], ["m1"])
 
+    def test_models_json_follows_pagination(self):
+        # Bailian-style payload: the first page under-reports the advertised
+        # total, so the watch must follow page_no/page_size like the registry
+        # refresh does instead of watching a truncated catalog forever.
+        source = {"key": "k", "kind": "models", "origin": "provider",
+                  "label": "L", "url": "http://up/v1/models",
+                  "api_key": "sk-fix", "proxy": "", "protocol": "openai"}
+
+        def fake_open(req, timeout, proxy):
+            if "page_no=2" in req.full_url:
+                return _FakeResp(b'{"output":{"total":3,"models":[{"id":"m3"}]}}')
+            return _FakeResp(b'{"output":{"total":3,'
+                             b'"models":[{"id":"m1"},{"id":"m2"}]}}')
+
+        with mock.patch("facet.gateway.watch.open_with_proxy", fake_open):
+            snap = watch_mod.snapshot_source(source)
+        self.assertEqual(snap["models"], ["m1", "m2", "m3"])
+
+    def test_incomplete_read_is_recorded_not_raised(self):
+        # http.client.IncompleteRead inherits HTTPException, not OSError —
+        # the fetch boundary must still swallow it ("never raises" contract).
+        source = {"key": "k", "kind": "models", "origin": "channel",
+                  "label": "L", "url": "http://up/v1/models",
+                  "api_key": "sk-fix", "proxy": "", "protocol": "openai"}
+        with mock.patch("facet.gateway.watch.open_with_proxy",
+                        side_effect=http.client.IncompleteRead(b"cut")):
+            snap = watch_mod.snapshot_source(source)
+        self.assertFalse(snap["ok"])
+        self.assertIn("IncompleteRead", snap["error"])
+        self.assertEqual(snap["models"], [])
+
     def test_fetch_error_is_recorded_not_raised(self):
         source = {"key": "k", "kind": "docs", "origin": "provider",
                   "label": "L", "url": "https://docs.example.com/x",
@@ -230,6 +262,21 @@ class DiffSnapshotTests(unittest.TestCase):
         new = {"sha256": "b", "models": ["m1"]}
         events = watch_mod.diff_snapshot(old, new, "models")
         self.assertEqual([e["kind"] for e in events], ["catalog_changed"])
+
+    def test_failed_snapshot_without_models_rebaselines_silently(self):
+        # A failed sweep with nothing inherited is not a baseline: the success
+        # after it must not flood new_model events for the whole catalog.
+        old = {"ok": False, "sha256": "", "models": []}
+        new = {"ok": True, "sha256": "b", "models": ["m1", "m2"]}
+        self.assertEqual(watch_mod.diff_snapshot(old, new, "docs"), [])
+
+    def test_failed_snapshot_with_inherited_models_still_diffs(self):
+        # A failure that inherited the last known catalog keeps reporting:
+        # only the "never seen anything" case is a re-baseline.
+        old = {"ok": False, "sha256": "a", "models": ["m1"]}
+        new = {"ok": True, "sha256": "b", "models": ["m1", "m2"]}
+        events = watch_mod.diff_snapshot(old, new, "docs")
+        self.assertEqual([e["kind"] for e in events], ["new_model"])
 
 
 class EventKeyTests(unittest.TestCase):
@@ -323,6 +370,54 @@ class RunWatchTests(unittest.TestCase):
         self.assertEqual(self.app.config.channels[0].models,
                          {"gpt-x": "gpt-x"})
 
+    def test_incomplete_read_does_not_abort_the_sweep(self):
+        # One exotic exception type must not kill the sweep or surface as an
+        # unhandled API error: every source fails, the report still lands.
+        exc = http.client.IncompleteRead(b"cut")
+        with mock.patch("facet.gateway.watch.open_with_proxy",
+                        side_effect=exc), \
+                mock.patch("facet.gateway.maintenance.fetch_plan_doc",
+                           side_effect=exc):
+            report = watch_mod.run_watch(self.app)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["appended"], 0)
+        self.assertGreater(report["sources"], 0)
+        self.assertEqual(report["error_sources"], report["sources"])
+
+    def test_flip_flop_does_not_re_report_recent_events(self):
+        # A/B flip-flopping replays the exact same added+removed diff; the
+        # retained key list (not just the newest key) must recognize it.
+        def sweep(models_for_a):
+            with mock.patch.object(
+                    watch_mod, "snapshot_source",
+                    lambda s: _snap(s, models_for_a
+                                    if s["key"] == "channel:a" else ["m1"])):
+                return watch_mod.run_watch(self.app)
+
+        sweep(["m1"])                                    # baseline
+        self.assertEqual(sweep(["m2"])["appended"], 2)   # +m2, -m1
+        self.assertEqual(sweep(["m1"])["appended"], 2)   # +m1, -m2
+        self.assertEqual(sweep(["m2"])["appended"], 0)   # keys still known
+        self.assertEqual(len(watch_mod.load_events(self.app)), 4)
+
+    def test_sweep_does_not_rollback_read_marks(self):
+        # Events marked read during (or after) a sweep must survive the
+        # sweep's snapshots write-back.
+        def sweep(models_for_a):
+            with mock.patch.object(
+                    watch_mod, "snapshot_source",
+                    lambda s: _snap(s, models_for_a
+                                    if s["key"] == "channel:a" else ["m1"])):
+                return watch_mod.run_watch(self.app)
+
+        sweep(["m1"])
+        sweep(["m2"])  # +m2, -m1 on channel:a
+        events = self.app.changes_payload()["events"]
+        self.assertTrue(events)
+        self.app.mark_changes_read([e["id"] for e in events])
+        sweep(["m2"])  # unchanged sweep; previously wiped the marks
+        self.assertEqual(self.app.changes_payload()["unread"], 0)
+
 
 class ReadStateTests(unittest.TestCase):
     def setUp(self):
@@ -353,6 +448,18 @@ class ReadStateTests(unittest.TestCase):
 
     def test_readall_via_api_marks_everything(self):
         self.assertEqual(self.app.changes_payload()["events"], [])
+
+    def test_mark_read_keeps_sweep_snapshots_intact(self):
+        # mark_read rewrites only read_events onto the freshest on-disk
+        # state: a concurrent sweep's snapshots and dedup keys survive.
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1"])):
+            watch_mod.run_watch(self.app)
+        before = watch_mod.load_snapshots(self.app)["snapshots"]
+        self.app.mark_changes_read(["does-not-exist"])
+        after = watch_mod.load_snapshots(self.app)
+        self.assertEqual(after["snapshots"], before)
+        self.assertIn("does-not-exist", after["read_events"])
 
     def test_changes_payload_lists_source_state(self):
         with mock.patch.object(watch_mod, "snapshot_source",
