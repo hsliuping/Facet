@@ -16,7 +16,7 @@ fi
 $SUDO systemctl disable --now facet 2>/dev/null || true
 $SUDO rm -f "$UNIT_DST"
 $SUDO systemctl daemon-reload
-rm -rf "$FACET_HOME/venv"
+rm -rf "$FACET_HOME/venv" "$FACET_HOME/python"
 
 if [ "${1:-}" = "--purge" ]; then
   rm -rf "$FACET_HOME"
