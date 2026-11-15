@@ -2739,6 +2739,7 @@ function renderChanges() {
   const unread = data.unread || 0;
   const kindLabel = (k) => CHANGE_KINDS[k] || [k, 'unknown'];
   const events = data.events || [];
+  const mutedMap = data.muted || {};
   const modelsChip = (list, cls) => (list || []).slice(0, 8).map((m) =>
     `<span class="tag ${cls}" style="font-family:monospace">${esc(m)}</span>`).join(' ')
     + ((list || []).length > 8 ? `<span class="sub-note">…共 ${list.length} 个</span>` : '');
@@ -2752,33 +2753,78 @@ function renderChanges() {
       ? `<details><summary class="sub-note">页面摘录</summary><p class="sub-note" style="word-break:break-all">${esc(ev.evidence.excerpt)}</p></details>` : '';
     const readBtn = ev.status === 'unread'
       ? `<button class="btn small ghost" data-change-read="${esc(ev.id)}">标为已读</button>` : '';
+    const srcKey = ev.source && ev.source.key ? ev.source.key : '';
+    const isMuted = !!mutedMap[srcKey];
+    const mutedTag = isMuted ? '<span class="tag unknown">已静默</span>' : '';
+    const muteBtn = srcKey ? `<button class="btn small ghost" data-change-mute="${esc(srcKey)}"
+      data-change-muted="${isMuted ? '1' : ''}">${isMuted ? '恢复上报' : '静默此源'}</button>` : '';
+    const targets = ev.targets || [];
+    const mapUI = ev.kind === 'new_model' && targets.length
+      ? `<span class="sub-note">映射到</span><select data-change-target="${esc(ev.id)}">${
+        targets.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join('')
+      }</select><button class="btn small" data-change-map="${esc(ev.id)}">写入渠道</button>` : '';
     return `<div class="maint-item" style="align-items:flex-start;flex-wrap:wrap;gap:6px">
       <span class="tag ${kindCls}">${kindText}</span>
       <span style="flex:1;min-width:200px">
         <strong>${esc(ev.source && ev.source.label || '—')}</strong>
+        ${mutedTag}
         <span class="sub-note">${CHANGE_ORIGINS[ev.source && ev.source.origin] || ''} · ${when}</span>
         ${chips}${chips2}${excerpt}
       </span>
-      ${readBtn}
+      ${mapUI}${muteBtn}${readBtn}
     </div>`;
   }).join('') : '<p class="sub-note">暂无变更事件。首次扫描只建立基线，之后的模型集变化才会记为事件。</p>';
   const errSources = (data.sources || []).filter((s) => s.ok === false);
   const errText = errSources.length
     ? ` · ${errSources.length} 个信息源抓取失败（${errSources.slice(0, 3).map((s) => esc(s.label)).join('、')}${errSources.length > 3 ? '…' : ''}）` : '';
+  const mutedCount = summary.muted || Object.keys(mutedMap).length;
+  const notify = data.notify || {};
   note.textContent = `监视 ${summary.total || 0} 个信息源`
-    + ` · 事件 ${events.length} 条 · 未读 ${unread} 条${errText}`;
+    + ` · 事件 ${events.length} 条 · 未读 ${unread} 条${errText}`
+    + (mutedCount ? ` · 静默 ${mutedCount} 个源` : '')
+    + (notify.ok ? ' · 变更通知已接入' : ' · 变更通知未配置');
+  note.title = notify.ok ? '' : (notify.hint || '');
 }
 
 $('changes-body').addEventListener('click', async (e) => {
-  const b = e.target.closest('button[data-change-read]');
-  if (!b) return;
-  b.disabled = true;
+  const read = e.target.closest('button[data-change-read]');
+  if (read) {
+    read.disabled = true;
+    try {
+      await api('/api/changes/read', { method: 'POST', body: { ids: [read.dataset.changeRead] } });
+      await loadChanges();
+    } catch (err) {
+      toast(err.message, 'bad');
+      read.disabled = false;
+    }
+    return;
+  }
+  const mute = e.target.closest('button[data-change-mute]');
+  if (mute) {
+    mute.disabled = true;
+    try {
+      await api('/api/changes/mute', { method: 'POST', body: {
+        keys: [mute.dataset.changeMute], muted: mute.dataset.changeMuted !== '1' } });
+      await loadChanges();
+    } catch (err) {
+      toast(err.message, 'bad');
+      mute.disabled = false;
+    }
+    return;
+  }
+  const map = e.target.closest('button[data-change-map]');
+  if (!map) return;
+  const select = map.closest('.maint-item') &&
+    map.closest('.maint-item').querySelector(`select[data-change-target="${map.dataset.changeMap}"]`);
+  map.disabled = true;
   try {
-    await api('/api/changes/read', { method: 'POST', body: { ids: [b.dataset.changeRead] } });
+    const result = await api('/api/changes/map', { method: 'POST', body: {
+      id: map.dataset.changeMap, channel: select ? select.value : '' } });
+    toast(`已写入渠道 ${result.channel}：${(result.models || []).join('、')}`);
     await loadChanges();
   } catch (err) {
     toast(err.message, 'bad');
-    b.disabled = false;
+    map.disabled = false;
   }
 });
 
