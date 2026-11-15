@@ -49,7 +49,7 @@ from .notifier import ReminderService
 from .persistence import StatePersistence
 from .probe import MAX_CHANNELS, pick_model, probe_channel, probe_models
 from .quota import parse_quota, quota_exhaustion_wait
-from .report import build_report
+from .report import build_member_costs, build_report
 from .responses import ResponsesAdapter, to_chat_request
 from .usage import UsageRecorder
 
@@ -1203,6 +1203,16 @@ class App:
             with self.usage.lock:
                 days = {day: dict(buckets) for day, buckets in self.usage.data["days"].items()}
         return build_report(self._sub_records(), days, month)
+
+    def member_costs(self, month: str | None = None) -> dict:
+        days: dict = {}
+        users: dict = {}
+        if self.usage:
+            with self.usage.lock:
+                days = {day: dict(buckets) for day, buckets in self.usage.data["days"].items()}
+                users = {name: dict(bucket)
+                         for name, bucket in (self.usage.data.get("users") or {}).items()}
+        return build_member_costs(self._sub_records(), users, days, month)
 
     def blocked_channels(self) -> dict[str, str]:
         """Channels whose every linked subscription has expired."""

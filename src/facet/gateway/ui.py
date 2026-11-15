@@ -370,6 +370,17 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, {"ok": True, "providers": providers})
         return True
 
+    # /api/report/members must precede the generic /api/report prefix: its
+    # fourth segment is a literal, not a month.
+    if path.startswith("/api/report/members") and method == "GET":
+        parts = path.split("/")
+        month = parts[4] if len(parts) > 4 and parts[4] else None
+        try:
+            _json(h, 200, app.member_costs(month))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
     if (path == "/api/report" or path.startswith("/api/report/")) and method == "GET":
         parts = path.split("/")
         month = parts[3] if len(parts) > 3 and parts[3] else None
