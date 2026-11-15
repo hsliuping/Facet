@@ -80,7 +80,7 @@ install_standalone_python() {
     *) err "暂不支持的 CPU 架构 $(uname -m)，请手动安装 Python 3.10+ 后重跑本脚本" ;;
   esac
   file="cpython-$PY_VER+$PY_TAG-$arch-apple-darwin-install_only.tar.gz"
-  tarball="$(mktemp -t facet-python)"
+  tarball="$(mktemp "${TMPDIR:-/tmp}/facet-python.XXXXXX")"
   for url in \
     "https://registry.npmmirror.com/-/binary/python-build-standalone/$PY_TAG/$file" \
     "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_TAG/$file"; do
