@@ -83,36 +83,17 @@ tools/macos/install.sh            # venv 装到 ~/.facet，注册开机自启 + 
 - 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
 - 卸载：`tools/macos/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
 
-### Linux 安装（systemd 服务）
+### Linux 一键安装（systemd 服务）
 
 ```bash
 git clone https://github.com/hsliuping/Facet && cd Facet
-python3 -m venv ~/.facet/venv && ~/.facet/venv/bin/pip install .
-mkdir -p ~/.facet/data
+tools/linux/install.sh            # venv 装到 ~/.facet，注册开机自启 + 崩溃自动重启
 ```
 
-注册 systemd 服务（开机自启 + 崩溃自动重启）：
-
-```bash
-sudo tee /etc/systemd/system/facet.service >/dev/null <<EOF
-[Unit]
-Description=Facet LLM gateway
-After=network-online.target
-
-[Service]
-User=$USER
-ExecStart=$HOME/.facet/venv/bin/facet serve --config $HOME/.facet/data/router.json --host 127.0.0.1 --port 8787
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl daemon-reload && sudo systemctl enable --now facet
-```
-
-- 状态与日志：`systemctl status facet`、`journalctl -u facet -f`；
-- 停用：`sudo systemctl disable --now facet`（配置保留在 `~/.facet/data/`）；
-- 服务化参数（`--config` / `--port` 等）见下文[「服务化运行」](#服务化运行)。
+- 装完自动做健康检查并打印控制台地址；服务崩溃后 systemd 自动拉起。
+- 配置与数据在 `~/.facet/`（`data/router.json`）；日志：`journalctl -u facet -f`。
+- 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
+- 卸载：`tools/linux/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
 
 容器部署见下文[「Docker 部署」](#docker-部署)。
 
