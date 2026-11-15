@@ -1,0 +1,15 @@
+# Facet gateway systemd unit template. install.sh replaces the __PLACEHOLDER__
+# strings and installs this as /etc/systemd/system/facet.service.
+[Unit]
+Description=Facet LLM gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__FACET_USER__
+ExecStart="__FACET_VENV__/bin/facet" serve --config "__FACET_HOME__/data/router.json" --host __FACET_HOST__ --port __FACET_PORT__
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
