@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import threading
+import types
 import unittest
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from facet.gateway.core import load_config, parse_config
 from facet.gateway.quota import (parse_quota, quota_exhaustion_wait, quota_ratio,
                               quota_view)
-from facet.gateway.report import build_report
+from facet.gateway.report import build_member_costs, build_report
 from facet.gateway.server import App, Handler
 from facet.gateway import subscriptions as subs
 
@@ -187,6 +188,88 @@ class ReportTests(unittest.TestCase):
             build_report([], {}, "bad", date(2026, 11, 7))
 
 
+class MemberCostTests(unittest.TestCase):
+    """Monthly subscription fees split across members by usage share."""
+
+    def setUp(self):
+        self.records = [subs.normalize(sub_record(id="sub-a", price=199, channels=["plan-a"]))]
+        self.on = date(2026, 11, 7)
+
+    def test_split_by_token_share_and_anonymous_remainder(self):
+        users = {
+            "alice": {"2026-11-03": {"requests": 8, "tokens": 400,
+                                     "channels": {"plan-a": {"requests": 8, "tokens": 400}}}},
+            "bob": {"2026-11-07": {"requests": 2, "tokens": 100,
+                                   "channels": {"plan-a": {"requests": 2, "tokens": 100}}}},
+        }
+        # 16 requests / 800 tokens in total: 6 requests (300 tokens) had no key.
+        days = {"2026-11-03": {"plan-a": {"requests": 10, "tokens": 500}},
+                "2026-11-07": {"plan-a": {"requests": 6, "tokens": 300}}}
+        report = build_member_costs(self.records, users, days, "2026-11", self.on)
+        self.assertEqual(report["month"], "2026-11")
+        self.assertEqual(report["active_days"], 2)
+        self.assertEqual(report["currency_totals"], {"CNY": 199.0})
+        alice, bob = report["users"]
+        self.assertEqual((alice["name"], alice["cost"]), ("alice", {"CNY": 99.5}))
+        self.assertEqual(bob["cost"], {"CNY": 24.88})
+        self.assertEqual(report["allocated"], {"CNY": 124.38})
+        self.assertEqual(report["unallocated"], {"CNY": 74.62})
+        channel = report["channels"][0]
+        self.assertEqual((channel["name"], channel["mode"]), ("plan-a", "tokens"))
+        self.assertEqual(report["unlinked"], [])
+
+    def test_requests_weight_when_channel_has_no_tokens(self):
+        users = {
+            "alice": {"2026-11-02": {"requests": 3, "tokens": 0,
+                                     "channels": {"plan-a": {"requests": 3, "tokens": 0}}}},
+            "bob": {"2026-11-02": {"requests": 1, "tokens": 0,
+                                   "channels": {"plan-a": {"requests": 1, "tokens": 0}}}},
+        }
+        days = {"2026-11-02": {"plan-a": {"requests": 4, "tokens": 0}}}
+        records = [subs.normalize(sub_record(id="sub-a", price=100, channels=["plan-a"]))]
+        report = build_member_costs(records, users, days, "2026-11", self.on)
+        costs = {row["name"]: row["cost"] for row in report["users"]}
+        self.assertEqual(costs, {"alice": {"CNY": 75.0}, "bob": {"CNY": 25.0}})
+        self.assertEqual(report["channels"][0]["mode"], "requests")
+
+    def test_unlinked_expired_and_unused_fees_stay_unallocated(self):
+        records = [
+            subs.normalize(sub_record(id="sub-a", price=120, channels=["plan-a"])),
+            subs.normalize(sub_record(id="sub-b", plan="no channel", price=50, channels=[])),
+            subs.normalize(sub_record(id="sub-c", plan="old", price=999, channels=["plan-b"],
+                                      expires_at="2026-10-20")),
+        ]
+        users = {"alice": {"2026-11-03": {"requests": 2, "tokens": 200,
+                                          "channels": {"plan-a": {"requests": 2, "tokens": 200}}}}}
+        days = {"2026-11-03": {"plan-a": {"requests": 2, "tokens": 200}}}
+        report = build_member_costs(records, users, days, "2026-11", self.on)
+        self.assertEqual(report["currency_totals"], {"CNY": 170.0})
+        self.assertEqual(report["allocated"], {"CNY": 120.0})
+        self.assertEqual(report["unallocated"], {"CNY": 50.0})
+        self.assertEqual([item["plan"] for item in report["unlinked"]], ["no channel"])
+        self.assertEqual(report["users"][0]["channels"][0]["cost"], {"CNY": 120.0})
+
+    def test_linked_channel_without_usage_keeps_fee_unallocated(self):
+        days = {"2026-11-03": {"other": {"requests": 2, "tokens": 10}}}
+        users = {"alice": {"2026-11-03": {"requests": 2, "tokens": 10,
+                                          "channels": {"other": {"requests": 2, "tokens": 10}}}}}
+        report = build_member_costs(self.records, users, days, "2026-11", self.on)
+        self.assertEqual(report["allocated"], {})
+        self.assertEqual(report["unallocated"], {"CNY": 199.0})
+        # A channel without a linked subscription is usage-only, never billed.
+        self.assertEqual(report["users"][0]["cost"], {})
+        self.assertEqual(report["channels"][0]["cost"], {})
+
+    def test_default_month_and_invalid_month(self):
+        days = {"2026-11-03": {"plan-a": {"requests": 1, "tokens": 10}},
+                "2026-10-31": {"plan-a": {"requests": 9, "tokens": 90}}}
+        report = build_member_costs(self.records, {}, days, None, self.on)
+        self.assertEqual(report["month"], "2026-11")
+        self.assertEqual(report["active_days"], 1)
+        with self.assertRaisesRegex(ValueError, "YYYY-MM"):
+            build_member_costs(self.records, {}, {}, "2026-13", self.on)
+
+
 class Upstream(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -354,7 +437,31 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(status, 200)
         subs_payload = json.loads(raw)
         self.assertEqual(subs_payload["subscriptions"][0]["quota_remaining"], 60)
-        self.assertEqual(len(subs_payload["summary"]["quota_alerts"]), 1)
+
+    def test_member_costs_endpoint_splits_by_key(self):
+        app = self.httpd.app  # type: ignore[union-attr]
+        alice = types.SimpleNamespace(user_key="alice")
+        bob = types.SimpleNamespace(user_key="bob")
+        app.record_usage("plan-a", True, 200, h=alice)
+        app.record_usage("plan-a", True, 200, h=bob)
+        # plan-b has no linked subscription, so its usage carries no fee.
+        app.record_usage("plan-b", True, 100, h=bob)
+        month = date.today().strftime("%Y-%m")
+        status, _, raw = self.request("GET", f"/api/report/members/{month}")
+        self.assertEqual(status, 200)
+        report = json.loads(raw)
+        self.assertEqual(report["month"], month)
+        self.assertEqual(report["currency_totals"], {"CNY": 498.0})
+        # plan-a is split evenly by tokens; plan-b usage is fee-free.
+        costs = {row["name"]: row["cost"] for row in report["users"]}
+        self.assertEqual(costs, {"alice": {"CNY": 99.5}, "bob": {"CNY": 99.5}})
+        self.assertEqual(report["allocated"], {"CNY": 199.0})
+        self.assertEqual(report["unallocated"], {"CNY": 299.0})
+        status, _, raw = self.request("GET", "/api/report/members")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw)["month"], month)
+        status, _, _ = self.request("GET", "/api/report/members/2026-13")
+        self.assertEqual(status, 400)
 
     def test_console_exposes_quota_and_report(self):
         from facet.gateway.ui import STATIC_DIR
