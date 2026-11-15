@@ -11,7 +11,7 @@ UID_N="$(id -u)"
 
 launchctl bootout "gui/$UID_N" "$PLIST_DST" 2>/dev/null || true
 rm -f "$PLIST_DST"
-rm -rf "$FACET_HOME/venv"
+rm -rf "$FACET_HOME/venv" "$FACET_HOME/python"
 
 if [ "${1:-}" = "--purge" ]; then
   rm -rf "$FACET_HOME"

@@ -8,10 +8,14 @@
 #   FACET_HOME=~/facet FACET_PORT=9000 tools/macos/install.sh
 #
 # 布局：
+#   $FACET_HOME/python  独立 CPython（系统 Python 过旧时自动铺设）
 #   $FACET_HOME/venv    独立虚拟环境（不污染用户 site-packages）
 #   $FACET_HOME/data    router.json / keys.json 等状态文件
 #   $FACET_HOME/logs    launchd 收集的网关日志
 #   ~/Library/LaunchAgents/com.facet.gateway.plist
+#
+# 无需自备 Python：缺失或版本过旧时自动安装——有 Homebrew 就用 brew，
+# 没有（或 brew 装不上）再自动铺独立 CPython 到 $FACET_HOME/python，不碰系统环境。
 set -euo pipefail
 
 FACET_HOME="${FACET_HOME:-$HOME/.facet}"
@@ -26,19 +30,93 @@ UID_N="$(id -u)"
 
 log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-
-# 1. Python 3.10+
-command -v python3 >/dev/null 2>&1 || err "未找到 python3，请先安装 Python 3.10+（brew install python）"
-python3 - <<'PY' || err "python3 版本过低，Facet 需要 3.10+"
-import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)
+download() {   # download <url> <dst>：curl / wget / python3 三层兜底
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 10 -m 600 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -T 10 -O "$2" "$1"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" "$2" <<'PY'
+import sys, urllib.request
+urllib.request.urlretrieve(sys.argv[1], sys.argv[2])
 PY
+  else
+    return 1
+  fi
+}
+
+# 1. Python 3.10+：已有就用；没有就自动装，不给用户添思考
+# （macOS 自带的 /usr/bin/python3 是 3.9，版本够不上，会自动走安装分支）
+find_python() {
+  local c
+  for c in python3 python3.13 python3.12 python3.11 python3.10; do
+    if command -v "$c" >/dev/null 2>&1 \
+       && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+try_brew_install() {   # Homebrew 装 Python，成功则直接输出解释器路径
+  command -v brew >/dev/null 2>&1 || return 1
+  brew install python@3.12 >/dev/null 2>&1 || true
+  local p
+  p="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"
+  [ -x "$p" ] || return 1
+  printf '%s' "$p"
+}
+
+# 独立 CPython（python-build-standalone）：没有 Homebrew 时的兜底，铺到
+# $FACET_HOME/python，不碰系统环境；双下载源自动切换（国内优先镜像）。
+PY_TAG=20261110
+PY_VER=3.12.16
+install_standalone_python() {
+  local arch file url tarball
+  case "$(uname -m)" in
+    x86_64)        arch="x86_64" ;;
+    arm64|aarch64) arch="aarch64" ;;
+    *) err "暂不支持的 CPU 架构 $(uname -m)，请手动安装 Python 3.10+ 后重跑本脚本" ;;
+  esac
+  file="cpython-$PY_VER+$PY_TAG-$arch-apple-darwin-install_only.tar.gz"
+  tarball="$(mktemp -t facet-python)"
+  for url in \
+    "https://registry.npmmirror.com/-/binary/python-build-standalone/$PY_TAG/$file" \
+    "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_TAG/$file"; do
+    log "下载独立 CPython $PY_VER：$url"
+    if download "$url" "$tarball" 2>/dev/null; then
+      rm -rf "$FACET_HOME/python"
+      mkdir -p "$FACET_HOME"
+      tar -xzf "$tarball" -C "$FACET_HOME"   # 展开为 $FACET_HOME/python
+      rm -f "$tarball"
+      [ -x "$FACET_HOME/python/bin/python3" ] || err "独立 CPython 解压异常"
+      return 0
+    fi
+  done
+  rm -f "$tarball"
+  err "独立 CPython 下载失败（网络不通？）。可手动安装 Python 3.10+（brew install python@3.12）后重跑本脚本"
+}
+
+PYTHON="$(find_python || true)"
+if [ -z "$PYTHON" ]; then
+  log "未检测到 Python 3.10+，正在自动安装…"
+  PYTHON="$(try_brew_install || true)"
+fi
+if [ -z "$PYTHON" ]; then
+  log "没有可用的 Homebrew Python，改用独立 CPython（不影响系统环境）"
+  install_standalone_python
+  PYTHON="$FACET_HOME/python/bin/python3"
+fi
+log "使用 Python：$PYTHON（$("$PYTHON" --version 2>&1)）"
 
 # 2. venv + 安装（Facet 零第三方依赖，venv 只有标准库+本项目）
 log "安装 Facet 到 $VENV（来源：$SRC）"
 mkdir -p "$FACET_HOME/data" "$FACET_HOME/logs"
 if [ ! -x "$VENV/bin/pip" ]; then
   rm -rf "$VENV"   # 清掉上次失败留下的半成品目录
-  python3 -m venv "$VENV"
+  "$PYTHON" -m venv "$VENV" \
+    || { rm -rf "$VENV"; err "创建虚拟环境失败（$("$PYTHON" --version 2>&1)），请确认 $PYTHON -m venv 可用"; }
 fi
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet --force-reinstall "$SRC"
