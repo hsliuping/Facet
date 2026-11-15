@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-09T10:36:57Z",
+  "generated_at": "2026-11-14T23:17:48Z",
   "generator": "weekly_maintenance@0.1.0",
   "policy": {
     "free_first": true,
@@ -10,23 +10,59 @@
     "openai": {
       "facet-auto": {
         "current": [
-          "codex-plan",
-          "glm-plan",
-          "free-tier",
-          "魔搭免费",
-          "百炼免费",
-          "nvidia-nim",
-          "$free",
-          "deepseek"
+          "opencodego",
+          "火山引擎agentplan6198",
+          "火山引擎codingplan0241",
+          "deepseek",
+          "$free"
         ],
         "suggested": [
-          "free-tier",
-          "nvidia-nim",
-          "魔搭免费",
           "百炼免费",
-          "deepseek"
+          "opencodego免费",
+          "火山引擎免费-6198",
+          "火山引擎免费0241",
+          "free-tier",
+          "魔搭免费",
+          "nvidia-nim",
+          "deepseek",
+          "glm-plan",
+          "opencodego",
+          "火山引擎agentplan6198",
+          "火山引擎codingplan0241"
         ],
         "evidence": {
+          "百炼免费": {
+            "tier": "free",
+            "wire": "kimi-k3.1-pro",
+            "model": "moonshotai/kimi-k3.1-pro",
+            "context_window": 1048576,
+            "tool_call": true,
+            "output_per_mtok": 10.0
+          },
+          "opencodego免费": {
+            "tier": "free",
+            "wire": "longcat-2.5-free",
+            "model": "opencode/longcat-2.5-free",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.0
+          },
+          "火山引擎免费-6198": {
+            "tier": "free",
+            "wire": "deepseek-v4-1-flash-economy-261017",
+            "model": "byteplus/deepseek-v4-1-flash-economy-261017",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.48
+          },
+          "火山引擎免费0241": {
+            "tier": "free",
+            "wire": "deepseek-v4-1-flash-261017",
+            "model": "byteplus/deepseek-v4-1-flash-261017",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.6
+          },
           "free-tier": {
             "tier": "free",
             "wire": "nvidia/nemotron-3.5-lightning:free",
@@ -35,29 +71,21 @@
             "tool_call": true,
             "output_per_mtok": 0.0
           },
-          "nvidia-nim": {
-            "tier": "free",
-            "wire": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "context_window": 262144,
-            "tool_call": true,
-            "output_per_mtok": 0.0
-          },
           "魔搭免费": {
             "tier": "free",
-            "wire": "Qwen/Qwen3.5-122B-A10B",
-            "model": "alibaba/qwen3.5-122b-a10b",
+            "wire": "Qwen/Qwen3.8-Flash-Next",
+            "model": "requesty/qwen3.8-flash-next",
             "context_window": 262144,
             "tool_call": true,
-            "output_per_mtok": 3.2
+            "output_per_mtok": 0.5
           },
-          "百炼免费": {
+          "nvidia-nim": {
             "tier": "free",
-            "wire": "qwen3.8-2.4t-a95b",
-            "model": "aihubmix/qwen3.8-2.4t-a95b",
-            "context_window": 262000,
+            "wire": "nvidia/nemotron-3-ultra-550b-a55b",
+            "model": "baseten/nvidia-nemotron-3-ultra-550b-a55b",
+            "context_window": 202800,
             "tool_call": true,
-            "output_per_mtok": 6.0
+            "output_per_mtok": 2.4
           },
           "deepseek": {
             "tier": "paid",
@@ -66,25 +94,65 @@
             "context_window": 1048576,
             "tool_call": true,
             "output_per_mtok": 0.6
+          },
+          "glm-plan": {
+            "tier": "unknown",
+            "wire": "glm-5.3-flash",
+            "model": "zhipuai/glm-5.3-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.41831
+          },
+          "opencodego": {
+            "tier": "paid",
+            "wire": "deepseek-v4.1-flash",
+            "model": "alibaba-cn/deepseek-v4.1-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 1.19015
+          },
+          "火山引擎agentplan6198": {
+            "tier": "paid",
+            "wire": "glm-5.3",
+            "model": "alibaba-cn/glm-5.3",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 3.851
+          },
+          "火山引擎codingplan0241": {
+            "tier": "paid",
+            "wire": "glm-5.3-flash",
+            "model": "zhipuai/glm-5.3-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.41831
           }
         }
       },
       "facet-cheap": {
         "current": [
-          "free-tier",
-          "魔搭免费",
+          "opencodego免费",
+          "火山引擎免费-6198",
           "百炼免费",
-          "$free",
-          "glm-plan",
+          "火山引擎免费0241",
+          "free-tier",
           "nvidia-nim",
-          "deepseek"
+          "魔搭免费",
+          "$free"
         ],
         "suggested": [
           "free-tier",
-          "nvidia-nim",
+          "opencodego免费",
+          "火山引擎免费-6198",
           "魔搭免费",
+          "火山引擎免费0241",
+          "nvidia-nim",
           "百炼免费",
-          "deepseek"
+          "glm-plan",
+          "火山引擎codingplan0241",
+          "deepseek",
+          "opencodego",
+          "火山引擎agentplan6198"
         ],
         "evidence": {
           "free-tier": {
@@ -95,29 +163,69 @@
             "tool_call": true,
             "output_per_mtok": 0.0
           },
-          "nvidia-nim": {
+          "opencodego免费": {
             "tier": "free",
-            "wire": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "context_window": 262144,
+            "wire": "longcat-2.5-free",
+            "model": "opencode/longcat-2.5-free",
+            "context_window": 1000000,
             "tool_call": true,
             "output_per_mtok": 0.0
           },
+          "火山引擎免费-6198": {
+            "tier": "free",
+            "wire": "deepseek-v4-1-flash-economy-261017",
+            "model": "byteplus/deepseek-v4-1-flash-economy-261017",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.48
+          },
           "魔搭免费": {
             "tier": "free",
-            "wire": "Qwen/Qwen3.5-122B-A10B",
-            "model": "alibaba/qwen3.5-122b-a10b",
+            "wire": "Qwen/Qwen3.8-Flash-Next",
+            "model": "requesty/qwen3.8-flash-next",
             "context_window": 262144,
             "tool_call": true,
-            "output_per_mtok": 3.2
+            "output_per_mtok": 0.5
+          },
+          "火山引擎免费0241": {
+            "tier": "free",
+            "wire": "deepseek-v4-1-flash-261017",
+            "model": "byteplus/deepseek-v4-1-flash-261017",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.6
+          },
+          "nvidia-nim": {
+            "tier": "free",
+            "wire": "nvidia/nemotron-3-ultra-550b-a55b",
+            "model": "baseten/nvidia-nemotron-3-ultra-550b-a55b",
+            "context_window": 202800,
+            "tool_call": true,
+            "output_per_mtok": 2.4
           },
           "百炼免费": {
             "tier": "free",
-            "wire": "qwen3.8-2.4t-a95b",
-            "model": "aihubmix/qwen3.8-2.4t-a95b",
-            "context_window": 262000,
+            "wire": "kimi-k3.1-pro",
+            "model": "moonshotai/kimi-k3.1-pro",
+            "context_window": 1048576,
             "tool_call": true,
-            "output_per_mtok": 6.0
+            "output_per_mtok": 10.0
+          },
+          "glm-plan": {
+            "tier": "unknown",
+            "wire": "glm-5.3-flash",
+            "model": "zhipuai/glm-5.3-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.41831
+          },
+          "火山引擎codingplan0241": {
+            "tier": "paid",
+            "wire": "glm-5.3-flash",
+            "model": "zhipuai/glm-5.3-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 0.41831
           },
           "deepseek": {
             "tier": "paid",
@@ -126,6 +234,22 @@
             "context_window": 1048576,
             "tool_call": true,
             "output_per_mtok": 0.6
+          },
+          "opencodego": {
+            "tier": "paid",
+            "wire": "deepseek-v4.1-flash",
+            "model": "alibaba-cn/deepseek-v4.1-flash",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 1.19015
+          },
+          "火山引擎agentplan6198": {
+            "tier": "paid",
+            "wire": "glm-5.3",
+            "model": "alibaba-cn/glm-5.3",
+            "context_window": 1000000,
+            "tool_call": true,
+            "output_per_mtok": 3.851
           }
         }
       }
@@ -146,9 +270,7 @@
     }
   },
   "skipped": {
-    "unresolved_flagship": [
-      "火山引擎免费"
-    ],
+    "unresolved_flagship": [],
     "no_tool_call": [],
     "small_context": []
   }
