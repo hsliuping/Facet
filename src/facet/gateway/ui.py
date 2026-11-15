@@ -386,7 +386,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         except ValueError:
             days = 30
         if app.usage:
-            _json(h, 200, app.usage.user_stats(days))
+            _json(h, 200, app.member_usage(days))
         else:
             _json(h, 200, {"range": days, "users": [], "days": [],
                            "note": "usage recorder not enabled"})
@@ -453,6 +453,19 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": str(exc)}})
         except OSError as exc:
             _json(h, 500, {"error": {"message": f"cannot save keys file: {exc}"}})
+        else:
+            _json(h, 200, record)
+        return True
+
+    if path == "/api/keys/limits" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+            if not isinstance(incoming, dict):
+                raise ValueError("body must be an object")
+            record = app.update_key_limits(str(incoming.get("key") or ""),
+                                           incoming.get("limits"))
+        except (ValueError, AttributeError, OSError) as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
         else:
             _json(h, 200, record)
         return True

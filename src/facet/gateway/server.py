@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from datetime import datetime
+from datetime import date, datetime
 
 from . import subscriptions as subs
 from . import ui
@@ -58,6 +58,9 @@ UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
 # First-run management credential: simple to type, replaced by the console's
 # rotate action (or by listen.admin_key) as soon as the deployment is set up.
 DEFAULT_ADMIN_KEY = "admin"
+# Sliding window (seconds) behind a member key's `rpm` cap; timestamps of
+# accepted inference calls are kept in memory only, so a restart resets it.
+MEMBER_RPM_WINDOW = 60.0
 # How long a vendor plan snapshot is served without re-hitting the Ark
 # management plane; the subscriptions page reloads often enough that a live
 # fetch per view would be wasteful and slow.
@@ -1030,6 +1033,11 @@ class App:
         # Member keys for small-team attribution; absent file -> no members,
         # and the gateway behaves exactly as before.
         self.keys = KeyStore(keys_file) if keys_file else None
+        # Sliding-window timestamps for per-member rpm caps (see
+        # _member_limited). Daily/monthly quotas read the usage recorder
+        # instead, so they survive restarts without extra bookkeeping.
+        self.member_rpm: dict[str, list[float]] = {}
+        self._member_rpm_lock = threading.Lock()
         # Vendor-reported free quota from the last alignment sweep. Kept next
         # to the config so a restart keeps showing real numbers, and so the
         # free-quota gate can see consumption the gateway itself did not make.
@@ -3890,10 +3898,14 @@ class App:
         lands in the anonymous bucket).
         """
         provided = self._provided_key(h)
-        member = self.keys.match(provided) if self.keys else None
+        member_record = self.keys.lookup(provided) if self.keys else None
+        member = member_record["name"] if member_record else None
         # Resolved once here; handlers thread it into usage records as
         # `getattr(h, "user_key", "")` (tests pass h=None, default covers it).
+        # The full record rides along so _member_limited sees the caps
+        # without a second key scan.
         h.user_key = member or ""
+        h.member_record = member_record
         if member:
             return True
         expected = self.config.listen.api_key
@@ -3924,6 +3936,77 @@ class App:
             provided = auth[7:] if auth.lower().startswith("bearer ") else ""
         return hmac.compare_digest(provided, expected)
 
+    # -------------------------------------------------------- member quotas
+    def _member_limited(self, member: str, record: dict | None) -> tuple[int, str] | None:
+        """(status, message) when an inference call would break a member cap.
+
+        Caps are per key: rpm uses an in-memory sliding window, request/token
+        quotas read the usage recorder (today / this month). The RPM timestamp
+        is appended only after every check passes, so a rejected call does not
+        eat a slot. No limits -> None, exactly as before.
+        """
+        limits = (record or {}).get("limits") or {}
+        if not member or not limits:
+            return None
+        now = time.time()
+        rpm = int(limits.get("rpm") or 0)
+        if rpm:
+            with self._member_rpm_lock:
+                stamps = self.member_rpm.setdefault(member, [])
+                horizon = now - MEMBER_RPM_WINDOW
+                while stamps and stamps[0] <= horizon:
+                    stamps.pop(0)
+                if len(stamps) >= rpm:
+                    return (429, f"成员 {member} 已达到每分钟 {rpm} 次请求上限")
+        if self.usage:
+            today = date.today()
+            day_requests = int(limits.get("daily_requests") or 0)
+            day_tokens = int(limits.get("daily_tokens") or 0)
+            month_requests = int(limits.get("monthly_requests") or 0)
+            month_tokens = int(limits.get("monthly_tokens") or 0)
+            if day_requests or day_tokens:
+                used = self.usage.member_totals(member, today)
+                if day_requests and used["requests"] >= day_requests:
+                    return (429, f"成员 {member} 今日请求数配额已用完"
+                                 f"（已用 {used['requests']} / 上限 {day_requests}）")
+                if day_tokens and used["tokens"] >= day_tokens:
+                    return (429, f"成员 {member} 今日 token 配额已用完"
+                                 f"（已用 {used['tokens']} / 上限 {day_tokens}）")
+            if month_requests or month_tokens:
+                used = self.usage.member_totals(member, today.replace(day=1))
+                if month_requests and used["requests"] >= month_requests:
+                    return (429, f"成员 {member} 本月请求数配额已用完"
+                                 f"（已用 {used['requests']} / 上限 {month_requests}）")
+                if month_tokens and used["tokens"] >= month_tokens:
+                    return (429, f"成员 {member} 本月 token 配额已用完"
+                                 f"（已用 {used['tokens']} / 上限 {month_tokens}）")
+        if rpm:
+            with self._member_rpm_lock:
+                self.member_rpm.setdefault(member, []).append(now)
+        return None
+
+    def update_key_limits(self, key: str, limits) -> dict:
+        """Replace one member key's quota block; ValueError when it is gone."""
+        if not self.keys:
+            raise ValueError("成员 Key 功能未启用")
+        record = self.keys.set_limits(key, limits)
+        if record is None:
+            raise ValueError("成员 Key 不存在或已被删除")
+        return record
+
+    def member_usage(self, days: int = 30) -> dict:
+        """Member usage stats merged with each key's current limits/state."""
+        if not self.usage:
+            return {"range": days, "today": date.today().isoformat(), "users": [],
+                    "days": [], "note": "usage recorder not enabled"}
+        payload = self.usage.user_stats(days)
+        by_name = {row["name"]: row for row in (self.keys.list() if self.keys else [])}
+        for row in payload.get("users") or []:
+            record = by_name.get(row.get("name")) or {}
+            row["limits"] = record.get("limits") or {}
+            row["enabled"] = bool(record.get("enabled", True))
+        return payload
+
     # --------------------------------------------------------------- dispatch
     def dispatch(self, h: BaseHTTPRequestHandler, method: str, path: str, raw: bytes) -> None:
         if ui.handle(self, h, method, path, raw):
@@ -3931,6 +4014,15 @@ class App:
         if not self._authorized(h):
             _json(h, 401, {"error": {"message": "invalid gateway key"}})
             return
+        # Per-member caps apply to inference calls only (count_tokens is local
+        # and free); keyless callers and keys without limits pass untouched.
+        member = getattr(h, "user_key", "")
+        if (member and method == "POST" and path.startswith("/v1/")
+                and path != "/v1/messages/count_tokens"):
+            limited = self._member_limited(member, getattr(h, "member_record", None))
+            if limited:
+                _json(h, limited[0], {"error": {"message": limited[1]}})
+                return
         if method == "GET" and path == "/health":
             now = time.time()
             snap = self.store.snapshot(now)["channels"]
