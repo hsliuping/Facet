@@ -2132,6 +2132,13 @@ function channelSnap(name) {
   return (state.snapshot?.channels || []).find((c) => c.name === name);
 }
 
+// The channel's auto target lives inside the models mapping — /api/config
+// exposes no top-level `auto` field, so reading ch.auto always yields
+// undefined and made every chain look like it had no ready landing spot.
+function channelAuto(ch) {
+  return (ch && (ch.models || {}).auto) || '';
+}
+
 function modelStateOf(exposed) {
   return (state.snapshot?.model_states || []).find((m) => m.model === exposed);
 }
@@ -2160,8 +2167,9 @@ function currentLanding(route) {
   for (const node of nodes) {
     const ch = channelEntry(node.name);
     const snap = channelSnap(node.name);
-    if (pairReady(ch, snap, ch && ch.auto)) {
-      return { cls: 'active', text: node.name + ' · ' + ch.auto };
+    const auto = channelAuto(ch);
+    if (pairReady(ch, snap, auto)) {
+      return { cls: 'active', text: node.name + ' · ' + auto };
     }
   }
   return { cls: 'warn', text: '链内暂无可用落点' };
@@ -2179,9 +2187,10 @@ function chainDetail(route) {
     const snap = channelSnap(node.name);
     const dead = !ch || ch.enabled === false;
     const pairs = [];
-    if (ch && ch.auto) {
-      const st = pairStatus(ch, snap, ch.auto);
-      pairs.push(`<li><span class="tag mixed">auto</span><code>${esc(ch.auto)}</code><span class="tag ${st.cls}">${esc(st.text)}</span></li>`);
+    const auto = channelAuto(ch);
+    if (auto) {
+      const st = pairStatus(ch, snap, auto);
+      pairs.push(`<li><span class="tag mixed">auto</span><code>${esc(auto)}</code><span class="tag ${st.cls}">${esc(st.text)}</span></li>`);
     }
     Object.entries((ch && ch.models) || {}).forEach(([exposed, wire]) => {
       if (exposed === 'auto' || exposed === '*') return;
