@@ -1,0 +1,102 @@
+name: install-smoke
+
+# 一键安装脚本冒烟测试：在真实 macOS / Linux 环境跑 tools/*/install.sh，
+# 验证「安装 → 服务在跑 → /health 有响应 → 卸载干净」闭环，并覆盖
+# Python 自动安装的各分支（已有 ≥3.10 / Homebrew / 独立 CPython 兜底）。
+# src/** 变更不自动触发（单元测试由 validate.yml 覆盖）；需要时手动 workflow_dispatch。
+on:
+  push:
+    paths:
+      - 'tools/macos/**'
+      - 'tools/linux/**'
+      - '.github/workflows/install-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  macos:
+    # hosted mac runner 仅剩 arm64（Intel 的 macos-13 已退役；如需 Intel 可换 macos-15-intel）
+    name: macos arm64 · 正常路径 + 独立 CPython 兜底
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 正常路径（runner 自带 Python 3.10+，find_python 直接命中）
+        run: bash tools/macos/install.sh
+
+      - name: 健康检查（launchd 服务在跑 + /health 有响应）
+        run: |
+          curl -fsS --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8787/health
+          launchctl list | grep -q com.facet.gateway
+
+      - name: 卸载（--purge 连 ~/.facet 一起删）
+        run: bash tools/macos/uninstall.sh --purge
+
+      # env -i 清空环境：PATH 只留系统目录 → /usr/bin/python3 是 3.9 够不上
+      # 3.10、brew 不在 PATH → 脚本走独立 CPython 兜底（darwin arm64）
+      - name: 兜底路径（裸环境 → 独立 CPython 铺到 $FACET_HOME/python）
+        run: |
+          env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            FACET_HOME="$RUNNER_TEMP/facet-bare" FACET_PORT=8788 \
+            bash tools/macos/install.sh
+
+      - name: 兜底路径健康检查（确认服务用的是独立 CPython）
+        run: |
+          curl -fsS --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8788/health
+          test -x "$RUNNER_TEMP/facet-bare/python/bin/python3"
+          "$RUNNER_TEMP/facet-bare/python/bin/python3" --version
+
+      - name: 卸载（兜底安装）
+        run: FACET_HOME="$RUNNER_TEMP/facet-bare" bash tools/macos/uninstall.sh --purge
+
+  linux:
+    name: linux systemd · 正常路径 + 崩溃拉起
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装（runner 自带 Python 3.10+；脚本按需 sudo 注册 systemd 服务）
+        run: bash tools/linux/install.sh
+
+      - name: 健康检查（systemd 服务 active + /health 有响应）
+        run: |
+          curl -fsS --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8787/health
+          systemctl is-active --quiet facet
+
+      - name: 崩溃自动拉起（SIGKILL 后 systemd 重启）
+        run: |
+          before="$(systemctl show -p NRestarts --value facet)"
+          sudo systemctl kill -s SIGKILL facet
+          for _ in $(seq 1 30); do
+            [ "$(systemctl show -p NRestarts --value facet)" -gt "$before" ] && break
+            sleep 1
+          done
+          systemctl is-active --quiet facet
+          echo "NRestarts：$before -> $(systemctl show -p NRestarts --value facet)"
+
+      - name: 卸载（--purge 连 ~/.facet 一起删）
+        run: bash tools/linux/uninstall.sh --purge
+
+  linux-bare:
+    # 老/极简发行版模拟：ubuntu:20.04 容器无 python3、无 curl/wget、无 systemd。
+    # 预期脚本 apt 装 python3.8 → 判过旧 → 镜像源下载独立 CPython →
+    # venv → pip install → facet 冒烟通过；在 systemctl 处触顶（容器无 systemd，属预期）。
+    name: linux bare 容器 · 无 Python 自动兜底
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 容器安装（断言 Python 链走独立 CPython 完成）
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src:ro" ubuntu:20.04 \
+            bash -c 'bash /src/tools/linux/install.sh /src' > /tmp/bare.log 2>&1
+          echo "docker exit=$?（容器无 systemd，预期在 systemctl 处触顶）"
+          cat /tmp/bare.log
+          set -e
+          grep -q '未检测到 Python 3.10+' /tmp/bare.log
+          grep -q '改用独立 CPython（不影响系统环境）' /tmp/bare.log
+          grep -q '使用 Python：/root/.facet/python/bin/python3' /tmp/bare.log
+          grep -q 'Python 3.12' /tmp/bare.log
+          if grep -q 'facet 命令不可用' /tmp/bare.log; then
+            echo "facet 冒烟失败"; exit 1
+          fi
