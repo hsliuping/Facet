@@ -79,6 +79,12 @@ class UsageRecorder:
                 user_bucket = self.data.setdefault("users", {})
                 user_day = user_bucket.setdefault(user, {}).setdefault(day, {key: 0 for key in COUNTERS})
                 self._tally(user_day, success, tokens, model, input_tokens, cached_tokens)
+                # Per-member channel mix (no model split): enough for the
+                # console's "who used which channel" view and cost sharing.
+                channels = user_day.setdefault("channels", {})
+                row = channels.setdefault(channel, {"requests": 0, "tokens": 0})
+                row["requests"] += 1
+                row["tokens"] += int(tokens or 0)
             self.dirty = True
 
     def _tally(self, entry: dict, success: bool, tokens: int, model: str,
@@ -245,11 +251,45 @@ class UsageRecorder:
             "cache": sorted(cache.values(), key=lambda item: item["name"]),
         }
 
+    def member_totals(self, name: str, since: date, on: date | None = None) -> dict:
+        """One member's counters from `since` (inclusive) up to `on`, for quotas.
+
+        `since` is the quota-window start — today for daily caps, the first of
+        the month for monthly ones. Channels ride along so the gateway can
+        attribute spend without a second pass.
+        """
+        on = on or date.today()
+        since_iso = since.isoformat()
+        today_iso = on.isoformat()
+        totals = {key: 0 for key in COUNTERS}
+        channels: dict[str, dict] = {}
+        with self.lock:
+            bucket = (self.data.get("users") or {}).get(name) or {}
+            for day, entry in bucket.items():
+                if not isinstance(entry, dict) or not (since_iso <= day <= today_iso):
+                    continue
+                for key in COUNTERS:
+                    totals[key] += int(entry.get(key) or 0)
+                for channel, row in (entry.get("channels") or {}).items():
+                    if not isinstance(row, dict):
+                        continue
+                    agg = channels.setdefault(channel, {"requests": 0, "tokens": 0})
+                    agg["requests"] += int(row.get("requests") or 0)
+                    agg["tokens"] += int(row.get("tokens") or 0)
+        return {"since": since_iso, "until": today_iso, **totals, "channels": channels}
+
     def user_stats(self, days: int = 30, on: date | None = None) -> dict:
-        """Per-member usage over a window: totals plus a per-day timeline."""
+        """Per-member usage over a window: totals, channel mix, per-day timeline.
+
+        Each member row carries the per-channel totals, the latest day's
+        counters (`today`, for quota progress bars) and a `spike` flag raised
+        when that day has >=10 requests and at least 3x the member's average
+        on their earlier recorded days — the console surfaces bursts with it.
+        """
         on = on or date.today()
         days = max(1, min(days, 365))
         window = {(on - timedelta(days=offset)).isoformat() for offset in range(days)}
+        latest = on.isoformat()
         with self.lock:
             users = {name: dict(bucket) for name, bucket
                      in (self.data.get("users") or {}).items()}
@@ -263,13 +303,35 @@ class UsageRecorder:
                 row = day_row.setdefault(name, {key: 0 for key in COUNTERS})
                 for key in COUNTERS:
                     row[key] += int(entry.get(key) or 0)
-                aggregate = totals.setdefault(name, {"name": name, **{key: 0 for key in COUNTERS}})
+                aggregate = totals.setdefault(
+                    name, {"name": name, **{key: 0 for key in COUNTERS},
+                           "channels": {}, "today": {key: 0 for key in COUNTERS}})
                 for key in COUNTERS:
                     aggregate[key] += int(entry.get(key) or 0)
+                if day == latest:
+                    for key in COUNTERS:
+                        aggregate["today"][key] += int(entry.get(key) or 0)
+                for channel, ch in (entry.get("channels") or {}).items():
+                    if not isinstance(ch, dict):
+                        continue
+                    agg = aggregate["channels"].setdefault(
+                        channel, {"requests": 0, "tokens": 0})
+                    agg["requests"] += int(ch.get("requests") or 0)
+                    agg["tokens"] += int(ch.get("tokens") or 0)
+        for info in totals.values():
+            # Spike compares the latest day against the mean of the member's
+            # earlier recorded days inside the window (missing days are idle).
+            today_requests = info["today"]["requests"]
+            prior = [int(entry.get("requests") or 0)
+                     for day, entry in users.get(info["name"], {}).items()
+                     if isinstance(entry, dict) and day in window and day != latest]
+            mean_prior = (sum(prior) / len(prior)) if prior else 0.0
+            info["spike"] = today_requests >= 10 and today_requests >= 3 * mean_prior
         day_list = [{"date": day, "users": timeline.get(day) or {}}
                     for day in sorted(timeline)]
         return {
             "range": days,
+            "today": latest,
             "users": sorted(totals.values(), key=lambda item: -item["requests"]),
             "days": day_list,
         }
