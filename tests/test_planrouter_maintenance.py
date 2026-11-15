@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import gzip
 import io
 import json
 import tempfile
@@ -388,6 +389,13 @@ class ExtractPlanModelsTests(unittest.TestCase):
                 "- settings.json\n- node.js\n- coding-plan\n- glm-5.3\n")
         self.assertEqual(maint.extract_plan_models(text), ["glm-5.3"])
 
+    def test_rejects_prose_domains_versions_and_phrases(self):
+        # Tokens that polluted a real refresh round: doc-prose phrases,
+        # trailing punctuation, bare version strings and vendor domains.
+        text = ("- lock-in\n- content-type\n- balance.\n- first.\n- well-being\n"
+                "- rate-limit\n- v0.21.6\n- example.com\n- k-12\n- glm-latest\n")
+        self.assertEqual(maint.extract_plan_models(text), ["glm-latest"])
+
     def test_clean_plan_models_drops_letterless_ids(self):
         self.assertEqual(maint.clean_plan_models(["kimi-k3", "00-8", "", "kimi-k3"]),
                          ["kimi-k3"])
@@ -397,6 +405,23 @@ class ExtractPlanModelsTests(unittest.TestCase):
             maint.clean_plan_models(["kimi-k3", "豆包搜索", "Agent 记忆",
                                      "Computer Use Agent", "doubao-seed-2.0-mini"]),
             ["kimi-k3", "doubao-seed-2.0-mini"])
+
+    def test_clean_plan_models_drops_llm_fabrications(self):
+        # Fabrication shapes seen in a real maintenance round: merged table
+        # headers, marketing codenames, version strings, vendor domains and
+        # prose words. Vendor-scoped real ids still pass — including
+        # CamelCase org prefixes (ModelScope), bare-word tails (real
+        # OpenRouter ids like openrouter/auto) and "~vendor/..." aliases
+        # confirmed against the OpenRouter catalog.
+        self.assertEqual(
+            maint.clean_plan_models(
+                ["GLM-5.3-Flash/FlashX", "Anthropic/claude-fable-5", "Mythos",
+                 "Fable", "v0.21.6", "example.com", "content-type", "balance.",
+                 "well.", "anthropic/claude-fable-5", "Qwen/Qwen3.8-Max",
+                 "openrouter/auto", "~openai/gpt-luna-latest", "kimi-k3"]),
+            ["Anthropic/claude-fable-5", "anthropic/claude-fable-5",
+             "Qwen/Qwen3.8-Max", "openrouter/auto",
+             "~openai/gpt-luna-latest", "kimi-k3"])
 
     def test_html_to_text_strips_script_style_and_tags(self):
         raw = ("<html><head><style>.x{color:red}</style></head><body>"
@@ -428,6 +453,60 @@ class ExtractPlanModelsTests(unittest.TestCase):
         self.assertEqual(maint.parse_plan_models_reply("抱歉，无法解析"), [])
         self.assertEqual(maint.parse_plan_models_reply(""), [])
         self.assertEqual(maint.parse_plan_models_reply(None), [])
+
+
+class _FakeResp:
+    """Minimal urlopen response: headers + payload via context manager."""
+
+    def __init__(self, headers, payload):
+        self.headers = headers
+        self._payload = payload
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FetchPlanDocTests(unittest.TestCase):
+    """fetch_plan_doc must decode gzipped replies.
+
+    Tencent Cloud's CDN compresses even when no Accept-Encoding is sent, and
+    a compressed stream decoded as UTF-8 is garbage that every extractor
+    reads as "no models" — the failure that mis-marked two healthy models.
+    """
+
+    @staticmethod
+    def _fetch(headers, payload):
+        resp = _FakeResp(headers, payload)
+        with mock.patch.object(maint, "open_with_proxy", return_value=resp):
+            return maint.fetch_plan_doc("https://docs.example.com/plan")
+
+    def test_gzip_reply_is_decompressed(self):
+        page = "<html><body><li>hunyuan-turbo</li></body></html>"
+        self.assertIn("hunyuan-turbo", self._fetch(
+            {"Content-Encoding": "gzip"}, gzip.compress(page.encode("utf-8"))))
+
+    def test_identity_reply_passes_through(self):
+        page = "<html><body><li>hunyuan-turbo</li></body></html>"
+        self.assertIn("hunyuan-turbo", self._fetch(
+            {"Content-Type": "text/html"}, page.encode("utf-8")))
+
+    def test_request_advertises_gzip(self):
+        seen = {}
+        resp = _FakeResp({}, b"ok")
+
+        def capture(req, timeout, proxy):
+            seen.update(req.headers)
+            return resp
+
+        with mock.patch.object(maint, "open_with_proxy", side_effect=capture):
+            maint.fetch_plan_doc("https://docs.example.com/plan")
+        self.assertEqual(seen.get("Accept-encoding"), "gzip")
 
 
 class RefreshPlanModelsTests(unittest.TestCase):
@@ -509,6 +588,24 @@ class RefreshPlanModelsTests(unittest.TestCase):
         self.assertEqual(self.app.subscriptions[0]["models"], ["kimi-k3.1-pro", "kimi-k3"])
         entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
         self.assertEqual(entry["source"], "llm")
+
+    def test_llm_removal_vetoed_when_doc_still_lists_model(self):
+        # The LLM dropped a model that its own source doc still lists: a
+        # hallucinated removal must be vetoed — the doc it read wins.
+        self.app.subscriptions[0]["models"] = ["old-model", "deepseek-v4-flash"]
+        self.patch_fetch("<html><body><ul>"
+                         "<li>doubao-seed-2.1-pro</li>"
+                         "<li>deepseek-v4-flash</li></ul></body></html>")
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            defaults=dataclasses.replace(self.app.config.defaults,
+                                         maintenance_model="gpt-x"))
+        self.app._maintenance_llm_call = lambda model, prompt: '["doubao-seed-2.1-pro"]'
+        report = self.app.run_maintenance("manual")
+        self.assertEqual(self.app.subscriptions[0]["models"],
+                         ["doubao-seed-2.1-pro", "deepseek-v4-flash"])
+        entry = next(e for e in report["applied"] if e["action"] == "update_plan_models")
+        self.assertEqual((entry["added"], entry["removed"]), (1, 1))
 
     def test_llm_output_is_cleaned(self):
         self.patch_fetch("<html><body><ul>"
@@ -658,6 +755,26 @@ class RefreshProvidersTests(unittest.TestCase):
                      if e["action"] == "update_provider_models")
         self.assertEqual(entry["source"], "llm")
         self.assertTrue((self.path.parent / "providers.json").is_file())
+
+    def test_llm_removal_vetoed_for_provider_docs(self):
+        # Same over-deletion guard for vendor docs: the LLM dropped a model
+        # its source doc still lists, so nothing is removed and no overlay
+        # gets written.
+        coding = self.app.providers[0]["modes"]["coding"]
+        coding["models"] = ["doubao-seed-2.1-pro", "deepseek-v4-flash"]
+        self.patch_fetch("<html><body><ul>"
+                         "<li>doubao-seed-2.1-pro</li>"
+                         "<li>deepseek-v4-flash</li></ul></body></html>")
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            defaults=dataclasses.replace(self.app.config.defaults,
+                                         maintenance_model="gpt-x"))
+        self.app._maintenance_llm_call = lambda model, prompt: '["doubao-seed-2.1-pro"]'
+        report = {"applied": [], "suggestions": [], "alerts": []}
+        maint.refresh_providers(self.app, report)
+        self.assertEqual(coding["models"],
+                         ["doubao-seed-2.1-pro", "deepseek-v4-flash"])
+        self.assertEqual(report["applied"], [])
 
     def test_llm_failure_falls_back_to_regex_for_provider_docs(self):
         self.patch_fetch("<html><body><ul><li>from-regex</li></ul></body></html>")
@@ -1538,6 +1655,41 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertEqual(self.app.maintenance_pool["queue"], ["m-2"])
         dropped = self.app.maintenance_pool["results"][0]
         self.assertEqual((dropped["model"], dropped["ok"]), ("m-1", False))
+
+    def test_plan_reply_is_array_accepts_empty_not_prose(self):
+        self.assertTrue(maint._plan_reply_is_array("[]"))
+        self.assertTrue(maint._plan_reply_is_array('好的：```json\n[]\n```'))
+        self.assertTrue(maint._plan_reply_is_array(json.dumps(["kimi-k3"])))
+        self.assertFalse(maint._plan_reply_is_array("抱歉，我无法输出 JSON"))
+        self.assertFalse(maint._plan_reply_is_array("[oops"))
+
+    def test_honest_empty_reply_is_valid_and_not_dropped(self):
+        """A model answering "[]" (the doc lists no models) is healthy: it
+        survives the queue, no alert is raised and rule extraction takes
+        over. Regression for 2026-11-14: two healthy nemotron models were
+        kicked from the queue for honestly answering "[]" on a model-less
+        doc page, flipping their free-page status to 测验未通过."""
+        self.app.maintenance_pool["queue"] = ["honest-model"]
+        self.app._maintenance_llm_call = lambda model, prompt: "[]"
+        report = {"alerts": [], "applied": []}
+        models, source = maint.extract_doc_models(
+            self.app, "- kimi-k3", "doc", "plan_models_llm", report)
+        self.assertEqual((source, models), ("regex", ["kimi-k3"]))
+        self.assertEqual(self.app.maintenance_pool["queue"], ["honest-model"])
+        self.assertEqual(self.app.maintenance_pool["results"], [])
+        self.assertEqual(report["alerts"], [])
+
+    def test_prose_reply_without_array_is_still_dropped(self):
+        """A prose refusal (no JSON array anywhere) remains a broken
+        candidate — only parseable replies validate via _plan_reply_is_array."""
+        self.app.maintenance_pool["queue"] = ["m-1", "m-2"]
+        self.app._maintenance_llm_call = lambda model, prompt: (
+            "抱歉，我无法输出 JSON" if model == "m-1"
+            else json.dumps(["kimi-k3"]))
+        reply, model = self.app._maintenance_llm_call_any(
+            "p", validate=maint._plan_reply_is_array)
+        self.assertEqual(model, "m-2")
+        self.assertEqual(self.app.maintenance_pool["queue"], ["m-2"])
 
     def test_maintenance_dispatch_prefers_free_channel(self):
         """Route membership is irrelevant: the id's owning channel wins,

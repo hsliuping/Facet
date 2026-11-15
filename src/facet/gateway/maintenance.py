@@ -17,12 +17,14 @@ things really break:
 """
 from __future__ import annotations
 
+import gzip
 import html
 import json
 import os
 import random
 import re
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import Request
@@ -35,15 +37,70 @@ PLAN_LIST_BLOCK = re.compile(r"\[.*\]", re.DOTALL)
 PLAN_MODEL_TOKEN = re.compile(r"[a-z0-9][a-z0-9._-]{3,60}")
 # A real model id is an ASCII slug; Harness/feature names from doc tables
 # ("豆包搜索", "Computer Use Agent") contain spaces or non-ASCII characters.
-MODEL_ID_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*")
+# OpenRouter aliases a vendor line as "~vendor/model-latest", so a leading
+# tilde is part of a real id.
+MODEL_ID_SHAPE = re.compile(r"~?[A-Za-z0-9][A-Za-z0-9._:/-]*")
 URL_RE = re.compile(r"https?://\S+")
 
-# Doc-page tokens shaped like model ids but not models: dates, filenames and
-# vendor plan names picked up from docs sidebars or list headings.
+# Doc-page tokens shaped like model ids but not models: dates, filenames,
+# vendor domains and plan names picked up from docs sidebars or headings.
 PLAN_NOISE_RE = re.compile(
     r"\d{4}-\d{2}(-\d{2})?"
-    r"|[\w-]+\.(?:json|js|ts|md|txt|py|sh|ya?ml|toml|ini|cfg|html?|css)")
-PLAN_MODEL_STOPWORDS = frozenset({"coding-plan", "agent-plan"})
+    r"|[\w-]+\.(?:json|js|ts|md|txt|py|sh|ya?ml|toml|ini|cfg|html?|css"
+    r"|com|cn|io|ai|org|net|dev|app|so|me|gov|edu|xyz|cloud|tech)")
+PLAN_MODEL_STOPWORDS = frozenset({"coding-plan", "agent-plan", "k-12"})
+# Bare version strings from release notes or page chrome ("v0.21.6", "2.1.0").
+VERSION_RE = re.compile(r"v?\d+(?:[._-]\d+)+$|^v\d+$")
+
+# Everyday English words from doc prose and UI chrome. A lowercase token
+# without any digit whose `.-_` segments are all in this set is doc text
+# ("lock-in", "content-type"), not a model id: real ids always carry a brand
+# fragment (glm, kimi, deepseek…) or a version number. Brand and tech words
+# (glm, model, docs, regex, api…) stay out on purpose so placeholder ids and
+# vendor slugs keep validating.
+PLAN_COMMON_WORDS = frozenset("""
+    the a an and or but if then else when while of to in on at by for with
+    from as is are was were be been being am do does did done have has had
+    having you he she it we they me him her us them my your his their our
+    this that these those there here who which what where why how all any
+    both each few more most other some such only own same so than too very
+    can will just should now also may might must shall would could not no
+    yes nor never ever about above after again against before below between
+    during into through under until up down out off over once further because
+    per via non etc vs plus get set put use used using make made take taken
+    give given go goes going come comes came see seen look looks need needs
+    want wants know known think say said tell told ask asked work works
+    working run runs running call calls called try tried help lets let keep
+    keeps kept start started stop stopped open opened close closed read
+    write written send sent receive received add added remove removed change
+    changed update updated check checked show shows shown find found build
+    built create created manage first last next previous late early new
+    day days week weeks month months year years time times date dates hour
+    hours minute minutes second seconds today tomorrow yesterday
+    page pages site website link links title label name names value values
+    text note notes info details detail summary example examples code
+    comment comments post posts article articles news blog latest preview
+    question questions answer answers reply replies message messages
+    section chapter guides guide manual tutorial step steps release
+    item items list lists row rows column columns table tables cell cells
+    box panel bar menu button icon image images photo photos video videos
+    word words letter letters number numbers context window
+    content type kinds kind form forms field fields data file files folder
+    user users account accounts profile password email phone address
+    login logout log sign signup register auth access secret session cookie
+    cache store saved loading id request response header body param params
+    balance credit credits quota limit limits rate rates usage spend
+    buy purchase order orders subscribe subscription upgrade downgrade
+    renew cancel refund invoice discount offer offers support faq contact
+    feedback survey share like follow view views search filter sort edit
+    delete admin setting settings option options preference preferences
+    feature features tool tools app apps web mobile desktop client server
+    host port proxy terms privacy policy legal license company team partner
+    press community forum center home main index root base default general
+    common special simple easy fast quick slow big small large low high top
+    bottom left right middle long short good bad best worst better worse well
+    lock unlock input output inline block assistant system prompt human role
+""".split())
 
 
 def _common_prefix_len(a: str, b: str) -> int:
@@ -272,10 +329,26 @@ def parse_llm_output(text: str) -> dict:
 
 # ------------------------------------------------------- plan model refresh
 def fetch_plan_doc(url: str, proxy: str = "") -> str:
-    """GET a subscription's plan documentation page (no auth, 10s timeout)."""
-    req = Request(url, headers={"User-Agent": "planrouter-maintenance/1.0"})
+    """GET a subscription's plan documentation page (no auth, 10s timeout).
+
+    Some CDNs gzip-compress replies unconditionally (Tencent Cloud docs do
+    it even with no Accept-Encoding header, and ignore identity), so the
+    body is decoded through Content-Encoding first: a compressed stream
+    handed to decode("utf-8", "replace") is garbage that every extractor
+    reads as "no models".
+    """
+    req = Request(url, headers={
+        "User-Agent": "planrouter-maintenance/1.0",
+        "Accept-Encoding": "gzip",
+    })
     with open_with_proxy(req, 10, proxy) as resp:
-        return resp.read().decode("utf-8", "replace")
+        raw = resp.read()
+        if (resp.headers.get("Content-Encoding") or "").strip().lower() == "gzip":
+            try:
+                raw = gzip.decompress(raw)
+            except (OSError, EOFError, zlib.error):
+                pass  # server lied about the coding; decode the raw bytes
+        return raw.decode("utf-8", "replace")
 
 
 def html_to_text(raw: str) -> str:
@@ -308,7 +381,8 @@ def extract_plan_models(text: str) -> list[str]:
 
     Only lines that look like list items (-, *, <li>) are considered; from
     each line keep lowercase tokens matching the model-id shape that contain
-    a separator (- or .) and are not URL fragments.
+    a separator (- or .) and are not URL fragments, version strings, vendor
+    domains or plain English phrases ("lock-in", "content-type").
     """
     found: list[str] = []
     seen: set[str] = set()
@@ -317,10 +391,13 @@ def extract_plan_models(text: str) -> list[str]:
         if not stripped.startswith(("-", "*", "<li>")):
             continue
         for token in PLAN_MODEL_TOKEN.findall(URL_RE.sub(" ", stripped).lower()):
-            if ("-" not in token and "." not in token) \
+            token = token.rstrip("._-")
+            if len(token) < 4 \
+                    or ("-" not in token and "." not in token) \
                     or "http" in token or "://" in token or "/" in token:
                 continue
-            if token in PLAN_MODEL_STOPWORDS or PLAN_NOISE_RE.fullmatch(token):
+            if token in PLAN_MODEL_STOPWORDS or PLAN_NOISE_RE.fullmatch(token) \
+                    or VERSION_RE.fullmatch(token) or _is_common_phrase(token):
                 continue
             if not re.search(r"[a-z]", token):
                 # Bare numbers / version fragments picked up from page chrome.
@@ -339,7 +416,16 @@ def build_plan_models_prompt(doc_text: str) -> str:
         "都要包含）。排除 Harness/功能名称（如 Agent 记忆、Computer Use Agent）。"
         "严格按文档中出现的原始拼写输出，不得自行改写分隔符：文档写点号就输出点号、"
         "写横杠就输出横杠，不要把 doubao-seed-2.0-mini 改成 doubao-seed-2-0-mini，"
-        "也不要把 glm-5.3 改成 glm_5_3。仅输出 JSON 字符串数组，不要输出其他文字：\n"
+        "也不要把 glm-5.3 改成 glm_5_3。还要排除以下易混淆项：\n"
+        "- 并列表头写法（如 GLM-5.3-Flash/FlashX）不是模型 id：要么拆成两个完整"
+        "模型 id 分别输出，要么都不输出。不要输出含“/”的合并写法（厂商前缀除外，"
+        "如 deepseek-ai/deepseek-chat）。\n"
+        "- 首字母大写的代号或营销名（如 Mythos、Fable）不是模型 id。\n"
+        "- 网站域名（如 example.com）、HTTP 头（如 content-type）、纯版本号"
+        "（如 v0.21.6）、余额/额度等页面字段（如 balance）都不是模型 id。\n"
+        "- 每个模型 id 必须含数字或分隔符（如 glm-latest 里的 -），纯英文单词"
+        "（如 balance、well）不是模型 id。\n"
+        "仅输出 JSON 字符串数组，不要输出其他文字：\n"
         + doc_text[:12000]
     )
 
@@ -360,9 +446,42 @@ def parse_plan_models_reply(text: str) -> list[str]:
     return [str(m).strip() for m in data if str(m).strip()]
 
 
+def _plan_reply_is_array(text: str) -> bool:
+    """True when the reply contains a parseable JSON array — even an empty one.
+
+    An honest "[]" means the doc lists no models; that is a valid answer and
+    must not mark the candidate model as broken. A reply without a JSON
+    array (prose refusal, truncated reasoning) is a broken candidate.
+    """
+    match = PLAN_LIST_BLOCK.search(str(text or "")[:6000])
+    if not match:
+        return False
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return False
+    return isinstance(data, list)
+
+
 def _normalize_model_id(model_id: str) -> str:
     """Normalize separators for variant detection (`.`/`-`/`_` are equivalent)."""
     return re.sub(r"[._-]", "", str(model_id)).lower()
+
+
+def _doc_still_lists(doc_text: str, model_id: str) -> bool:
+    """True when model_id still appears verbatim (case-insensitive) in the
+    doc text — an LLM removal against its own source is a hallucination."""
+    return str(model_id).lower() in str(doc_text or "").lower()
+
+
+def _is_common_phrase(token: str) -> bool:
+    """True when a no-digit token is stitched from everyday English words
+    ("lock-in", "content-type"): doc prose, not a model id. Real ids always
+    carry a brand fragment (glm, kimi, deepseek…) or a version number."""
+    if re.search(r"\d", token):
+        return False
+    parts = re.split(r"[._-]+", token.lower())
+    return all(p in PLAN_COMMON_WORDS for p in parts)
 
 
 def clean_plan_models(ids) -> list[str]:
@@ -370,16 +489,43 @@ def clean_plan_models(ids) -> list[str]:
 
     A real model id always contains at least one letter, so bare numeric
     fragments like ``00-8`` (page chrome picked up by extraction) are dropped.
+    Also drops LLM fabrication shapes seen in the wild: merged table headers
+    ("GLM-5.3-Flash/FlashX"), marketing codenames ("Mythos"), version strings
+    ("v0.21.6"), vendor domains ("example.com") and plain English phrases
+    ("content-type").
     """
     out: list[str] = []
     seen: set[str] = set()
     for raw in ids or []:
-        name = str(raw).strip()
+        name = str(raw).strip().rstrip("._-")
         if not name or not re.search(r"[A-Za-z]", name) or name in seen:
             continue
         if not MODEL_ID_SHAPE.fullmatch(name):
             # Harness/feature names from doc tables ("豆包搜索", "Computer
             # Use Agent") are not model ids: real ids are ASCII slugs.
+            continue
+        lowered = name.lower()
+        if PLAN_NOISE_RE.fullmatch(lowered) or VERSION_RE.fullmatch(lowered):
+            continue
+        if "/" in name:
+            # Vendor-scoped ids are real ("anthropic/claude-fable-5", and
+            # ModelScope-style catalogs legitimately use CamelCase orgs like
+            # "Qwen/Qwen3.8-Max"). Only a versioned head followed by a
+            # bare-word tail is a merged table header ("GLM-5.3-Flash/FlashX"):
+            # a real org slug has no version digits, and a real scoped model
+            # id carries a version or separator after the slash.
+            vendor, _, tail = name.partition("/")
+            if not re.fullmatch(r"~?[A-Za-z0-9][A-Za-z0-9._-]*", vendor) \
+                    or (re.search(r"\d", vendor)
+                        and not re.search(r"[0-9._/-]", tail)):
+                continue
+        elif _is_common_phrase(name):
+            # No digit and every segment is an everyday English word: doc
+            # prose like "lock-in", not a model id.
+            continue
+        elif not re.search(r"[0-9._-]", name) and name[0].isupper():
+            # Capitalized single word without version or separator: a
+            # marketing codename ("Mythos", "Fable"), not a model id.
             continue
         seen.add(name)
         out.append(name)
@@ -393,8 +539,10 @@ def _llm_extract_doc_models(app, doc_text: str, label: str, kind: str,
     Calls the first working maintenance model (explicit ids or the verified
     queue plus the pool's untried candidates when defaults.maintenance_model
     is empty/auto; each failure is dropped and the next candidate is tried).
-    Returns the cleaned model list, or None only when no candidate is left —
-    every candidate having been tried before rules take over. Stays silent
+    Returns the cleaned model list — possibly empty when the doc genuinely
+    lists no models (a valid "[]" reply; the candidate survives) — or None
+    only when no candidate is left, every candidate having been tried before
+    rules take over. Stays silent
     when no maintenance model is configured and no pool candidate exists —
     rules are the designed fallback then; alerts only when candidates were
     tried and all failed.
@@ -404,7 +552,7 @@ def _llm_extract_doc_models(app, doc_text: str, label: str, kind: str,
         return None
     reply, _model = app._maintenance_llm_call_any(
         build_plan_models_prompt(doc_text),
-        validate=lambda r: bool(parse_plan_models_reply(str(r)[:6000])))
+        validate=_plan_reply_is_array)
     if reply is None:
         report["alerts"].append({
             "channel": "", "kind": kind,
@@ -465,6 +613,14 @@ def refresh_plan_models(app, report: dict) -> None:
             # models needs the confirmed LLM extraction.
             new = old + added
             removed = []
+        elif removed:
+            # LLM over-deletion guard: an id the LLM dropped that still
+            # appears verbatim in the doc it just read was very likely
+            # hallucinated away (a missed table row) — keep it this round.
+            kept = [m for m in removed if _doc_still_lists(text, m)]
+            if kept:
+                removed = [m for m in removed if m not in kept]
+                new = new + kept
         if not new or (not added and not removed):
             continue
         record["models"] = new
@@ -715,6 +871,14 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
         # needs a confirmed LLM extraction or the vendor's own models API.
         new = old + added
         removed = []
+    elif source == "llm" and removed:
+        # LLM over-deletion guard (docs source only): an id the LLM dropped
+        # that still appears verbatim in the doc it just read was very likely
+        # hallucinated away (a missed table row) — keep it this round.
+        kept = [m for m in removed if _doc_still_lists(text or "", m)]
+        if kept:
+            removed = [m for m in removed if m not in kept]
+            new = new + kept
     if not added and not removed:
         return False
     mode["models"] = new
@@ -1409,6 +1573,9 @@ def free_models_payload(app) -> dict:
                     skip = str(blocked[channel.name])
                 elif label:
                     skip = "测验失败已标记失效，待复验"
+                elif quota and quota.get("stale"):
+                    skip = ("厂家额度超过一个同步周期未更新，整渠道临时冻结"
+                            "（等待下次同步，防欠费）")
                 elif quota and quota.get("exhausted"):
                     skip = "免费额度已用完，已停止路由（避免按量计费）"
                 elif state.get("cooling"):
