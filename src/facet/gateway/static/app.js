@@ -664,7 +664,10 @@ function switchPage(name) {
     loadReport($('report-month').value).catch(() => {});
   }
   if (name === 'requests') loadRequests().catch(() => {});
-  if (name === 'members') loadMembers().catch((e) => toast(e.message, 'bad'));
+  if (name === 'members') {
+    loadMembers().catch((e) => toast(e.message, 'bad'));
+    loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
+  }
   if (name === 'quickstart') {
     const open = $('btn-open-wizard');
     if (open) open.onclick = () => renderWizard('welcome').catch(() => {});
@@ -1882,6 +1885,54 @@ async function loadMembers(range) {
   document.querySelectorAll('[data-member-range]').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.memberRange) === state.memberRange));
   renderMemberUsage(usage);
+}
+
+// Monthly cost sharing: each linked subscription's fee is split across
+// members by their share of the channel's usage (see build_member_costs).
+async function loadMemberCost(month) {
+  const q = month ? '/' + encodeURIComponent(month) : '';
+  renderMemberCost(await api('/api/report/members' + q));
+}
+
+function costText(cost) {
+  return Object.entries(cost || {})
+    .map(([code, amount]) => `${code} ${Number(amount).toFixed(2)}`).join(' / ');
+}
+
+function renderMemberCost(data) {
+  if (!data) return;
+  const totals = data.currency_totals || {};
+  const allocated = data.allocated || {};
+  const unallocated = data.unallocated || {};
+  $('member-cost-note').textContent = `${data.month} · ${data.active_days} 天有用量 · ${data.note}`;
+  const unlinkedHint = (data.unlinked || []).length
+    ? `（${data.unlinked.length} 个订阅未关联渠道）` : '';
+  $('member-cost-summary').innerHTML = [
+    ['订阅月费合计', costText(totals) || '—'],
+    ['已分摊到成员', costText(allocated) || '—'],
+    ['未分摊' + unlinkedHint, costText(unallocated) || '—'],
+    ['有用量成员', (data.users || []).length],
+  ].map(([label, value]) =>
+    `<div class="metric"><div class="label">${esc(String(label))}</div><div class="value">${esc(String(value))}</div></div>`).join('');
+  const body = $('member-cost-body');
+  const rows = data.users || [];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" class="sub-note">本月还没有按成员的用量记录。成员开始用各自的 key 调用后这里会自动出分摊。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((r) => {
+    const detail = (r.channels || []).map((c) => {
+      const fee = costText(c.cost);
+      return fee ? `${esc(c.name)} · ${fee}` : `${esc(c.name)} · 未关联订阅`;
+    }).join('<br>') || '<span class="sub-note">—</span>';
+    return `<tr>
+      <td>${esc(r.name || '匿名')}</td>
+      <td>${Number(r.requests || 0).toLocaleString()}</td>
+      <td>${Number(r.tokens || 0).toLocaleString()}</td>
+      <td><strong>${costText(r.cost) || '—'}</strong></td>
+      <td class="sub-note">${detail}</td>
+    </tr>`;
+  }).join('');
 }
 
 async function loadApiKeys() {
@@ -5076,6 +5127,9 @@ function bindEvents() {
   document.querySelectorAll('[data-member-range]').forEach((button) => {
     button.onclick = () => loadMembers(Number(button.dataset.memberRange)).catch((e) => toast(e.message, 'bad'));
   });
+
+  $('btn-member-cost').onclick = () => loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
+  $('member-cost-month').onchange = () => loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
 
   $('btn-save-settings').onclick = () => saveSettings(false);
   $('btn-test-notify').onclick = () => saveSettings(true);

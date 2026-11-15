@@ -731,6 +731,31 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>成本分摊</h3>
+                <p class="sub-note" id="member-cost-note">按成员在渠道当月 tokens 占比折算订阅月费（该渠道无 tokens 时按请求数）；未关联订阅的渠道不计费</p>
+              </div>
+              <div class="actions">
+                <input type="month" id="member-cost-month">
+                <button class="btn small ghost" id="btn-member-cost">刷新</button>
+              </div>
+            </div>
+            <div class="sub-summary" id="member-cost-summary"></div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>成员</th><th>请求数</th><th>Tokens</th>
+                    <th>分摊成本</th><th>渠道明细</th>
+                  </tr>
+                </thead>
+                <tbody id="member-cost-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>分人统计</h3>
                 <p class="sub-note" id="member-usage-note">按成员 key 归属统计最近 30 天用量；不带 key 的调用记入「所有人」</p>
               </div>
