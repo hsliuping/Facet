@@ -54,10 +54,10 @@ Facet 把它们收敛成三件事：
 
 ## 安装
 
-需要 Python 3.10+（Windows 安装包与 Linux 一键脚本会自动处理，无需自备）。网关与事实表都是纯标准库实现，**零第三方依赖**。
+需要 Python 3.10+（Windows 安装包与 macOS/Linux 一键脚本会自动处理，无需自备）。网关与事实表都是纯标准库实现，**零第三方依赖**。
 
 - Windows：Inno Setup 安装包（含托盘、开机自启），本地 `python tools/build_windows.py` 构建；
-- macOS / Linux：见下方一键安装小节；
+- macOS / Linux：见下方一键安装小节（缺失或过旧时自动装 Python：Homebrew/系统包管理器 → 独立 CPython 兜底）；
 - 容器：见下文[「Docker 部署」](#docker-部署)。
 
 ```bash
@@ -79,6 +79,8 @@ tools/macos/install.sh            # venv 装到 ~/.facet，注册开机自启 + 
 ```
 
 - 装完自动做健康检查并打印控制台地址；服务崩溃后 launchd 自动拉起。
+- **无需自备 Python**：缺失或版本过旧时自动安装（Homebrew → 独立 CPython 兜底，
+  铺到 `~/.facet/python`，不碰系统环境）。
 - 配置与日志在 `~/.facet/`（`data/router.json`、`logs/gateway.err.log`）。
 - 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
 - 卸载：`tools/macos/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
