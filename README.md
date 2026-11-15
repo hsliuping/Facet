@@ -54,7 +54,7 @@ Facet 把它们收敛成三件事：
 
 ## 安装
 
-需要 Python 3.10+。网关与事实表都是纯标准库实现，**零第三方依赖**。
+需要 Python 3.10+（Windows 安装包与 Linux 一键脚本会自动处理，无需自备）。网关与事实表都是纯标准库实现，**零第三方依赖**。
 
 - Windows：Inno Setup 安装包（含托盘、开机自启），本地 `python tools/build_windows.py` 构建；
 - macOS / Linux：见下方一键安装小节；
@@ -90,6 +90,7 @@ git clone https://github.com/hsliuping/Facet && cd Facet
 tools/linux/install.sh            # venv 装到 ~/.facet，注册开机自启 + 崩溃自动重启
 ```
 
+- 无需自备 Python：缺 3.10+ 或系统仓库版本过旧（如 Ubuntu 20.04 / CentOS 7）时自动安装——先用包管理器，装不上再自动铺独立 CPython 到 `~/.facet/python`，不碰系统环境。
 - 装完自动做健康检查并打印控制台地址；服务崩溃后 systemd 自动拉起。
 - 配置与数据在 `~/.facet/`（`data/router.json`）；日志：`journalctl -u facet -f`。
 - 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
