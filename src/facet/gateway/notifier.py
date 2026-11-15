@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from . import subscriptions as subs
@@ -22,6 +23,79 @@ MAX_HISTORY = 20
 # A persistent runtime condition repeats its alert at most once per window;
 # transitions (alarm raised / condition resolved) always record once.
 RUNTIME_THROTTLE_SECONDS = 3600
+# One change-digest line carries at most this many model names, so a vendor
+# adding 40 models does not turn the message into a wall of text.
+DIGEST_MODELS_MAX = 6
+DIGEST_EVENTS_MAX = 10
+
+# Well-known webhook dialects, detected by host: the same text needs a
+# different JSON envelope per platform ("msg_type" vs "msgtype" etc.).
+FEISHU_HOSTS = ("open.feishu.cn", "open.larksuite.com")
+WECOM_HOSTS = ("qyapi.weixin.qq.com",)
+# Plain-text labels for change kinds in the digest.
+CHANGE_KIND_LABELS = {
+    "new_model": "新增模型", "removed_model": "模型下架",
+    "doc_updated": "文档更新", "catalog_changed": "目录变化",
+}
+
+
+def webhook_kind(url: str) -> str:
+    """Payload dialect for a webhook URL: "feishu" / "wecom" / "generic"."""
+    host = (urlsplit(str(url or "")).hostname or "").lower()
+    if host in FEISHU_HOSTS:
+        return "feishu"
+    if host in WECOM_HOSTS:
+        return "wecom"
+    return "generic"
+
+
+def webhook_payload(url: str, text: str, fields: dict | None = None) -> dict:
+    """The JSON body a platform webhook expects for `text` (plus `fields`).
+
+    Unknown hosts keep the WeCom-compatible envelope that has always been
+    sent — it is what most generic receivers were written against — and carry
+    the structured fields under a namespaced key instead of top level, so no
+    existing consumer sees a shape change.
+    """
+    kind = webhook_kind(url)
+    if kind == "feishu":
+        return {"msg_type": "text", "content": {"text": text}}
+    body = {"msgtype": "text", "text": {"content": text}}
+    if kind == "generic" and fields:
+        body["planrouter"] = fields
+    return body
+
+
+def change_digest(events: list[dict], limit: int = DIGEST_EVENTS_MAX
+                  ) -> tuple[str, list[dict]]:
+    """One sweep's events as (plain text, structured list) for the webhook."""
+    lines = [f"[PlanRouter 上游变更] {len(events)} 条"]
+    structured = []
+    for event in events[:limit]:
+        source = event.get("source") or {}
+        detail = event.get("detail") or {}
+        added = [str(m) for m in (detail.get("added") or [])]
+        removed = [str(m) for m in (detail.get("removed") or [])]
+        label = CHANGE_KIND_LABELS.get(str(event.get("kind") or ""),
+                                       str(event.get("kind") or "—"))
+        models = ""
+        if added:
+            models = "新增 " + "、".join(added[:DIGEST_MODELS_MAX]) \
+                + (f" 等 {len(added)} 个" if len(added) > DIGEST_MODELS_MAX else "")
+        elif removed:
+            models = "下架 " + "、".join(removed[:DIGEST_MODELS_MAX]) \
+                + (f" 等 {len(removed)} 个" if len(removed) > DIGEST_MODELS_MAX else "")
+        lines.append(f"· [{label}] {source.get('label') or '—'}"
+                     + (f"：{models}" if models else ""))
+        structured.append({"kind": str(event.get("kind") or ""),
+                           "source": str(source.get("key") or ""),
+                           "label": str(source.get("label") or ""),
+                           "url": str(source.get("url") or ""),
+                           "added": added, "removed": removed})
+    if len(events) > limit:
+        lines.append(f"…另有 {len(events) - limit} 条")
+    lines.append("详情见控制台「维护」页的上游变更卡片。")
+    return "\n".join(lines), structured
 
 
 def alert_key(alert: dict) -> str:
@@ -95,17 +169,31 @@ class ReminderService:
             if self._on_write_ok:
                 self._on_write_ok("notifier")
 
-    def _post(self, url: str, message: str) -> None:
-        payload = json.dumps({"msgtype": "text", "text": {"content": message}},
+    def _post(self, url: str, message: str, fields: dict | None = None) -> None:
+        kind = webhook_kind(url)
+        payload = json.dumps(webhook_payload(url, message, fields),
                              ensure_ascii=False).encode("utf-8")
         request = Request(url, data=payload,
                           headers={"Content-Type": "application/json"}, method="POST")
         target = self.sender or urlopen
         result = target(request, timeout=10) if self.sender is None else target(request)
+        body = b""
         if hasattr(result, "read"):
-            result.read()
+            body = result.read() or b""
         if hasattr(result, "close"):
             result.close()
+        # Feishu/WeCom answer 200 with an error code for a bad bot token or a
+        # keyword mismatch; without this the console would claim delivery.
+        if kind in ("feishu", "wecom") and body:
+            try:
+                answer = json.loads(body.decode("utf-8", "replace"))
+            except ValueError:
+                answer = None
+            if isinstance(answer, dict):
+                code = answer.get("errcode", answer.get("code", 0))
+                if code:
+                    detail = answer.get("errmsg") or answer.get("msg") or ""
+                    raise ValueError(f"webhook 返回 {code}: {detail}"[:200])
 
     def delivery(self) -> dict:
         """Whether an alert can actually leave this machine.
@@ -160,6 +248,26 @@ class ReminderService:
             raise ValueError("请先填写 webhook_url（或 env:VAR）")
         self._post(url, "[PlanRouter] 通知测试：如果你收到这条消息，说明续费提醒配置正确。")
         return {"ok": True, "at": time.time()}
+
+    def notify_changes(self, events: list[dict]) -> dict:
+        """One digest per watch sweep, through the same webhook as alerts.
+
+        Batched on purpose: a sweep can fire dozens of events and one POST is
+        what an operator actually wants to read. Never raises — a broken
+        webhook must not fail the sweep — the outcome lands in the report.
+        """
+        settings = self.get_settings()
+        url = resolve_secret(settings.get("webhook_url"))
+        if not settings.get("notify_enabled") or not url:
+            return {"sent": 0,
+                    "reason": "no_webhook" if not url else "notify_disabled"}
+        text, structured = change_digest(events)
+        with self.lock:
+            try:
+                self._post(url, text, {"events": structured})
+            except Exception as exc:
+                return {"sent": 0, "error": str(exc)[:200]}
+        return {"sent": 1, "events": len(events), "kind": webhook_kind(url)}
 
     def _deliver(self, message: str) -> tuple[bool, str]:
         settings = self.get_settings()
