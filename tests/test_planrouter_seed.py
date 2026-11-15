@@ -24,19 +24,22 @@ class SeedConfigTests(unittest.TestCase):
         by_name = {c.name: c for c in config.channels}
         self.assertEqual(
             {c.name for c in config.channels},
-            {"pollinations", "nvidia-nim", "google-ai-studio", "z-ai-glm",
-             "anthropic-template"},
+            {"ovhcloud", "pollinations", "nvidia-nim", "google-ai-studio",
+             "z-ai-glm", "anthropic-template"},
         )
+        ovhcloud = by_name["ovhcloud"]
+        self.assertTrue(ovhcloud.enabled)
+        self.assertEqual(ovhcloud.tier, "free")
+        self.assertEqual(ovhcloud.rate.rpm, 2)
+        self.assertEqual(ovhcloud.models.get("auto"), "gpt-oss-20b")
+        self.assertIsNone(ovhcloud.api_key)  # "" normalizes to None (no auth)
         pollinations = by_name["pollinations"]
-        self.assertTrue(pollinations.enabled)
-        self.assertEqual(pollinations.tier, "free")
-        self.assertEqual(pollinations.rate.rpm, 4)
-        self.assertEqual(pollinations.models.get("auto"), "openai")
-        for name in ("nvidia-nim", "google-ai-studio", "z-ai-glm",
-                     "anthropic-template"):
+        self.assertFalse(pollinations.enabled)
+        for name in ("pollinations", "nvidia-nim", "google-ai-studio",
+                     "z-ai-glm", "anthropic-template"):
             self.assertFalse(by_name[name].enabled, name)
         self.assertEqual(config.routes["openai:default"].channels,
-                         ("pollinations",))
+                         ("ovhcloud",))
         self.assertEqual(config.routes["anthropic:default"].channels,
                          ("anthropic-template",))
         self.assertEqual(config.defaults.maintenance_model, "auto")
@@ -75,11 +78,11 @@ class CliSeedTests(unittest.TestCase):
             code, output = self._run_serve(["--config", str(config_path)])
             self.assertEqual(code, 0)
             self.assertIn("零密钥首启", output)
-            self.assertIn("pollinations", output)
+            self.assertIn("ovhcloud", output)
             config = load_config(config_path)  # seeded file parses
             self.assertEqual(
                 {c.name for c in config.channels if c.enabled},
-                {"pollinations"})
+                {"ovhcloud"})
 
     def test_existing_config_is_not_touched(self):
         config = {

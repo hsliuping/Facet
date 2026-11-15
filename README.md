@@ -106,7 +106,7 @@ tools/linux/install.sh            # venv 装到 ~/.facet，注册开机自启 + 
 facet serve                  # 默认监听 127.0.0.1:8787
 ```
 
-- **零密钥首启**：没有 `router.json` 时自动生成种子配置（匿名 Pollinations
+- **零密钥首启**：没有 `router.json` 时自动生成种子配置（匿名 OVHcloud
   渠道 + 一组禁用的免费层模板渠道）并直接启动。
 - 浏览器打开 `http://127.0.0.1:8787/` 进入控制台；管理员密钥默认 `admin`，
   首次登录后在「管理密钥」里换掉。

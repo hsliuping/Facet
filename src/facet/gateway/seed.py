@@ -1,9 +1,10 @@
 """Zero-key first start: generate a seed config when none exists.
 
 ``facet serve`` with no router.json writes a seed config with one enabled
-key-free channel (Pollinations, anonymous access) plus disabled free-tier
-templates (NVIDIA NIM / Google AI Studio / Z.AI) and an anthropic placeholder, so
-the gateway serves real completions within the first minute without any key.
+key-free channel (OVHcloud AI Endpoints, anonymous access, 2 rpm/IP) plus
+disabled free-tier templates (Pollinations / NVIDIA NIM / Google AI Studio /
+Z.AI) and an anthropic placeholder, so the gateway serves real completions
+within the first minute without any key.
 The seed is a normal, user-editable config file; it is only written when the
 path does not exist yet.
 """
@@ -20,15 +21,32 @@ def build_seed() -> dict:
         "defaults": {"maintenance_model": "auto"},
         "channels": [
             {
+                # Anonymous free upstream (2 rpm/IP/model, 429 over limit);
+                # verified live: anonymous /v1/chat/completions returns 200.
+                "name": "ovhcloud",
+                "protocol": "openai",
+                "provider": "ovhcloud",
+                "mode": "payg",
+                "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+                "api_key": "",
+                "tier": "free",
+                "priority": 10,
+                "rate": {"rpm": 2},
+                "models": {"auto": "gpt-oss-20b"},
+            },
+            {
+                # Anonymous access was retired upstream (401 without a key);
+                # keep it as a free-registration template.
                 "name": "pollinations",
                 "protocol": "openai",
                 "provider": "pollinations",
                 "mode": "payg",
                 "base_url": "https://gen.pollinations.ai/v1",
-                "api_key": "",
+                "api_key": "env:POLLINATIONS_API_KEY",
+                "enabled": False,
                 "tier": "free",
-                "priority": 10,
-                "rate": {"rpm": 4},
+                "priority": 20,
+                "rate": {"rpm": 12},
                 "models": {"auto": "openai"},
             },
             {
@@ -76,7 +94,7 @@ def build_seed() -> dict:
             },
         ],
         "routes": [
-            {"name": "default", "protocol": "openai", "channels": ["pollinations"]},
+            {"name": "default", "protocol": "openai", "channels": ["ovhcloud"]},
             {"name": "default", "protocol": "anthropic",
              "channels": ["anthropic-template"]},
         ],
@@ -100,7 +118,7 @@ def write_seed(path: str | Path) -> Path:
 def print_seed_banner(path: str | Path) -> None:
     """First-run guidance, printed right after the listening banner."""
     print(f"  零密钥首启：已生成种子配置 {path}", flush=True)
-    print("  pollinations 渠道匿名可用（无需 key），上游限额约 1 次/15 秒",
+    print("  ovhcloud 渠道匿名可用（无需 key），上游限额约 2 次/分/IP/模型",
           flush=True)
     print("  升级：注册免费 key 并设置环境变量 NVIDIA_API_KEY / "
           "GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY，", flush=True)
