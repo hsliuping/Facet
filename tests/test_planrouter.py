@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -16,7 +16,7 @@ from facet.gateway.core import (OPENAI, StateStore, body_has_vision,
                              channel_takes_images, load_config,
                              open_with_proxy, parse_cooldown, vision_wire,
                              wire_model)
-from facet.gateway.keys import KeyStore
+from facet.gateway.keys import KeyStore, normalize_limits
 from facet.gateway.server import App, HealthProber
 
 BASE = {
@@ -880,6 +880,142 @@ class KeyTests(unittest.TestCase):
         app.record_usage("plan-a", True, 10, model="wire-a", h=None)
         stats = app.usage.user_stats(30)
         self.assertEqual(stats["users"], [])
+
+    # ---------------------------------------------------------- member caps
+    def test_normalize_limits_accepts_zero_and_rejects_bad_values(self):
+        self.assertEqual(normalize_limits(None), {})
+        self.assertEqual(normalize_limits(""), {})
+        self.assertEqual(normalize_limits({"rpm": 60, "daily_tokens": 0}), {"rpm": 60})
+        self.assertEqual(normalize_limits({"daily_tokens": 1000.0}), {"daily_tokens": 1000})
+        for bad in (42, {"rpm": -1}, {"rpm": "many"}, {"daily_tokens": 0.5},
+                    {"monthly_requests": True}):
+            with self.assertRaises(ValueError):
+                normalize_limits(bad)
+
+    def test_create_and_set_limits_persist(self):
+        store = KeyStore(self.keys_file)
+        record = store.create("alice", limits={"rpm": 30, "daily_tokens": 1000})
+        self.assertEqual(record["limits"], {"rpm": 30, "daily_tokens": 1000})
+        self.assertIsNone(store.set_limits("sk-pr-" + "0" * 32, {"rpm": 5}))
+        updated = store.set_limits(record["key"], {"rpm": 5, "monthly_tokens": 9})
+        self.assertEqual(updated["limits"], {"rpm": 5, "monthly_tokens": 9})
+        self.assertNotIn("limits", store.set_limits(record["key"], {}))
+        reloaded = KeyStore(self.keys_file)
+        self.assertEqual(reloaded.lookup(record["key"])["name"], "alice")
+        self.assertEqual(reloaded.match(record["key"]), "alice")
+
+    def test_lookup_respects_enabled_and_prefix(self):
+        store = KeyStore(self.keys_file)
+        record = store.create("bob")
+        self.assertEqual(store.lookup(record["key"])["name"], "bob")
+        self.assertIsNone(store.lookup("master-key"))
+        store.revoke(record["key"])
+        self.assertIsNone(store.lookup(record["key"]))
+        store.enable(record["key"])
+        self.assertIsNotNone(store.lookup(record["key"]))
+
+    def test_member_without_limits_is_never_limited(self):
+        app = self.app()
+        record = app.keys.create("alice")
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        for _ in range(5):
+            app.record_usage("plan-a", True, 1000, h=h)
+        self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+        # Keyless callers (and a missing record) are untouched as well.
+        self.assertIsNone(app._member_limited("", h.member_record))
+        self.assertIsNone(app._member_limited("ghost", None))
+
+    def test_daily_token_quota_rejects_member(self):
+        app = self.app()
+        record = app.keys.create("alice", limits={"daily_tokens": 100})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        app.record_usage("plan-a", True, 60, h=h)
+        self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+        app.record_usage("plan-a", True, 40, h=h)
+        status, message = app._member_limited(h.user_key, h.member_record)
+        self.assertEqual(status, 429)
+        self.assertIn("今日 token 配额已用完", message)
+        self.assertIn("100 / 上限 100", message)
+
+    def test_daily_request_quota_rejects_member(self):
+        app = self.app()
+        record = app.keys.create("alice", limits={"daily_requests": 1})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        app.record_usage("plan-a", True, 0, h=h)
+        status, message = app._member_limited(h.user_key, h.member_record)
+        self.assertEqual(status, 429)
+        self.assertIn("今日请求数配额已用完", message)
+
+    def test_monthly_request_quota_rejects_member(self):
+        app = self.app()
+        record = app.keys.create("bob", limits={"monthly_requests": 2})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        for _ in range(2):
+            app.record_usage("plan-a", True, 0, h=h)
+        status, message = app._member_limited(h.user_key, h.member_record)
+        self.assertEqual(status, 429)
+        self.assertIn("本月请求数配额已用完", message)
+
+    def test_rpm_cap_uses_sliding_window(self):
+        app = self.app()
+        record = app.keys.create("carol", limits={"rpm": 2})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+        self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+        status, message = app._member_limited(h.user_key, h.member_record)
+        self.assertEqual(status, 429)
+        self.assertIn("每分钟 2 次请求上限", message)
+        # A rejected call eats no slot, so expiring the window unblocks.
+        self.assertEqual(len(app.member_rpm["carol"]), 2)
+        app.member_rpm["carol"] = [time.time() - 120]
+        self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+
+    def test_member_usage_tracks_channels_and_totals(self):
+        app = self.app()
+        h = _FakeHandler({})
+        h.user_key = "alice"
+        app.record_usage("plan-a", True, 100, h=h)
+        app.record_usage("plan-b", True, 30, h=h)
+        totals = app.usage.member_totals("alice", date.today())
+        self.assertEqual(totals["requests"], 2)
+        self.assertEqual(totals["tokens"], 130)
+        self.assertEqual(totals["channels"]["plan-a"], {"requests": 1, "tokens": 100})
+        row = app.usage.user_stats(7)["users"][0]
+        self.assertEqual(row["channels"]["plan-b"]["requests"], 1)
+        self.assertEqual(row["today"]["requests"], 2)
+        self.assertFalse(row["spike"])
+
+    def test_user_stats_flags_spike(self):
+        app = self.app()
+        yesterday = date.today() - timedelta(days=1)
+        app.usage.record("plan-a", True, 0, user="alice")
+        for _ in range(3):
+            app.usage.record("plan-a", True, 0, on=yesterday, user="alice")
+        for _ in range(10):
+            app.usage.record("plan-a", True, 0, user="bob")
+        for _ in range(3):
+            app.usage.record("plan-a", True, 0, on=yesterday, user="bob")
+        rows = {row["name"]: row for row in app.usage.user_stats(7)["users"]}
+        self.assertFalse(rows["alice"]["spike"])
+        self.assertTrue(rows["bob"]["spike"])
+
+    def test_member_usage_merges_limits_and_state(self):
+        app = self.app()
+        record = app.keys.create("alice", limits={"daily_requests": 5})
+        h = _FakeHandler({})
+        h.user_key = "alice"
+        app.record_usage("plan-a", True, 0, h=h)
+        payload = app.member_usage(7)
+        row = payload["users"][0]
+        self.assertEqual(row["limits"], {"daily_requests": 5})
+        self.assertTrue(row["enabled"])
+        app.keys.pause(record["key"])
+        self.assertFalse(app.member_usage(7)["users"][0]["enabled"])
 
 
 class _StreamResp:
