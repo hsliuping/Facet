@@ -260,7 +260,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 - `payg`：按量付费，实际有免费层（注册赠金 + Flash 系列），建议在渠道配置中添加 note 标注
 - `coding`：Coding Plan 订阅，`tier: "paid"`，月付制，含 `billing: "coding_plan"` 标识
 
-**常见模型**：`glm-4`, `glm-4-flash`, `glm-4.5-flash`, `glm-4.7-flash` 等。
+**常见模型**：`glm-5.3`, `glm-5.3-flash`, `glm-5.3-flashx` 等。
 
 **适用场景**：自然语言理解、代码生成、多模态交互等。
 
@@ -320,13 +320,23 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 - **API-Inference 免费开放**（非商用，需绑定阿里云实名）；
 - 魔粒不可购买，官方明示商用请用商业平台 API。
 
-📷 **截图 4-7** ｜ 拍取魔粒领取页（打码） ｜ 存为：`modelscope-01-magic-grains.png`
+**步骤**
+
+1. 打开[魔搭官网](https://modelscope.cn)，注册/登录账号（手机号或邮箱，也可用 CSDN / GitHub / 淘宝第三方登录，新用户限时赠免费 GPU 算力）；
+   ![ModelScope 魔搭官网首页](images/api-key-guide/modelscope-01.png)
+   ![ModelScope 魔搭登录注册弹窗](images/api-key-guide/modelscope-02.png)
+2. 进「我的魔粒」页领取免费魔粒：「注册并登录」+200、「绑定阿里云账号」+50（每日各一次，有效期 1 天），开源贡献任务（模型 / 数据集 / 创空间影响力）每项 +50；
+   ![ModelScope 我的魔粒·赚魔粒页](images/api-key-guide/modelscope-03.png)
+   「发放记录」页可见每日发放明细（示例累计 600 魔粒）：
+   ![ModelScope 我的魔粒·发放记录页](images/api-key-guide/modelscope-02-moli.png)
+3. 右上角头像 →「设置」→ 左侧「访问令牌」菜单，进入访问令牌页；
+   ![ModelScope 头像菜单 → 设置 → 访问令牌](images/api-key-guide/modelscope-05.png)
+4. 点「新建访问令牌」，输入令牌名称（如 `facet`），有效期选「长期使用」；令牌由系统自动生成，单账号最多 10 个，**创建后只显示一次**，立即复制保存。
+   ![ModelScope 新建访问令牌弹窗](images/api-key-guide/modelscope-04.png)
 
 **付费形态**：**无任何付费套餐**，魔粒不可购买，官方明示商用请用商业平台 API。
 
 **渠道参数**：协议 `openai`，端点 `https://api.modelscope.cn/v1`。
-
-📷 **截图 4-8** ｜ 拍取 API 文档免费说明（打码） ｜ 存为：`modelscope-02-api.png`
 
 **模式说明**：
 
@@ -337,38 +347,51 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **适用场景**：学术研究、个人项目、非商业实验等。
 
-**⚠️ 备注**：手册第 3.7 章已更新为“每日登录领 200 魔粒（约 200–500 次调用）”，原写 250 需更正。
+**⚠️ 备注**：手册第 3.7 章已更新为“每日登录领 200 魔粒（约 200–500 次调用）”。
 
 ---
 
 ### 4.5 小米 MiMo
 
-**官方入口**：[https://mimo.mi.com](https://mimo.mi.com)
+**官方入口**：[https://mimo.mi.com](https://mimo.mi.com)（活动页）；控制台 [https://platform.xiaomimimo.com](https://platform.xiaomimimo.com)（API Keys 与余额页）
 
 **免费额度**：
 - **大陆新用户 ¥10 体验金**（40 天内，仅抵扣按量）；
-- 邀请双方各 ¥10。
+- 邀请好友注册**双方各得 ¥10**（限前 30 人），好友首单 9 折、之后每单返实付 10% 赠金。
 
-📷 **截图 4-9** ｜ 拍取促销活动页（打码） ｜ 存为：`mimo-01-promo.png`
+**步骤**
+
+1. 打开官网，首页弹出「邀创造者体验 MiMo V2.6」促销活动（注册各得 ¥10 体验金，40 天有效）；
+   ![小米 MiMo 注册促销活动](images/api-key-guide/mimo-02-promo.png)
+2. 用手机号注册小米账号（选国家/地区、填验证码、勾选协议后提交）；
+   ![小米 MiMo 账号注册页](images/api-key-guide/mimo-03-promo.png)
+3. 注册后登录控制台，¥10 体验金在「账户余额」页可见：现金余额与赠送余额分列，可设预算阈值、在线充值（小米支付 / 支付宝 / 微信）；
+   ![小米 MiMo 账户余额页](images/api-key-guide/mimo-04-promo.png)
+4. 控制台 → **API Keys** → 点「新建 API Key」，填一个名称（如 `facet`）；
+   ![小米 MiMo 新建 API Key](images/api-key-guide/mimo-05-promo.png)
+5. 复制生成的 Key（`sk-` 开头，**只显示一次**，关闭弹窗后无法再查看）。
+   ![小米 MiMo API Key 创建成功](images/api-key-guide/mimo-06-promo.png)
 
 **付费形态**：
 
 | 形态 | 说明 | 价格 |
 |---|---|---|
 | **按量计费** | mimo-v2.6-pro 输入¥3/输出¥6 每百万 | - |
-| **Token Plan 个人版** | Lite 39 / Standard 99 / Pro 329 / Max 659 元/月 | - |
+| **Token Plan 个人版** | Lite 39 / Standard 99 / Pro 329 / Max 659 元/月（按年计费立减后折合 34 / 87 / 289 / 579 元/月） | - |
 | **Token Plan 团队版** | 详见平台官网 | - |
 
-**渠道参数**：协议 `openai`，端点 `https://api.mimomidi.com/v1`（实际端点以平台为准）。
+个人版支持 V2.6 全旗舰模型（文本 / 视觉 / 语音），套餐 Credits 40 天内有效；连续包年 88 折、首购优惠限时限量，支持 OpenClaw / Codex / MiMo Claw 等主流编程框架：
 
-📷 **截图 4-10** ｜ 拍取 Token Plan 页（打码） ｜ 存为：`mimo-02-token-plan.png`
+![小米 MiMo Token Plan 订阅页](images/api-key-guide/mimo-01-promo.png)
+
+**渠道参数**：协议 `openai`；按量付费端点 `https://api.xiaomimimo.com/v1`，Token Plan 套餐端点 `https://token-plan-cn.xiaomimimo.com/v1`（与注册表一致，`/v1/models` 支撑模型自动同步）。
 
 **模式说明**：
 
 - `payg`：按量付费，`free_quota` 中建议标注 `¥10 体验金`（免费额度说明）
 - `token_plan`：Token Plan 套餐，`tier: "paid"`，月付制，`billing: "token_plan"` 标识
 
-**常见模型**：`mimo-v2.6-pro`, `mimo-lite`, `mimo-embedding` 等。
+**常见模型**：`mimo-v2.6-flash`, `mimo-v2.6-pro` 等（还有 `mimo-v2.5-asr` 等语音 / 嵌入模型；向导与渠道配置页「拉取模型清单」会自动挑可对话模型试通）。
 
 **适用场景**：移动端 AI、个人开发、轻量级应用等。
 
@@ -383,7 +406,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 **免费额度**：
 - **国内新用户注册实名后赠 15 元代金券**（3 个月有效），见官方帮助页：https://www.kimi.com/zh-cn/help/kimi-api/api-free-trial
 
-📷 **截图 4-11** ｜ 拍取免费试用领取页（打码） ｜ 存为：`kimi-01-free-trial.png`
+📷 **截图 4-9** ｜ 拍取免费试用领取页（打码） ｜ 存为：`kimi-01-free-trial.png`
 
 **付费形态**：**仅按量付费**（官方明确「无订阅制方案」）：
 
@@ -393,7 +416,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **渠道参数**：协议 `openai`，端点 `https://api.moonshot.cn/v1`（与注册表一致，`/v1/models` 支撑模型自动同步）。
 
-📷 **截图 4-12** ｜ 拍取按量计费页（打码） ｜ 存为：`kimi-02-pricing.png`
+📷 **截图 4-10** ｜ 拍取按量计费页（打码） ｜ 存为：`kimi-02-pricing.png`
 
 **模式说明**：
 
@@ -421,7 +444,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 **免费额度**：
 - **无明确官方免费额度**（仅活动性「赠送余额」机制，非常规福利）。
 
-📷 **截图 4-13** ｜ 拍取定价页（打码） ｜ 存为：`deepseek-01-pricing.png`
+📷 **截图 4-11** ｜ 拍取定价页（打码） ｜ 存为：`deepseek-01-pricing.png`
 
 **付费形态**：**仅按量付费**（峰谷计价，谷半价）：
 
@@ -432,7 +455,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **渠道参数**：协议 `openai`，端点 `https://api.deepseek.com/v1`。
 
-📷 **截图 4-14** ｜ 拍取峰谷计价说明（打码） ｜ 存为：`deepseek-02-pricing-note.png`
+📷 **截图 4-12** ｜ 拍取峰谷计价说明（打码） ｜ 存为：`deepseek-02-pricing-note.png`
 
 **模式说明**：
 
@@ -453,7 +476,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 - **首次开通送一次性资源包**（8 款模型共享 100 万 tokens，1 年有效）；
 - **TokenHub 新用户免费体验包**（活动至 2026-12-31）。
 
-📷 **截图 4-15** ｜ 拍取开通送资源包页（打码） ｜ 存为：`hunyuan-01-free-resource.png`
+📷 **截图 4-13** ｜ 拍取开通送资源包页（打码） ｜ 存为：`hunyuan-01-free-resource.png`
 
 **付费形态**：
 
@@ -467,7 +490,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 - `openai` 协议，端点 `https://ark.cn-beijing.volces.com/api/plan/v3`（TokenPlan 入口）
 - `anthropic` 协议，端点 `https://ark.cn-beijing.volces.com/api/plan`（Anthropic 协议渠道）
 
-📷 **截图 4-16** ｜ 拍取 Token Plan 与 Agent 套餐页（打码） ｜ 存为：`hunyuan-02-plans.png`
+📷 **截图 4-14** ｜ 拍取 Token Plan 与 Agent 套餐页（打码） ｜ 存为：`hunyuan-02-plans.png`
 
 **模式说明**：
 
@@ -516,7 +539,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 | `agent`（Token Plan） | `openai` | `https://api.minimax.cn/v1`，Key 填**订阅 Key** |
 | （可选）Anthropic 协议 | `anthropic` | `https://api.minimax.cn/anthropic` |
 
-📷 **截图 4-17** ｜ 拍取 Token Plan 订阅页（打码） ｜ 存为：`minimax-01-token-plan.png`
+📷 **截图 4-15** ｜ 拍取 Token Plan 订阅页（打码） ｜ 存为：`minimax-01-token-plan.png`
 
 **模式说明**：
 
