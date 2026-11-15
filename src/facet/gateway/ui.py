@@ -698,6 +698,33 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.mark_changes_read(ids))
         return True
 
+    if path == "/api/changes/map" and method == "POST":
+        # {"id": event, "channel"?: name} — write a new-model event into a
+        # channel through the maintenance mapping path.
+        try:
+            body = json.loads(raw) if raw.strip() else {}
+            _json(h, 200, app.map_change_models(body))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
+    if path == "/api/changes/mute" and method == "POST":
+        # {"keys": [...] or "key", "muted": bool} — stop/resume reporting.
+        try:
+            body = json.loads(raw) if raw.strip() else {}
+            if not isinstance(body, dict):
+                raise ValueError("body 必须是 JSON 对象")
+            keys = body.get("keys", body.get("key"))
+            if isinstance(keys, str):
+                keys = [keys]
+            if not isinstance(keys, list):
+                raise ValueError("需要信息源 key")
+            _json(h, 200, app.set_changes_muted(
+                [str(key) for key in keys], bool(body.get("muted", True))))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
     if (path == "/api/freealign/logs"
             or path.startswith("/api/freealign/logs/")) and method == "GET":
         parts = path.split("/")

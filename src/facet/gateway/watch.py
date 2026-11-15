@@ -349,6 +349,102 @@ def mark_read(app, ids: list[str], read: bool = True) -> int:
     return changed
 
 
+def set_muted(app, keys: list[str], muted: bool = True) -> dict:
+    """Silence (or re-enable) change reporting for source keys.
+
+    A muted source is still fetched and its snapshot still advances — only
+    event creation is skipped — so un-muting later does not dump the whole
+    missed delta onto the console at once. Same re-read discipline as
+    ``mark_read``: only the ``muted`` field is rewritten, never snapshots.
+    """
+    wanted = [str(key or "").strip() for key in (keys or [])]
+    wanted = [key for key in wanted if key]
+    if not wanted:
+        raise ValueError("需要至少一个信息源 key")
+    data = load_snapshots(app)
+    marks = data.get("muted") if isinstance(data.get("muted"), dict) else {}
+    changed = 0
+    touched: list[str] = []
+    removed: list[str] = []
+    for key in wanted:
+        if muted and key not in marks:
+            touched.append(key)
+        elif not muted and key in marks:
+            removed.append(key)
+    fresh = load_snapshots(app)
+    base = fresh.get("muted") if isinstance(fresh.get("muted"), dict) else dict(marks)
+    for key in touched:
+        base[key] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+        changed += 1
+    for key in removed:
+        base.pop(key, None)
+        changed += 1
+    fresh["muted"] = base
+    if "snapshots" not in fresh and isinstance(data.get("snapshots"), dict):
+        fresh["snapshots"] = data["snapshots"]
+    save_snapshots(app, fresh)
+    return {"ok": True, "changed": changed, "muted": sorted(base)}
+
+
+def map_targets(app, source: dict) -> list[str]:
+    """Channels a ``new_model`` event from `source` could be mapped into.
+
+    A channel-catalog change names its own channel; a vendor-registry change
+    offers the channels bound to that provider (matching billing mode first);
+    a subscription plan doc offers the channels the subscription links. The
+    backend only suggests — applying is always an explicit console action.
+    """
+    key = str((source or {}).get("key") or "")
+    origin = str((source or {}).get("origin") or "")
+    channels = list(getattr(getattr(app, "config", None), "channels", None) or [])
+    names = {channel.name for channel in channels}
+    if origin == "channel" and key.startswith("channel:"):
+        name = key[len("channel:"):]
+        return [name] if name in names else []
+    if origin == "provider" and key.startswith("provider:"):
+        parts = key.split(":")
+        pid = parts[1] if len(parts) > 1 else ""
+        mode = parts[2] if len(parts) > 2 else ""
+        same = [c.name for c in channels
+                if c.provider == pid and (c.mode or c.business_line) == mode]
+        rest = [c.name for c in channels if c.provider == pid and c.name not in same]
+        return same + rest
+    if origin == "subscription" and key.startswith("subscription:"):
+        sid = key[len("subscription:"):]
+        for record in getattr(app, "subscriptions", None) or []:
+            if not isinstance(record, dict) or str(record.get("id") or "") != sid:
+                continue
+            linked = getattr(app, "subscription_channels", None)
+            if callable(linked):
+                return [name for name in linked(record) if name in names]
+            return []
+    return []
+
+
+def notify_events(app, events: list[dict]) -> dict:
+    """Push one digest for this sweep's events through the shared webhook."""
+    notifier = getattr(app, "notifier", None)
+    notify = getattr(notifier, "notify_changes", None)
+    if not callable(notify):
+        return {"sent": 0, "reason": "unavailable"}
+    try:
+        return notify(events)
+    except Exception as exc:  # a broken webhook must not break the sweep
+        return {"sent": 0, "error": str(exc)[:200]}
+
+
+def notify_status(app) -> dict:
+    notifier = getattr(app, "notifier", None)
+    delivery = getattr(notifier, "delivery", None)
+    if not callable(delivery):
+        return {"ok": False, "reason": "unavailable",
+                "hint": "通知服务未启动（未指定 notifications 文件路径）。"}
+    try:
+        return delivery()
+    except Exception as exc:
+        return {"ok": False, "reason": "error", "hint": str(exc)[:200]}
+
+
 # ----------------------------------------------------------------- sweep
 def run_watch(app) -> dict:
     """One watch sweep: fetch all sources, diff, record events.
@@ -369,6 +465,11 @@ def run_watch(app) -> dict:
 
     old_data = load_snapshots(app)
     old_snaps = old_data.get("snapshots") if isinstance(old_data.get("snapshots"), dict) else {}
+    # Muted sources are still fetched (their snapshot must stay fresh) but
+    # produce no events. Read once per sweep: a mute flipped mid-sweep takes
+    # effect from the next one, which is the same race read marks accept.
+    muted_marks = old_data.get("muted") if isinstance(old_data.get("muted"), dict) else {}
+    muted = {key for key in muted_marks if isinstance(key, str) and key}
 
     events: list[dict] = []
     new_snaps: dict[str, dict] = {}
@@ -408,6 +509,11 @@ def run_watch(app) -> dict:
                       "models": result["models"],
                       "text_head": result["text_head"],
                       "model_count": len(result["models"])})
+        if key in muted:
+            # Snapshot advanced (so resuming later reports only what changes
+            # from now on) but the diff is swallowed on purpose.
+            new_snaps[key] = entry
+            continue
         for diff in diff_snapshot(old, result, source["kind"]):
             key_hash = event_key(diff, key)
             # Page re-served the same diff (or doc chrome keeps churning):
@@ -432,12 +538,15 @@ def run_watch(app) -> dict:
             entry["last_event_at"] = entry["checked_at"]
         new_snaps[key] = entry
 
-    # Read marks may have been flipped while this sweep was fetching (a full
-    # sweep takes minutes); the marks seen at the start are stale, so re-read
-    # them instead of rolling the user's actions back on save.
-    fresh_marks = load_snapshots(app).get("read_events")
+    # Read marks and mutes may have been flipped while this sweep was
+    # fetching (a full sweep takes minutes); both are re-read instead of
+    # rolling the user's actions back on save.
+    fresh = load_snapshots(app)
+    fresh_marks = fresh.get("read_events")
+    fresh_muted = fresh.get("muted")
     data = {"snapshots": new_snaps,
             "read_events": fresh_marks if isinstance(fresh_marks, dict) else {},
+            "muted": fresh_muted if isinstance(fresh_muted, dict) else {},
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())}
     save_snapshots(app, data)
 
@@ -455,44 +564,64 @@ def run_watch(app) -> dict:
                              on_ok=getattr(app, "_note_write_ok", None))
                 appended += 1
 
+    # One digest per sweep, after the events are durably recorded: an
+    # unreachable webhook shows up in the report, never breaks the sweep.
+    notified = notify_events(app, events) if events else {"sent": 0, "reason": ""}
+
     parts = [f"监视 {len(sources)} 个信息源"]
     if error_count:
         parts.append(f"{error_count} 个抓取失败")
     if appended:
         parts.append(f"{appended} 条变更")
+    if notified.get("sent"):
+        parts.append("已推送通知")
+    elif notified.get("error"):
+        parts.append("通知推送失败")
     return {
         "ok": True, "trigger": "", "sources": len(sources),
         "ok_sources": ok_count, "error_sources": error_count,
-        "events": events, "appended": appended,
+        "events": events, "appended": appended, "notify": notified,
         "elapsed_ms": round((time.time() - started) * 1000),
         "summary": "，".join(parts) if sources else "没有可监视的信息源",
     }
 
 
 def changes_payload(app, limit: int = EVENTS_VIEW_LIMIT) -> dict:
-    """Console payload: events (newest first, with read flags) + sources."""
+    """Console payload: events (newest first, with read flags) + sources.
+
+    Each ``new_model`` event carries ``targets`` — the channels it could be
+    mapped into — so the console can render the one-click mapping without a
+    second round trip. Muted sources are marked, not hidden: their past
+    events stay readable, they just stop receiving new ones.
+    """
     events = load_events(app, max(limit, 1))
     data = load_snapshots(app)
     read_marks = data.get("read_events") if isinstance(data.get("read_events"), dict) else {}
+    muted = data.get("muted") if isinstance(data.get("muted"), dict) else {}
     unread = 0
     for event in events:
         event["status"] = "read" if event.get("id") in read_marks else "unread"
         if event["status"] == "unread":
             unread += 1
+        event["targets"] = (map_targets(app, event.get("source") or {})
+                            if event.get("kind") == "new_model" else [])
     snaps = []
     for entry in (data.get("snapshots") or {}).values():
         if isinstance(entry, dict):
             snaps.append({
+                "key": entry.get("key"),
                 "label": entry.get("label"), "kind": entry.get("kind"),
                 "origin": entry.get("origin"), "url": entry.get("url"),
                 "ok": entry.get("ok"), "error": entry.get("error"),
+                "muted": bool(entry.get("key") in muted),
                 "model_count": entry.get("model_count", len(entry.get("models") or [])),
                 "checked_at": entry.get("checked_at"),
             })
     snaps.sort(key=lambda s: str(s.get("label") or ""))
     return {
         "events": events[:max(limit, 1)], "unread": unread,
-        "sources": snaps,
+        "sources": snaps, "muted": muted, "notify": notify_status(app),
         "summary": {"total": len(snaps), "ok": sum(1 for s in snaps if s.get("ok")),
-                    "error": sum(1 for s in snaps if s.get("ok") is False)},
+                    "error": sum(1 for s in snaps if s.get("ok") is False),
+                    "muted": len(muted)},
     }

@@ -3013,6 +3013,47 @@ class App:
         changed = watch_mod.mark_read(self, ids, read)
         return {"ok": True, "changed": changed}
 
+    def set_changes_muted(self, keys: list[str], muted: bool = True) -> dict:
+        """Silence (or resume) change reporting for source keys."""
+        return watch_mod.set_muted(self, keys, muted)
+
+    def map_change_models(self, payload: dict) -> dict:
+        """Map a ``new_model`` event's models into one channel, verbatim.
+
+        Explicitly operator-driven: the console picks the channel (the
+        backend only suggests candidates per event), and the write goes
+        through the same path maintenance suggestions use. The event is
+        marked read on success so the card reflects what was handled.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("body 必须是 JSON 对象")
+        event_id = str(payload.get("id") or "").strip()
+        if not event_id:
+            raise ValueError("需要事件 id")
+        event = next((e for e in watch_mod.load_events(self, 500)
+                      if e.get("id") == event_id), None)
+        if event is None:
+            raise ValueError("事件不存在或已被日志轮转")
+        if event.get("kind") != "new_model":
+            raise ValueError("只有「新增模型」事件可以直接映射进渠道")
+        models = payload.get("models")
+        if not isinstance(models, list) or not models:
+            models = list((event.get("detail") or {}).get("added") or [])
+        if not models:
+            raise ValueError("事件没有可映射的模型")
+        channel = str(payload.get("channel") or "").strip()
+        if not channel:
+            targets = watch_mod.map_targets(self, event.get("source") or {})
+            if len(targets) == 1:
+                channel = targets[0]
+            else:
+                raise ValueError("请指定目标渠道" if targets
+                                 else "该信息源没有关联的渠道")
+        result = self.apply_maintenance_suggestion(
+            {"channel": channel, "models": models})
+        result["changed_read"] = watch_mod.mark_read(self, [event_id])
+        return result
+
     def dsh_status(self) -> dict:
         """Report whether the DeepSeek Harness client shares this host."""
         return dsh_mod.status()
