@@ -132,12 +132,16 @@ API Key:   listen.api_key（PlanRouter 监听密钥）
 
 ## 6. 行动清单
 
+> **2026-11-15 状态更新**：产品转向轻量团队版后，agent 舰队叙事不再是用户侧产品需求，
+> P0 后半 / P1 / P2 暂缓（DSH 当模型底座的能力已经实测覆盖，无需再验）；仅 P3 保留，
+> 随维护层迭代渐进。
+
 | 优先级 | 动作 | 前置条件 |
 |---|---|---|
-| P0 | DSH 接 PlanRouter 实测：Custom model API 填网关端点 | Node 22.19+、gh CLI、专用 GitHub 账号 |
-| P0 | 验证 Router / Worker 能否分别指定模型 | 同上 |
-| P1 | 观察模式跑通后评估 Worker 模型档位（facet-cheap 够不够） | P0 完成 |
-| P2 | policy 草案：运维走 `/api/*` + admin key，禁改配置文件 | P0 完成 |
+| ~~P0~~ | ~~DSH 接 PlanRouter 实测：Custom model API 填网关端点~~ | 已完成（见 [planrouter-dsh-integration.md](planrouter-dsh-integration.md)） |
+| ~~P0~~ | ~~验证 Router / Worker 能否分别指定模型~~ | 暂缓（产品需求已消失） |
+| ~~P1~~ | ~~观察模式跑通后评估 Worker 模型档位（facet-cheap 够不够）~~ | 暂缓 |
+| ~~P2~~ | ~~policy 草案：运维走 `/api/*` + admin key，禁改配置文件~~ | 暂缓（留作维护层升级的预案） |
 | P3 | 吸收层面 3 三条原则到维护层文档与实现 | 无硬依赖，可渐进 |
 
 ---
