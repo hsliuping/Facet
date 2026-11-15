@@ -37,6 +37,21 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # without any further configuration; paid channels are always hand-placed.
 FREE_CHANNEL_MACRO = "$free"
 
+# Safety margin kept in front of the free gate, in tokens, keyed by provider.
+# Volcengine keeps serving after a model's free grant runs dry whenever the
+# account holds any balance — no 429, no error code, no header — so the only
+# defence is to stop that model while the vendor-observed remaining still
+# looks healthy. The margin is applied per model (each wire has its own
+# grant), never to the channel as a whole: one drained model must not take
+# its siblings down with it. One routed request can spend ~90k tokens, so
+# 100k left means an in-flight request can never cross zero and bill the
+# balance. Providers absent from the mapping keep a smaller default margin:
+# below ~10k tokens a call is likely to fail outright anyway, and the failed
+# call would only trigger another retry — stopping the model first is cheaper
+# for everyone.
+FREE_RESERVE_TOKENS = {"volcengine": 100_000}
+FREE_RESERVE_DEFAULT_TOKENS = 10_000
+
 # Route order stays as the operator arranged it; the stability score only
 # demotes a channel×model that keeps failing to the back of its route, so a
 # known-bad vendor does not add a failed hop to every request. The score
@@ -487,10 +502,11 @@ class Defaults:
     # Model name routed through (preferably free) channels for the LLM part of
     # self-maintenance; empty disables LLM analysis, deterministic rules still run.
     maintenance_model: str = ""
-    # 0 disables the free-quota alignment sweep (freealign.py). Six hours
-    # matches the free-pool verification cadence: a day-long gap left a
-    # revoked model's grant stale long enough for routing to keep choosing it.
-    free_align_hours: int = 6
+    # 0 disables the free-quota alignment sweep (freealign.py). Half an hour:
+    # the sweep is also the reseed point of the self-metered free budget
+    # (server.App._seed_free_budget), so its cadence bounds how long a dry
+    # model can silently bill the account balance. Fractional hours allowed.
+    free_align_hours: float = 0.5
     # 0 disables the scheduled free-pool verification sweep: every enabled
     # free channel's mappings are pinged, confirmed-dead ids get an expiring
     # label so routing stops calling them (manual button keeps working).
@@ -791,7 +807,7 @@ def parse_config(raw: dict) -> Config:
         catalog_refresh_hours=int(d.get("catalog_refresh_hours", 24)),
         maintenance_hours=int(d.get("maintenance_hours", 24)),
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
-        free_align_hours=int(d.get("free_align_hours", 6)),
+        free_align_hours=float(d.get("free_align_hours", 0.5)),
         free_verify_hours=int(d.get("free_verify_hours", 6)),
         usage_retention_days=int(d.get("usage_retention_days", 180)),
         disk_min_free_mb=int(d.get("disk_min_free_mb", 512)),

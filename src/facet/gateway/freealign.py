@@ -6,8 +6,9 @@ such a quota must map exactly the models that still carry free quota — every
 unmapped-but-billed model would silently charge per-token, and every expired
 model would 4xx at call time. This module is the scheduled sweep (defaults.
 free_align_hours, 0 disables): run the vendor command once, keep rows that
-speak chat completions (type "Text") with remaining quota and a not-yet-passed
-expiry as identity mappings, and replace the channel's concrete model keys.
+speak chat completions (type "Text") with remaining quota above the
+provider's safety margin (FREE_RESERVE_TOKENS) and a not-yet-passed expiry
+as identity mappings, and replace the channel's concrete model keys.
 ``auto``/``*`` keys are preserved; command failures keep the old mapping and
 land in the report alerts so the next sweep can retry.
 """
@@ -20,7 +21,8 @@ import subprocess
 from datetime import date, datetime
 
 from .ark_quota import resolve_callable_names
-from .core import AUTO_MODEL
+from .core import (AUTO_MODEL, FREE_RESERVE_DEFAULT_TOKENS,
+                   FREE_RESERVE_TOKENS)
 from .probe import probe_models
 
 # `bl usage free` shells out to the vendor CLI and may do network I/O.
@@ -57,13 +59,19 @@ def parse_free_quota_output(text: str) -> list[dict]:
     return [row for row in data if isinstance(row, dict)]
 
 
-def free_models_from_rows(rows, today: str | None = None) -> list[str]:
+def free_models_from_rows(rows, today: str | None = None,
+                          reserve: float = 0.0) -> list[str]:
     """Model ids with usable free chat quota, in the tool's own order.
 
     A row qualifies when its type is "Text" (vision/embedding/audio rows
-    never serve /chat/completions), remaining quota is > 0 and the expiry
-    date has not passed. Rows without a parsable remaining count or without
-    an expiry are skipped — quota state must be proven, not assumed.
+    never serve /chat/completions), remaining quota is above ``reserve`` and
+    the expiry date has not passed. Rows without a parsable remaining count
+    or without an expiry are skipped — quota state must be proven, not
+    assumed. ``reserve`` is a per-model margin (FREE_RESERVE_TOKENS): a
+    vendor that bills silently once a grant runs dry (Volcengine) keeps the
+    model out of the mapping while a single request's worth of tokens is all
+    that separates it from zero, so auto is repointed at a model with real
+    headroom instead of one the dispatch gate will refuse.
     """
     today = today or date.today().isoformat()
     out: list[str] = []
@@ -74,7 +82,7 @@ def free_models_from_rows(rows, today: str | None = None) -> list[str]:
         if str(row.get("type") or "").strip() != "Text":
             continue
         try:
-            if float(row.get("remaining") or 0) <= 0:
+            if float(row.get("remaining") or 0) <= reserve:
                 continue
         except (TypeError, ValueError):
             continue
@@ -124,6 +132,10 @@ def align_mapping(channel, models: list[str]) -> dict[str, str]:
     auto = mapping.get(AUTO_MODEL)
     if auto and models and auto not in models:
         mapping[AUTO_MODEL] = models[0]
+    elif auto and not models:
+        # No free model survived: blank the target so auto traffic stops
+        # instead of routing to a model that now bills the account balance.
+        mapping[AUTO_MODEL] = ""
     return mapping
 
 
@@ -245,7 +257,16 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
                 })
                 continue
         rows = results[key] or []
-        families = free_models_from_rows(rows)
+        # Per-model safety margin: a model sitting inside the reserve is
+        # treated as spent here too, or auto would keep pointing at a model
+        # the dispatch gate refuses while its siblings still have real
+        # headroom. Volcengine holds 100k back (it bills silently); every
+        # other provider keeps the shared 10k default — below that a call
+        # fails outright anyway and would only trigger another retry.
+        reserve = FREE_RESERVE_TOKENS.get(
+            str(getattr(channel, "provider", "") or ""),
+            FREE_RESERVE_DEFAULT_TOKENS)
+        families = free_models_from_rows(rows, reserve=reserve)
         if getattr(channel, "provider", "") == "volcengine" and families:
             try:
                 models = _resolve_volcengine_callables(channel, families)

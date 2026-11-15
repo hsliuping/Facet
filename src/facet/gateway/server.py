@@ -34,7 +34,9 @@ from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
 from .convert import convert_request, convert_response, inject_system, stream_converter
 from .core import (
-    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, OPENAI, QUOTA_MARKERS, Config,
+    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, FREE_RESERVE_DEFAULT_TOKENS,
+    FREE_RESERVE_TOKENS, OPENAI,
+    QUOTA_MARKERS, Config,
     StateStore, channel_ref,
     apply_upstream_headers,
     body_has_vision, channel_takes_images, ensure_channel_ids, explicit_models,
@@ -107,6 +109,13 @@ RUNTIME_ALERT_ERROR_THRESHOLD = 3
 # Consecutive failed cycles of one scheduled sweep before it raises a runtime
 # alert (self-maintenance breaking must be visible without watching the console).
 TASK_FAIL_ALERT_THRESHOLD = 2
+# The freshness freeze trips a little past one sweep interval, not exactly at
+# it: the task loop schedules the next sweep from the previous one's
+# completion, so a healthy stamp-to-stamp gap is interval + vendor-command
+# time (capped by freealign.CMD_TIMEOUT). Tripping at the bare interval would
+# flap the channel frozen for that tail window every cycle even when nothing
+# is wrong; the grace only defers real staleness by two minutes.
+STALE_FREEZE_GRACE = 120.0
 # Human names for the persisted artefacts whose failed writes runtime_alerts
 # reports (see App._note_write_failure / usage / notifier write callbacks).
 PERSIST_KIND_LABELS = {
@@ -197,6 +206,21 @@ def _burn_ratio(record: dict, stamp: datetime) -> float:
     remaining = max(0.0, min(1.0, (limit - used) / limit))
     days = max((stamp.date() - datetime.now().date()).days, 0) + 1
     return remaining / days
+
+
+def _quota_at_epoch(at: str) -> float | None:
+    """Epoch seconds of a persisted vendor snapshot stamp, or None.
+
+    The sweep writes local-time ``%Y-%m-%d %H:%M:%S``; legacy files may
+    carry either that or the ISO form. An unparsable stamp means "unknown",
+    which the freshness gate treats as unfrozen rather than frozen.
+    """
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(at, fmt).timestamp()
+        except ValueError:
+            continue
+    return None
 
 
 def _part_tag(part) -> str:
@@ -606,7 +630,9 @@ class ScheduledTask:
         return float(getattr(self.app.config.defaults, self.hours_key) or 24)
 
     def interval(self) -> float:
-        return max(1.0, self.hours()) * 3600.0
+        # Fractional hours are valid (free_align runs every 0.5h); the floor
+        # only guards a nonsense near-zero value from spinning the loop.
+        return max(0.05, self.hours()) * 3600.0
 
     def start(self) -> None:
         self.next_run_at = time.time() + self.FIRST_DELAY
@@ -983,6 +1009,21 @@ class App:
         # free-quota gate can see consumption the gateway itself did not make.
         self.vendor_quota: dict = {}
         self.vendor_quota_at = ""
+        # Per-channel epoch of the last successful vendor quota read. A
+        # channel whose vendor-derived numbers are older than one sweep
+        # interval is frozen whole (free_quota_status): the budget only
+        # extrapolates safely while the sweep that seeded it keeps running —
+        # a stalled sweep must stop dispatch instead of spending against
+        # numbers nobody has refreshed while the vendor grant may be gone.
+        self.vendor_synced: dict = {}
+        # Self-metered free budget per channel: the vendor's remaining figure
+        # at the last sweep plus the usage counter's position at that moment
+        # (see _free_budget_for). Volcengine never errors once free quota runs
+        # dry with balance in the account — it silently bills — so between
+        # sweeps this seed is what lets the dispatch gate stop the model, with
+        # a provider margin held back (FREE_RESERVE_TOKENS) so a single large
+        # request cannot dip into the balance.
+        self.free_budget: dict = {}
         # Vendor-side plan usage for the subscriptions page (Volcengine
         # Coding/Agent Plan via GetPersonalPlan + per-plan usage APIs).
         # Cached per credential pair with a TTL and persisted like
@@ -1170,6 +1211,24 @@ class App:
                 str(name): entry for name, entry in channels.items()
                 if isinstance(entry, dict)}
         self.vendor_quota_at = str(data.get("at") or "")
+        budget = data.get("budget")
+        if isinstance(budget, dict):
+            self.free_budget = {
+                str(name): entry for name, entry in budget.items()
+                if isinstance(entry, dict)}
+        synced = data.get("synced")
+        if isinstance(synced, dict):
+            self.vendor_synced = {
+                str(name): float(ts) for name, ts in synced.items()
+                if isinstance(ts, (int, float)) and not isinstance(ts, bool)}
+        elif self.vendor_quota_at:
+            # Legacy file: one shared stamp covers every channel it carries,
+            # so the freshness gate works across the upgrade instead of
+            # trusting an undated snapshot forever.
+            ts = _quota_at_epoch(self.vendor_quota_at)
+            if ts is not None:
+                self.vendor_synced = {
+                    name: ts for name in {*self.vendor_quota, *self.free_budget}}
         plans = data.get("plans")
         if isinstance(plans, dict):
             # Show the persisted snapshots right after a restart; the first
@@ -1192,6 +1251,7 @@ class App:
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(
                 {"at": self.vendor_quota_at, "channels": self.vendor_quota,
+                 "budget": self.free_budget, "synced": self.vendor_synced,
                  "plans": plans},
                 ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
@@ -1478,18 +1538,94 @@ class App:
         """
         return (self.vendor_quota.get(channel.name) or {}).get(wire) or {}
 
+    def _seed_free_budget(self, quota_report: dict) -> None:
+        """Reset the self-metered free budget from fresh sweep numbers.
+
+        Each seeded channel keeps the vendor's remaining figure plus the
+        usage counter's position at seed time; the dispatch gate subtracts
+        the counter's growth since (see _free_budget_for). A channel whose
+        sweep failed keeps its previous seed — its quota really was spent,
+        only the re-read failed.
+        """
+        for name, rows in (quota_report or {}).items():
+            remaining: dict[str, float] = {}
+            for wire, row in rows.items():
+                value = (row or {}).get("remaining")
+                if isinstance(value, (int, float)) \
+                        and not isinstance(value, bool):
+                    remaining[str(wire)] = float(value)
+            if not remaining:
+                continue
+            spent0 = ({wire: int(self.usage.model_usage(
+                str(name), wire, "total").get("tokens") or 0)
+                for wire in remaining}
+                if self.usage is not None else {})
+            self.free_budget[str(name)] = {"remaining": remaining,
+                                           "spent0": spent0}
+
+    def _free_budget_for(self, channel, wire: str) -> float | None:
+        """Vendor-seeded free tokens left for this wire, or None.
+
+        The seed (vendor remaining + counter position at the last sweep)
+        persists in vendorquota.json and the counter in usage.json, so the
+        subtraction is restart-safe with no per-request bookkeeping. The
+        counter sums raw prompt tokens — cache hits included — so it reads
+        high against vendor billing: the gate closes early rather than
+        letting a dry model silently bill the account balance.
+        """
+        entry = self.free_budget.get(channel.name)
+        if not isinstance(entry, dict) or self.usage is None:
+            return None
+        remaining = entry.get("remaining") or {}
+        if wire not in remaining:
+            return None
+        base = int((entry.get("spent0") or {}).get(wire) or 0)
+        total = int(self.usage.model_usage(
+            channel.name, wire, "total").get("tokens") or 0)
+        return float(remaining[wire]) - max(0, total - base)
+
     def free_quota_status(self, channel, wire: str, exposed: str = "") -> dict | None:
         """Local usage vs the free allowance; exhausted means "never route it".
 
-        The vendor's own numbers (last alignment sweep) are carried alongside
-        the gateway counter: they are the only truth for account-level quotas
-        that other clients also draw from, so a positive vendor remainder
-        overrides the local counter, and zero vendor remaining blocks the model
-        even while the local counter still has headroom.
+        Three signals, freshest first: the self-metered budget (the vendor's
+        remaining figure at the last sweep minus what the gateway has routed
+        since), the raw vendor snapshot, and the local spec counter. A vendor
+        that silently bills the account balance once free quota runs dry
+        (Volcengine) never errors, so between sweeps the extrapolated budget
+        is the only signal that can stop dispatch before money moves.
+
+        The two vendor-observed signals additionally honour the provider's
+        safety margin (FREE_RESERVE_TOKENS, default FREE_RESERVE_DEFAULT_TOKENS
+        for providers without an entry): Volcengine counts as exhausted while
+        100k tokens still remain on that wire, because a single request can
+        spend ~90k and crossing zero there is billed silently. The margin is
+        per wire — a depleted model cools alone and its siblings on the same
+        channel keep serving — never a channel-wide freeze. The local spec
+        counter stays a raw comparison — its baseline is a hand-written
+        estimate and its total already reads high (cached prompt tokens are
+        summed as billed ones), so stacking the margin on top would close
+        paid-safe models for a whole sweep cycle.
+
+        One deliberate channel-wide freeze exists: while the vendor numbers
+        are older than one sweep interval (defaults.free_align_hours), every
+        wire of that channel counts as exhausted. The budget only
+        extrapolates safely while the sweep that seeded it keeps running;
+        when the sweep stalls (vendor command failing, host asleep) the
+        extrapolation keeps spending against numbers nobody has refreshed —
+        exactly the window in which a grant may already be gone and the
+        vendor keeps serving silently. The freeze lifts on the next
+        successful sweep. The trip point is one sweep interval plus a small
+        grace (STALE_FREEZE_GRACE) so a healthy cycle never trips it, and
+        channels the sweep never refreshes (no vendor command) carry live
+        signals only and are never frozen, and neither is anything while the
+        sweep is disabled.
         """
         spec = self.free_quota_spec(channel, wire, exposed)
         vendor = self._vendor_quota_for(channel, wire)
-        if spec is None and not vendor:
+        budget = self._free_budget_for(channel, wire)
+        reserve = FREE_RESERVE_TOKENS.get(channel.provider,
+                                          FREE_RESERVE_DEFAULT_TOKENS)
+        if spec is None and not vendor and budget is None:
             return None
         used = (self.usage.model_usage(channel.name, wire, spec.period)
                 if spec is not None and self.usage is not None else {})
@@ -1506,15 +1642,42 @@ class App:
             or (spec is not None and spec.requests is not None
                 and requests_used >= spec.requests)
         )
-        # The vendor's number wins whenever it exists: the gateway counter sums
-        # raw prompt tokens (cache hits included), so it routinely reads higher
-        # than what the vendor actually debited. Letting the local counter
-        # override a positive vendor remainder kept dead models blocked for a
-        # whole sweep cycle despite quota still being available upstream.
+        # Freshness order: budget > vendor snapshot > local spec counter. The
+        # snapshot beats the counter because the gateway sums raw prompt
+        # tokens (cache hits included) and routinely reads higher than what
+        # the vendor actually debited — letting the local counter override a
+        # positive vendor remainder once kept dead models blocked for a whole
+        # sweep cycle. The budget beats the snapshot because it also counts
+        # what the gateway routed since the sweep: the snapshot alone goes
+        # stale for a whole sweep interval, exactly when silent billing
+        # happens.
         vendor_remaining = vendor.get("remaining")
-        exhausted = (vendor_remaining <= 0 if isinstance(vendor_remaining, (int, float))
-                     and not isinstance(vendor_remaining, bool)
-                     else local_exhausted)
+        if budget is not None:
+            exhausted = budget <= reserve
+        elif (isinstance(vendor_remaining, (int, float))
+              and not isinstance(vendor_remaining, bool)):
+            exhausted = vendor_remaining <= reserve
+        else:
+            exhausted = local_exhausted
+        # Staleness freeze — the one channel-wide gate. It keys on the
+        # channel's vendor-derived state (snapshot or budget seed), not on
+        # this wire's: once the sweep stalls, no observation for the channel
+        # can be trusted, manual sibling mappings included. Channels the
+        # sweep never refreshes carry live signals only and are never
+        # frozen, and neither is anything while the sweep is disabled.
+        sync_age = None
+        if (self.config.defaults.free_align_hours > 0
+                and (self.vendor_quota.get(channel.name)
+                     or isinstance(self.free_budget.get(channel.name), dict))):
+            synced = self.vendor_synced.get(channel.name)
+            if synced is not None:
+                sync_age = max(0.0, time.time() - float(synced))
+        stale = bool(
+            sync_age is not None
+            and sync_age > self.config.defaults.free_align_hours * 3600.0
+            + STALE_FREEZE_GRACE)
+        if stale:
+            exhausted = True
         ratios = []
         if spec is not None and spec.tokens:
             ratios.append(tokens_used / spec.tokens)
@@ -1522,6 +1685,8 @@ class App:
             ratios.append(requests_used / spec.requests)
         if vendor and vendor.get("total"):
             ratios.append(1 - (vendor.get("remaining") or 0) / vendor["total"])
+        if budget is not None and vendor.get("total"):
+            ratios.append(1 - max(0.0, budget) / vendor["total"])
         ratio = max(ratios) if ratios else 0.0
         return {
             "source": ("vendor" if spec is None else
@@ -1538,9 +1703,13 @@ class App:
             "warning": bool(ratio >= 0.8 and not exhausted),
             "exhausted": exhausted,
             "vendor_remaining": vendor.get("remaining"),
+            "budget_remaining": budget,
+            "reserve_tokens": reserve,
             "vendor_total": vendor.get("total"),
             "vendor_consumed": vendor.get("consumed"),
             "vendor_at": self.vendor_quota_at or None,
+            "sync_age": round(sync_age, 1) if sync_age is not None else None,
+            "stale": stale,
         }
 
     def free_quota_exhausted(self, channel, wire: str, exposed: str = "") -> bool:
@@ -2930,6 +3099,16 @@ class App:
             # known numbers (and the alert above explains the staleness).
             self.vendor_quota.update(report["quota"])
             self.vendor_quota_at = report.get("quota_at") or self.vendor_quota_at
+            # Freshness stamp per refreshed channel: a channel the sweep
+            # keeps failing to read stops being stamped, ages past one sweep
+            # interval and gets frozen by free_quota_status until a sweep
+            # succeeds again — stale numbers must not keep dispatch open.
+            now = time.time()
+            for name in report["quota"]:
+                self.vendor_synced[str(name)] = now
+            # Re-seed the self-metered budget from the fresh numbers so the
+            # dispatch gate stops extrapolating from the previous sweep.
+            self._seed_free_budget(report["quota"])
             self._save_vendor_quota()
         report["finished_at"] = time.time()
         self._record_free_align(report)

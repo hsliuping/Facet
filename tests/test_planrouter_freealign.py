@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -45,6 +46,9 @@ def bl_rows() -> list[dict]:
 
 
 FREE_MODELS = ["qwen3.8-flash", "qwen3.8-27b"]
+# The sweep holds the provider's margin back (10k by default), so the 27b row
+# above (5 tokens left) sits inside it and never enters the mapping.
+SWEEP_MODELS = ["qwen3.8-flash"]
 
 
 def align_config() -> dict:
@@ -158,6 +162,20 @@ class ParseTests(unittest.TestCase):
         rows = [{"model": "m", "type": "Text", "remaining": 5, "expires": ""}]
         self.assertEqual(freealign.free_models_from_rows(rows), [])
 
+    def test_reserve_margin_drops_inside_margin_rows(self):
+        rows = [
+            {"model": "big", "type": "Text", "remaining": 150000,
+             "total": 500000, "expires": FUTURE},
+            {"model": "small", "type": "Text", "remaining": 80000,
+             "total": 500000, "expires": FUTURE},
+        ]
+        # Without a margin only a hard zero is unusable.
+        self.assertEqual(freealign.free_models_from_rows(rows),
+                         ["big", "small"])
+        # Volcengine keeps 100k in reserve per model.
+        self.assertEqual(
+            freealign.free_models_from_rows(rows, reserve=100000), ["big"])
+
 
 class RunVendorCmdTests(unittest.TestCase):
     def test_resolve_cmd_wraps_windows_shims(self):
@@ -209,7 +227,7 @@ class SweepTests(unittest.TestCase):
     def test_identity_patch_for_free_channel_only(self):
         report = self.sweep()
         self.assertEqual(report["patch"], {
-            "百炼免费": {"auto": "", **{m: m for m in FREE_MODELS}},
+            "百炼免费": {"auto": "", **{m: m for m in SWEEP_MODELS}},
         })
         aligned = {row["channel"]: row for row in report["aligned"]}
         self.assertTrue(aligned["百炼免费"]["changed"])
@@ -226,8 +244,9 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(snapshot["qwen3.8-flash"],
                          {"remaining": 900000, "total": 1000000,
                           "consumed": 100000})
-        self.assertEqual(snapshot["qwen3.8-27b"],
-                         {"remaining": 5, "total": 100, "consumed": 95})
+        # Rows inside the 10k default margin are dropped like exhausted ones:
+        # below that a call fails outright and would only trigger a retry.
+        self.assertNotIn("qwen3.8-27b", snapshot)
         # Exhausted rows never enter the mapping, so they are not reported.
         self.assertNotIn("qwen3.8-max-0902", snapshot)
         self.assertRegex(report["quota_at"], r"^\d{4}-\d{2}-\d{2}")
@@ -235,7 +254,7 @@ class SweepTests(unittest.TestCase):
     def test_unchanged_mapping_reports_no_patch(self):
         first = self.sweep()  # discovers the change…
         self.assertEqual(first["patch"], {
-            "百炼免费": {"auto": "", **{m: m for m in FREE_MODELS}},
+            "百炼免费": {"auto": "", **{m: m for m in SWEEP_MODELS}},
         })
         # …the server applies it; re-sweep on the new state.
         raw = align_config()
@@ -256,6 +275,17 @@ class SweepTests(unittest.TestCase):
         self.assertIn("免费额度命令执行失败", report["alerts"][0]["message"])
 
     def test_empty_quota_clears_concrete_keys_keeps_auto(self):
+        report = self.sweep(text=json.dumps([]))
+        self.assertEqual(report["patch"], {"百炼免费": {"auto": ""}})
+
+    def test_empty_quota_blanks_stale_auto_target(self):
+        # All free models gone but auto still points at one: blank it, or
+        # auto traffic keeps routing to a model that now bills the balance.
+        raw = align_config()
+        raw["channels"][0]["models"] = {"auto": "qwen3.8-flash",
+                                        "qwen3.8-flash": "qwen3.8-flash"}
+        self.app = App(parse_config(raw))
+        self.app.providers = registry_fixture()
         report = self.sweep(text=json.dumps([]))
         self.assertEqual(report["patch"], {"百炼免费": {"auto": ""}})
 
@@ -328,7 +358,7 @@ class SweepTests(unittest.TestCase):
         app = App(parse_config(volc_config()))
         app.providers = volc_registry()
         rows = json.dumps([
-            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 100,
+            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 480693,
              "expires": FUTURE},
         ])
         with mock.patch("facet.gateway.freealign.probe_models",
@@ -338,6 +368,31 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(report["patch"], {})
         self.assertEqual(len(report["alerts"]), 1)
         self.assertIn("版本名解析失败", report["alerts"][0]["message"])
+
+    def test_volcengine_reserve_trims_inside_margin_models(self):
+        # A model inside the 100k margin is treated as spent by the sweep
+        # too, so auto is repointed at a sibling with real headroom instead
+        # of one the dispatch gate would refuse anyway.
+        app = App(parse_config(volc_config()))
+        app.providers = volc_registry()
+        rows = json.dumps([
+            {"model": "kimi-k3-1-pro", "type": "Text", "remaining": 150000,
+             "total": 500000, "consumed": 350000, "expires": FUTURE},
+            {"model": "doubao-seed", "type": "Text", "remaining": 80000,
+             "total": 500000, "consumed": 420000, "expires": FUTURE},
+        ])
+        with mock.patch("facet.gateway.freealign.probe_models",
+                        return_value={"ok": True,
+                                      "models": ["kimi-k3-1-pro-261024",
+                                                 "doubao-seed-260915"]}):
+            report = freealign.run_free_align(app, "manual",
+                                              _run_cmd=fake_runner(rows))
+        self.assertEqual(report["patch"], {
+            "火山免费": {"auto": "",
+                         "kimi-k3-1-pro-261024": "kimi-k3-1-pro-261024"},
+        })
+        self.assertEqual(list(report["quota"]["火山免费"]),
+                         ["kimi-k3-1-pro-261024"])
 
 
 class ApplyTests(unittest.TestCase):
@@ -360,11 +415,11 @@ class ApplyTests(unittest.TestCase):
                                fake_runner(json.dumps(bl_rows()))):
             report = self.app.run_free_align("manual")
         self.assertEqual(report["patch"], {
-            "百炼免费": {"auto": "", **{m: m for m in FREE_MODELS}},
+            "百炼免费": {"auto": "", **{m: m for m in SWEEP_MODELS}},
         })
         channel = self.app.config.channel("百炼免费")
         self.assertEqual(channel.models,
-                         {"auto": "", **{m: m for m in FREE_MODELS}})
+                         {"auto": "", **{m: m for m in SWEEP_MODELS}})
         # The stale paid mapping is gone from disk too.
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         saved = next(c for c in raw["channels"] if c["name"] == "百炼免费")
@@ -377,7 +432,7 @@ class ApplyTests(unittest.TestCase):
             self.app.run_free_align("scheduled")
         payload = self.app.maintenance_payload()
         self.assertTrue(payload["free_align"]["enabled"])
-        self.assertEqual(payload["free_align"]["hours"], 6)
+        self.assertEqual(payload["free_align"]["hours"], 0.5)
         self.assertEqual(payload["free_align"]["reports"][0]["trigger"],
                          "scheduled")
 
@@ -391,6 +446,8 @@ class ApplyTests(unittest.TestCase):
                          {"remaining": 900000, "total": 1000000,
                           "consumed": 100000})
         self.assertEqual(saved["at"], self.app.vendor_quota_at)
+        # The per-channel freshness stamp travels with the snapshot.
+        self.assertIn("百炼免费", saved["synced"])
         # A restarted process reloads the snapshot instead of showing zeros.
         reloaded = App(load_config(self.path), config_path=self.path)
         reloaded.providers = registry_fixture()
@@ -400,6 +457,51 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(status["vendor_total"], 1000000)
         self.assertEqual(status["vendor_consumed"], 100000)
         self.assertEqual(status["vendor_at"], self.app.vendor_quota_at)
+        # …including its age, so a restart does not reset the freeze clock.
+        self.assertIn("百炼免费", reloaded.vendor_synced)
+        self.assertFalse(status["stale"])
+        self.assertLess(status["sync_age"], 60)
+
+    def test_legacy_vendor_quota_file_derives_synced_from_at(self):
+        # Files written before per-channel stamps landed carry only "at":
+        # treat it as the shared stamp so the freshness gate works across the
+        # upgrade instead of trusting an undated snapshot forever.
+        at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        (self.path.parent / "vendorquota.json").write_text(json.dumps({
+            "at": at,
+            "channels": {"百炼免费": {"qwen3.8-flash": {
+                "remaining": 900000, "total": 1000000, "consumed": 100000}}},
+        }), encoding="utf-8")
+        app = App(load_config(self.path), config_path=self.path)
+        self.assertIn("百炼免费", app.vendor_synced)
+        self.assertGreater(app.vendor_synced["百炼免费"], 0)
+
+    def test_free_budget_persists_and_survives_restart(self):
+        usage_path = self.path.with_name(self.path.stem + "-usage.json")
+        app = App(load_config(self.path), config_path=self.path,
+                  usage_file=usage_path)
+        app.providers = registry_fixture()
+        try:
+            with mock.patch.object(freealign, "run_vendor_cmd",
+                                   fake_runner(json.dumps(bl_rows()))):
+                app.run_free_align("manual")
+            app.usage.record("百炼免费", True, tokens=40000,
+                             model="qwen3.8-flash")
+            app.usage.flush()
+            channel = app.config.channel("百炼免费")
+            self.assertAlmostEqual(
+                app._free_budget_for(channel, "qwen3.8-flash"), 860000)
+            # A restarted process reloads the seed (vendorquota.json) and
+            # the counter (usage.json): the budget survives untouched.
+            reloaded = App(load_config(self.path), config_path=self.path,
+                           usage_file=usage_path)
+            reloaded.providers = registry_fixture()
+            self.assertAlmostEqual(
+                reloaded._free_budget_for(
+                    reloaded.config.channel("百炼免费"), "qwen3.8-flash"),
+                860000)
+        finally:
+            usage_path.unlink(missing_ok=True)
 
 
 class PlanQuotaTests(unittest.TestCase):
@@ -564,10 +666,14 @@ class RegistryTests(unittest.TestCase):
 class DefaultsTests(unittest.TestCase):
     def test_free_align_hours_defaults_and_zero(self):
         config = parse_config(align_config())
-        self.assertEqual(config.defaults.free_align_hours, 6)
+        # Half-hour cadence: the sweep is the budget reseed point, so a dry
+        # model must be caught quickly.
+        self.assertEqual(config.defaults.free_align_hours, 0.5)
         raw = align_config()
         raw["defaults"] = {"free_align_hours": 0}
         self.assertEqual(parse_config(raw).defaults.free_align_hours, 0)
+        raw["defaults"] = {"free_align_hours": 0.25}
+        self.assertEqual(parse_config(raw).defaults.free_align_hours, 0.25)
 
 
 WIRE = "doubao-seed-2-1-lite-260915"
@@ -718,6 +824,151 @@ class FreeQuotaRoutingTests(unittest.TestCase):
             [(self.channel, WIRE)], mock.Mock(exposed=""))
         self.assertEqual([wire for _ch, wire in kept], [WIRE])
         self.assertEqual(skipped, [])
+
+    def test_budget_gate_closes_between_sweeps(self):
+        # The last sweep reported 101k tokens left; the vendor snapshot is
+        # hours old and Volcengine bills silently once quota runs dry, so
+        # the extrapolated budget — not the stale snapshot or the generous
+        # provider baseline — must decide.
+        self.app._seed_free_budget({"火山免费": {WIRE: {
+            "remaining": 101000, "total": 500000, "consumed": 399000}}})
+        self.app.usage.record("火山免费", True, tokens=600, model=WIRE)
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["budget_remaining"], 100400)
+        self.assertFalse(status["exhausted"])
+        self.app.usage.record("火山免费", True, tokens=500, model=WIRE)
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertLessEqual(status["budget_remaining"], 100000)
+        self.assertTrue(status["exhausted"])
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+
+    def test_volcengine_reserve_closes_gate_above_zero(self):
+        # One request can spend ~90k tokens, so the Volcengine gate must close
+        # while 100k free tokens still remain — never at the actual zero.
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 150000}}})
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["reserve_tokens"], 100000)
+        self.assertFalse(status["exhausted"])
+        self.app.usage.record("火山免费", True, tokens=60000, model=WIRE)
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["budget_remaining"], 90000)
+        self.assertTrue(status["exhausted"])  # quota left, but inside margin
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+
+    def test_reserve_is_provider_scoped(self):
+        # Providers without an explicit entry keep the shared 10k default:
+        # below that a call fails outright anyway, so stopping early only
+        # saves the doomed request and its retry.
+        raw = volc_config()
+        raw["channels"][0]["provider"] = "modelscope"
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        app._seed_free_budget({"火山免费": {WIRE: {"remaining": 40000}}})
+        app.usage.record("火山免费", True, tokens=5000, model=WIRE)
+        status = app.free_quota_status(channel, WIRE)
+        self.assertEqual(status["reserve_tokens"], 10_000)
+        self.assertEqual(status["budget_remaining"], 35000)
+        self.assertFalse(status["exhausted"])
+
+    def test_stale_sync_freezes_whole_channel(self):
+        # The budget extrapolates safely only while the sweep that seeded it
+        # keeps running: vendor numbers older than one sweep interval stop
+        # every wire of the channel, because the grant may already be gone
+        # and Volcengine would keep serving silently. (0.5h sweep + the
+        # 2-minute grace = 1920s trip point.)
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 400000}}})
+        self.app.vendor_synced["火山免费"] = time.time() - 2000
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertTrue(status["stale"])
+        self.assertGreater(status["sync_age"], 1920)
+        self.assertTrue(status["exhausted"])
+        # Channel-wide by design: the sibling mapping freezes with the
+        # drained model instead of picking up traffic during the stall.
+        kept, _ = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE), (self.channel, "old-doubao")],
+            mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        # A fresh sweep stamp lifts the freeze immediately.
+        self.app.vendor_synced["火山免费"] = time.time() - 60
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertFalse(status["stale"])
+        self.assertFalse(status["exhausted"])
+
+    def test_stale_freeze_needs_enabled_sweep_and_known_stamp(self):
+        # Without a configured sweep there is nothing to refresh, so freezing
+        # would disable the channel forever; without a stamp (first boot,
+        # channels the sweep never touched) the numbers cannot be called
+        # stale and the regular per-wire gate stays in charge.
+        raw = volc_config()
+        raw["defaults"] = {"free_align_hours": 0}
+        disabled = App(parse_config(raw), usage_file=self.path)
+        channel = disabled.config.channel("火山免费")
+        disabled._seed_free_budget({"火山免费": {WIRE: {"remaining": 400000}}})
+        disabled.vendor_synced["火山免费"] = time.time() - 9999
+        status = disabled.free_quota_status(channel, WIRE)
+        self.assertFalse(status["stale"])
+        self.assertFalse(status["exhausted"])
+        # Sweep enabled but never stamped yet: no freeze either.
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 400000}}})
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertIsNone(status["sync_age"])
+        self.assertFalse(status["stale"])
+        self.assertFalse(status["exhausted"])
+
+    def test_reserve_applies_to_vendor_snapshot(self):
+        # No seed yet (first sweep pending): the raw vendor remainder decides,
+        # and the margin still holds.
+        self.app.vendor_quota = {"火山免费": {WIRE: {
+            "remaining": 80000, "total": 500000, "consumed": 420000}}}
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertIsNone(status["budget_remaining"])
+        self.assertTrue(status["exhausted"])
+
+    def test_reserve_cools_only_the_depleted_model(self):
+        # The margin is per model, never channel-wide: one wire inside its
+        # margin is refused while its sibling on the same channel keeps
+        # serving. A whole-channel freeze would take headroom down with it.
+        self.app._seed_free_budget({"火山免费": {
+            WIRE: {"remaining": 90000},
+            "old-doubao": {"remaining": 400000}}})
+        kept, skipped = self.app._apply_free_quota_filter(
+            [(self.channel, WIRE), (self.channel, "old-doubao")],
+            mock.Mock(exposed=""))
+        self.assertEqual([wire for _, wire in kept], ["old-doubao"])
+        self.assertEqual(skipped[0]["wire_model"], WIRE)
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+
+    def test_budget_reseed_recovers_after_quota_refund(self):
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 100}}})
+        self.app.usage.record("火山免费", True, tokens=200, model=WIRE)
+        self.assertTrue(self.app.free_quota_exhausted(self.channel, WIRE))
+        # Next sweep: the vendor restocked the free resource pack.
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 150000}}})
+        status = self.app.free_quota_status(self.channel, WIRE)
+        self.assertEqual(status["budget_remaining"], 150000)
+        self.assertFalse(status["exhausted"])
+
+    def test_budget_seed_skips_unparsable_rows(self):
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": None}}})
+        self.assertIsNone(self.app._free_budget_for(self.channel, WIRE))
+        # No seed → the raw vendor snapshot still decides, as before.
+        self.app.vendor_quota = {"火山免费": {WIRE: {"remaining": 0}}}
+        self.assertTrue(self.app.free_quota_exhausted(self.channel, WIRE))
+
+    def test_failed_sweep_keeps_previous_seed(self):
+        self.app._seed_free_budget({"火山免费": {WIRE: {"remaining": 100}}})
+        self.app.usage.record("火山免费", True, tokens=30, model=WIRE)
+        # A later sweep that only reports other channels (this one failed)
+        # must not wipe the seed: the quota really was spent.
+        self.app._seed_free_budget({"other": {"m": {"remaining": 9}}})
+        self.assertEqual(self.app._free_budget_for(self.channel, WIRE), 70.0)
 
     def test_payload_reports_exhausted_and_sync_warning(self):
         self.app.usage.record("火山免费", True, tokens=600000, model=WIRE)
