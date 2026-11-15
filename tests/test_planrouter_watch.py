@@ -16,6 +16,8 @@ from unittest import mock
 
 from facet.gateway import watch as watch_mod
 from facet.gateway.core import load_config, parse_config
+from facet.gateway.notifier import (ReminderService, change_digest,
+                                    webhook_kind, webhook_payload)
 from facet.gateway.server import App, PERSIST_KIND_LABELS
 
 
@@ -528,6 +530,323 @@ class RunnerWiringTests(unittest.TestCase):
     def test_persist_kind_label_registered(self):
         self.assertEqual(PERSIST_KIND_LABELS.get("change_log"),
                          "变更事件 change-events.jsonl")
+
+
+class MuteTests(unittest.TestCase):
+    """按信息源静默：快照照常推进，只是不再产生事件。"""
+
+    def setUp(self):
+        self.app = _make_app(self)
+        self.app.providers = []
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        (self.path.parent / "change-snapshots.json").unlink(missing_ok=True)
+        (self.path.parent / "change-events.jsonl").unlink(missing_ok=True)
+
+    def sweep(self, models):
+        """models: a list for every source, or {source key: list} per source."""
+        def snap(source):
+            picked = models.get(source["key"], []) if isinstance(models, dict) else models
+            return _snap(source, picked)
+        with mock.patch.object(watch_mod, "snapshot_source", snap):
+            return watch_mod.run_watch(self.app)
+
+    def test_muted_source_advances_snapshot_without_events(self):
+        both = {"channel:a": ["m1"], "channel:claude": ["m1"]}
+        self.sweep(both)                                         # baseline
+        self.assertEqual(self.app.set_changes_muted(["channel:a"])["changed"], 1)
+        muted_delta = {"channel:a": ["m1", "m2"], "channel:claude": ["m1"]}
+        changed = self.sweep(muted_delta)                        # muted delta
+        self.assertEqual(changed["appended"], 0)
+        # Snapshot still advanced: resuming reports only future changes.
+        snaps = watch_mod.load_snapshots(self.app)["snapshots"]
+        self.assertEqual(snaps["channel:a"]["models"], ["m1", "m2"])
+        # Unmute: the swallowed delta does not flood back in.
+        self.app.set_changes_muted(["channel:a"], muted=False)
+        self.assertEqual(self.sweep(muted_delta)["appended"], 0)
+
+    def test_unmuted_channel_keeps_reporting(self):
+        self.sweep(["m1"])
+        self.app.set_changes_muted(["channel:a"])
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1", "m2"]
+                                               if s["key"] == "channel:claude" else ["m1"])):
+            report = watch_mod.run_watch(self.app)
+        events = watch_mod.load_events(self.app)
+        self.assertEqual(report["appended"], len(events))
+        self.assertTrue(events)
+        self.assertEqual({e["source"]["key"] for e in events}, {"channel:claude"})
+
+    def test_payload_marks_muted_sources(self):
+        self.sweep(["m1"])
+        self.app.set_changes_muted(["channel:a"])
+        payload = self.app.changes_payload()
+        self.assertEqual(payload["summary"]["muted"], 1)
+        states = {s["key"]: s for s in payload["sources"]}
+        self.assertTrue(states["channel:a"]["muted"])
+        self.assertFalse(states["channel:claude"]["muted"])
+
+    def test_mute_flipped_during_sweep_survives_save(self):
+        # A mute arriving while the sweep fetches must not be rolled back by
+        # the sweep's write-back (same discipline as read marks).
+        self.sweep(["m1"])
+
+        def flipper(source):
+            if source["key"] == "channel:claude":
+                watch_mod.set_muted(self.app, ["channel:a"])
+            return _snap(source, ["m1"])
+
+        with mock.patch.object(watch_mod, "snapshot_source", flipper):
+            watch_mod.run_watch(self.app)
+        self.assertIn("channel:a", watch_mod.load_snapshots(self.app)["muted"])
+
+    def test_empty_keys_rejected(self):
+        with self.assertRaises(ValueError):
+            self.app.set_changes_muted([])
+
+
+class MapTests(unittest.TestCase):
+    """新增模型一键映射：只建议目标渠道，写入始终走维护映射路径。"""
+
+    def setUp(self):
+        self.app = _make_app(self)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        (self.path.parent / "change-snapshots.json").unlink(missing_ok=True)
+        (self.path.parent / "change-events.jsonl").unlink(missing_ok=True)
+
+    def _new_model_event(self) -> dict:
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1"])):
+            watch_mod.run_watch(self.app)
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1", "m2"]
+                                               if s["key"] == "channel:a" else ["m1"])):
+            watch_mod.run_watch(self.app)
+        events = self.app.changes_payload()["events"]
+        return next(e for e in events if e["kind"] == "new_model"
+                    and e["source"]["key"] == "channel:a")
+
+    def test_map_targets_channel_and_provider(self):
+        event = self._new_model_event()
+        self.assertEqual(event["targets"], ["a"])
+        # Provider-catalog source maps to channels bound to that provider,
+        # with the matching billing mode ranked first.
+        targets = watch_mod.map_targets(self.app, {
+            "key": "provider:volcengine:coding:models", "origin": "provider"})
+        self.assertEqual(targets, ["a"])
+        self.assertEqual(watch_mod.map_targets(self.app, {
+            "key": "channel:zz", "origin": "channel"}), [])
+
+    def test_map_targets_subscription_uses_linked_channels(self):
+        self.app.subscriptions = [{"id": "s1", "plan": "Coding 套餐",
+                                   "channels": ["a"]}]
+        self.assertEqual(watch_mod.map_targets(self.app, {
+            "key": "subscription:s1", "origin": "subscription"}), ["a"])
+
+    def test_map_change_models_writes_config_and_marks_read(self):
+        event = self._new_model_event()
+        result = self.app.map_change_models({"id": event["id"]})
+        self.assertEqual(result["ok"], True)
+        self.assertEqual(result["channel"], "a")
+        self.assertEqual(result["models"], ["m2"])
+        # Verbatim identity mapping, exactly like maintenance suggestions.
+        self.assertEqual(self.app.config.channels[0].models,
+                         {"gpt-x": "gpt-x", "m2": "m2"})
+        after = self.app.changes_payload()
+        self.assertEqual(next(e for e in after["events"]
+                              if e["id"] == event["id"])["status"], "read")
+
+    def test_map_requires_known_event_and_new_model_kind(self):
+        with self.assertRaises(ValueError):
+            self.app.map_change_models({"id": "nope"})
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1"])):
+            watch_mod.run_watch(self.app)
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, [] if s["key"] == "channel:a" else ["m1"])):
+            watch_mod.run_watch(self.app)
+        removed = next(e for e in self.app.changes_payload()["events"]
+                       if e["kind"] == "removed_model")
+        with self.assertRaises(ValueError):
+            self.app.map_change_models({"id": removed["id"], "channel": "a"})
+
+    def test_map_without_target_channel_is_rejected(self):
+        # An event whose source no longer maps to any channel must not guess.
+        self._new_model_event()
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1", "m9"]
+                                               if s["key"] == "channel:claude" else ["m1"])):
+            watch_mod.run_watch(self.app)
+        event = next(e for e in self.app.changes_payload()["events"]
+                     if e["kind"] == "new_model"
+                     and e["source"]["key"] == "channel:claude")
+        self.assertEqual(event["targets"], ["claude"])
+        with mock.patch.object(
+                watch_mod, "map_targets",
+                mock.Mock(return_value=[])):
+            with self.assertRaises(ValueError):
+                self.app.map_change_models({"id": event["id"]})
+
+
+class ChangeNotifyTests(unittest.TestCase):
+    """变更事件通知：一次扫描一条摘要，通过共享 webhook 发送。"""
+
+    def setUp(self):
+        self.app = _make_app(self)
+        self.app.providers = []
+        self.sent: list[dict] = []
+        notifier = mock.Mock()
+        notifier.notify_changes = mock.Mock(
+            side_effect=self._capture)
+        notifier.delivery = mock.Mock(return_value={
+            "ok": True, "reason": "configured", "hint": ""})
+        self.app.notifier = notifier
+
+    def _capture(self, events):
+        self.sent.append(events)
+        return {"sent": 1, "events": len(events)}
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        (self.path.parent / "change-snapshots.json").unlink(missing_ok=True)
+        (self.path.parent / "change-events.jsonl").unlink(missing_ok=True)
+
+    def sweep(self, models):
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, models)):
+            return watch_mod.run_watch(self.app)
+
+    def test_sweep_with_events_sends_one_digest(self):
+        self.sweep(["m1"])
+        changed = self.sweep(["m1", "m2"])
+        self.assertEqual(changed["notify"], {"sent": 1, "events": 2})
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(self.sent[0]), 2)
+
+    def test_sweep_without_events_does_not_notify(self):
+        self.sweep(["m1"])
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.sweep(["m1"])["notify"]["sent"], 0)
+
+    def test_broken_notifier_does_not_break_the_sweep(self):
+        self.sweep(["m1"])
+        self.app.notifier.notify_changes = mock.Mock(
+            side_effect=RuntimeError("webhook down"))
+        report = self.sweep(["m1", "m2"])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["appended"], 2)
+        self.assertIn("error", report["notify"])
+        self.assertIn("通知推送失败", report["summary"])
+
+    def test_no_notifier_reports_unavailable(self):
+        self.app.notifier = None
+        payload = self.app.changes_payload()
+        self.assertEqual(payload["notify"]["reason"], "unavailable")
+
+    def test_payload_notify_reflects_delivery_state(self):
+        self.sweep(["m1"])
+        payload = self.app.changes_payload()
+        self.assertTrue(payload["notify"]["ok"])
+
+
+class ChangeDigestTests(unittest.TestCase):
+    """webhook 载荷与摘要文本：按 host 识别平台，收件人无需改造。"""
+
+    def test_webhook_kind_by_host(self):
+        self.assertEqual(webhook_kind(
+            "https://open.feishu.cn/open-apis/bot/v2/hook/x"), "feishu")
+        self.assertEqual(webhook_kind(
+            "https://open.larksuite.com/open-apis/bot/v2/hook/x"), "feishu")
+        self.assertEqual(webhook_kind(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k"), "wecom")
+        self.assertEqual(webhook_kind("https://ci.example.com/hook"), "generic")
+
+    def test_payload_shapes(self):
+        feishu = webhook_payload("https://open.feishu.cn/hook", "hello")
+        self.assertEqual(feishu["msg_type"], "text")
+        self.assertEqual(feishu["content"]["text"], "hello")
+        wecom = webhook_payload("https://qyapi.weixin.qq.com/hook", "hello")
+        self.assertEqual(wecom["msgtype"], "text")
+        self.assertEqual(wecom["text"]["content"], "hello")
+        # Unknown hosts keep the wecom-compatible envelope and namespace the
+        # structured fields, so existing receivers never see a shape change.
+        generic = webhook_payload("https://ci.example.com/hook", "hello",
+                                  {"events": [{"kind": "new_model"}]})
+        self.assertEqual(generic["msgtype"], "text")
+        self.assertEqual(generic["planrouter"]["events"][0]["kind"], "new_model")
+        self.assertNotIn("planrouter",
+                         webhook_payload("https://ci.example.com/hook", "hi"))
+
+    def test_digest_text_and_structured_events(self):
+        text, structured = change_digest([
+            {"kind": "new_model", "source": {"key": "channel:a", "label": "渠道 a"},
+             "detail": {"added": [f"m{i}" for i in range(8)], "removed": []}},
+            {"kind": "removed_model", "source": {"key": "channel:b", "label": "渠道 b"},
+             "detail": {"added": [], "removed": ["m1"]}},
+        ])
+        self.assertIn("[PlanRouter 上游变更] 2 条", text)
+        self.assertIn("[新增模型] 渠道 a：新增 m0、m1", text)
+        self.assertIn("等 8 个", text)
+        self.assertIn("[模型下架] 渠道 b：下架 m1", text)
+        self.assertEqual(len(structured), 2)
+        self.assertEqual(structured[0]["added"], [f"m{i}" for i in range(8)])
+
+    def test_digest_long_list_is_trimmed(self):
+        events = [{"kind": "new_model", "source": {"key": f"channel:{i}", "label": f"渠道 {i}"},
+                   "detail": {"added": ["m"], "removed": []}} for i in range(15)]
+        text, structured = change_digest(events)
+        self.assertIn("另有 5 条", text)
+        self.assertEqual(len(structured), 10)
+
+
+class ReminderServiceNotifyTests(unittest.TestCase):
+    """ReminderService.notify_changes：走真实 _post，校验平台回执。"""
+
+    def _service(self, url: str, sender) -> ReminderService:
+        return ReminderService(None, None, lambda: [],
+                               lambda: {"notify_enabled": True, "webhook_url": url},
+                               sender=sender)
+
+    def test_notify_changes_posts_wecom_payload(self):
+        posts = []
+
+        def sender(request):
+            posts.append(json.loads(request.data.decode("utf-8")))
+            return _FakeResp(b'{"errcode":0}')
+
+        service = self._service(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k", sender)
+        result = service.notify_changes([{
+            "kind": "new_model", "source": {"key": "channel:a", "label": "渠道 a"},
+            "detail": {"added": ["m2"], "removed": []}}])
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["kind"], "wecom")
+        self.assertEqual(posts[0]["msgtype"], "text")
+        self.assertIn("新增模型", posts[0]["text"]["content"])
+
+    def test_notify_changes_disabled_reports_reason(self):
+        service = ReminderService(
+            None, None, lambda: [], lambda: {"notify_enabled": False,
+                                             "webhook_url": "https://x.example.com/hook"},
+            sender=lambda request: _FakeResp(b""))
+        self.assertEqual(service.notify_changes([{"kind": "new_model"}]),
+                         {"sent": 0, "reason": "notify_disabled"})
+
+    def test_platform_error_code_is_reported(self):
+        # Feishu/WeCom answer HTTP 200 with a non-zero code for a broken bot
+        # URL; without the check the console would claim delivery.
+        def sender(request):
+            return _FakeResp(b'{"code":19021,"msg":"invalid token"}')
+
+        service = self._service("https://open.feishu.cn/open-apis/bot/v2/hook/x",
+                                sender)
+        result = service.notify_changes([{"kind": "new_model",
+                                          "detail": {"added": ["m"], "removed": []}}])
+        self.assertEqual(result["sent"], 0)
+        self.assertIn("19021", result["error"])
 
 
 if __name__ == "__main__":
