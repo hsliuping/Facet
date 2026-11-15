@@ -103,8 +103,8 @@
   一等公民、自维护（事实表 + 自我维护任务）。
 - **目标形态**：per-user key（每人一把独立 key）+ 按人配额 + 成本分摊
   报表；存储保持 JSON / SQLite，仍是单文件零依赖。不做 SSO / RBAC /
-  多实例。（2026-11-15 已落地第一步：按人配额 + 成员报表增强 + 按人限速，
-  见更新记录）
+  多实例。（2026-11-15 三步已全部落地：per-user key 早期完成，按人配额 +
+  成员报表增强 + 按人限速与成本分摊报表同日完成，见更新记录）
 - **合规红线**：个人免费额度聚合与订阅桥只留在个人侧；团队 / 企业场景
   必须用企业账号对接厂家，不绕 ToS。
 
@@ -114,6 +114,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-15 | 成本分摊报表（轻量团队版第三步，目标形态收官）：`report.py` 新增 `build_member_costs(records, users, days, month)`——把当月非过期订阅的月费等效值按成员用量占比分摊到人，权重取成员在该渠道的 tokens 占比（渠道当月 tokens 全为 0 时退回请求数），同币种各自结算；未关联订阅的渠道不计费、未关联渠道的订阅与无成员用量的渠道月费（含不带 key 的匿名流量份额）计入 `unallocated`，保证「已分摊 + 未分摊 = 月费合计」可对账；过期订阅不参与（与月度报告口径一致）。`server.py` 新增 `member_costs(month)`，`ui.py` 新增 `GET /api/report/members/<YYYY-MM>`（须置于通用 `/api/report` 前缀分支前）；控制台成员用量页顶部新增「成本分摊」卡片：月份选择器 + 月费合计 / 已分摊 / 未分摊 / 有用量成员四项摘要 + 成员×分摊成本×渠道明细表。新增 6 条测试（token 占比分摊与匿名份额、无 tokens 退回请求数、未关联/过期/零用量三口径、默认月与非法月、接口端到端），全量 1018 passed 1 xfailed；容器重建冒烟通过（真实数据 CNY 399 + USD 10 正确聚合，建 key → 推理 → 成员行出现分摊成本与渠道明细 → 删除 key） |
 | 2026-11-15 | 成员管理强化（轻量团队版第一步）：`keys.py` 新增按 key 配额块（`normalize_limits` 校验 rpm / 每日请求 / 每日 token / 每月请求 / 每月 token，0 或缺省 = 不限，非法值中文报错），`lookup` 返回完整记录（`match` 改为其薄封装保持兼容）；`usage.py` 成员桶新增按渠道分布 `channels`、`member_totals`（日 / 月窗口聚合供配额判定）、`user_stats` 每成员透出 channels / 今日计数 / 突增标记（今日 ≥10 次且 ≥3× 此前日均）；`server.py` 新增 `_member_limited` 在推理入口认证后执行——rpm 用 60s 内存滑动窗口（拒绝不占槽）+ 日 / 月请求与 token 配额读 usage 聚合，超限 429 中文提示（count_tokens 本地免费不计），`update_key_limits` / `member_usage`（合并 limits 与 enabled）供 UI；`ui.py` 新增 `POST /api/keys/limits`，`/api/usage/users` 改走 member_usage；控制台 Keys 页新增「配额」列与配额弹窗（5 个数字项，留空 = 不限），成员用量页新增今日配额进度、主要渠道（top3+其他）与突增标记；key 仍不区分可用模型，RBAC 不做。新增 11 条测试，全量 1012 passed 1 xfailed；容器重建冒烟通过（设每日 1 次配额 → 首请求 200 → 第二请求 429 → 清理 key） |
 | 2026-11-15 | 变更中心扩展：`notifier.py` 新增 `webhook_kind` / `webhook_payload` / `change_digest` / `notify_changes`，按 host 自动识别飞书 / 企微 / 通用 webhook 格式（通用信封保持企微兼容并附 `planrouter` 结构化字段），校验平台回执 errcode 防 200 假成功，一轮扫描合并为一条摘要（最多 10 条事件、每行 6 个模型名）；`watch.py` 新增 `set_muted`（按源静默，快照照常推进只跳过事件创建，落盘前重读防回滚）、`map_targets`（渠道 / 厂家 / 订阅三类信息源推断映射目标）、`notify_events`，`changes_payload` 透出 targets / muted / notify 状态；`/api/changes/map` 一键把「新增模型」事件写入渠道（走 `apply_maintenance_suggestion` 既有路径，成功后自动标已读）、`/api/changes/mute` 静默 / 恢复；维护页上游变更卡片新增静默按钮与写入渠道下拉；新增 22 条测试，全量 1001 passed 1 xfailed；容器重建冒烟通过，浏览器实测静默 / 映射 UI 与事件 targets 正确 |
 | 2026-11-15 | M1 变更中心（上游变更监视）上线：`watch.py` 扫描厂家注册表 docs/models、启用渠道 models 端点与订阅文档，产出 new_model / removed_model / doc_updated / catalog_changed 事件落 `change_log.jsonl`；快照先原子落盘再追加事件，去重键保留最近 8 个并兼容迁移旧单键；默认 12 小时一轮（`defaults.watch_hours`，0 关闭），维护页「上游变更」卡片支持扫描 / 已读 / 全部已读；代码审查修复 5 项（异常边界收敛 Exception、models 端点跟随 Bailian 分页、失败快照静默重建基线、flip-flop 去重、已读与落盘双向重读合并），新增 8 条测试，36 条单测全过、全量回归 979 passed 1 xfailed；容器重建冒烟 54 源 41 成功 13 失败，历史事件与已读状态完好 |
