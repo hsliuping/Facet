@@ -445,6 +445,21 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>上游变更</h3>
+                <p class="sub-note" id="changes-note">定时抓取厂家文档/模型接口、各渠道模型目录与套餐文档（<code>defaults.watch_hours</code> 控制，0 关闭），模型集变化记为事件。只观察，不自动改配置。</p>
+              </div>
+              <div class="actions">
+                <button class="btn small ghost" id="btn-refresh-changes">刷新</button>
+                <button class="btn small ghost" id="btn-changes-readall">全部标为已读</button>
+                <button class="btn small" id="btn-run-watch" title="立即抓取全部信息源并与上次快照比对">立即扫描</button>
+              </div>
+            </div>
+            <div id="changes-body"></div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>Agent 模型推荐</h3>
                 <p class="sub-note">按当前各渠道目录 + 内置 registry 能力表，筛出适合 Agent / 开发的模型（支持工具调用优先，免费优先，自动剔除不支持工具调用、已冷却失效的模型）。<b>把工具的 model 填成 <code>facet-agent</code></b> 即可，网关会在下表范围内动态挑一个最合适的模型；下表只是说明它现在能用哪些。</p>
               </div>

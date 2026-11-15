@@ -2604,6 +2604,7 @@ async function loadMaintenance() {
   renderMaintenance();
   await loadTasks().catch(() => {});
   await loadRecommendations().catch(() => {});
+  await loadChanges().catch(() => {});
 }
 
 async function loadTasks() {
@@ -2713,6 +2714,73 @@ function renderTasks() {
 }
 
 const MAINT_TRIGGER = { manual: '手动运行', scheduled: '定时运行', first_run: '启动后首次运行' };
+
+// ------------------------------------------------------------ source watch
+const CHANGE_KINDS = {
+  new_model: ['新增模型', 'active'],
+  removed_model: ['模型下架', 'expired'],
+  doc_updated: ['文档更新', 'unknown'],
+  catalog_changed: ['目录变化', 'expiring'],
+};
+
+const CHANGE_ORIGINS = { provider: '厂家套餐', channel: '渠道目录', subscription: '套餐文档' };
+
+async function loadChanges() {
+  state.changes = await api('/api/changes');
+  renderChanges();
+}
+
+function renderChanges() {
+  const body = $('changes-body');
+  const note = $('changes-note');
+  const data = state.changes;
+  if (!data || !body) return;
+  const summary = data.summary || {};
+  const unread = data.unread || 0;
+  const kindLabel = (k) => CHANGE_KINDS[k] || [k, 'unknown'];
+  const events = data.events || [];
+  const modelsChip = (list, cls) => (list || []).slice(0, 8).map((m) =>
+    `<span class="tag ${cls}" style="font-family:monospace">${esc(m)}</span>`).join(' ')
+    + ((list || []).length > 8 ? `<span class="sub-note">…共 ${list.length} 个</span>` : '');
+  body.innerHTML = events.length ? events.map((ev) => {
+    const [kindText, kindCls] = kindLabel(ev.kind);
+    const detail = ev.detail || {};
+    const when = ev.ts ? esc(new Date(ev.ts.replace('Z', '+00:00')).toLocaleString()) : '—';
+    const chips = (detail.added || []).length ? `<div>${modelsChip(detail.added, 'active')}</div>` : '';
+    const chips2 = (detail.removed || []).length ? `<div>${modelsChip(detail.removed, 'expired')}</div>` : '';
+    const excerpt = ev.evidence && ev.evidence.excerpt
+      ? `<details><summary class="sub-note">页面摘录</summary><p class="sub-note" style="word-break:break-all">${esc(ev.evidence.excerpt)}</p></details>` : '';
+    const readBtn = ev.status === 'unread'
+      ? `<button class="btn small ghost" data-change-read="${esc(ev.id)}">标为已读</button>` : '';
+    return `<div class="maint-item" style="align-items:flex-start;flex-wrap:wrap;gap:6px">
+      <span class="tag ${kindCls}">${kindText}</span>
+      <span style="flex:1;min-width:200px">
+        <strong>${esc(ev.source && ev.source.label || '—')}</strong>
+        <span class="sub-note">${CHANGE_ORIGINS[ev.source && ev.source.origin] || ''} · ${when}</span>
+        ${chips}${chips2}${excerpt}
+      </span>
+      ${readBtn}
+    </div>`;
+  }).join('') : '<p class="sub-note">暂无变更事件。首次扫描只建立基线，之后的模型集变化才会记为事件。</p>';
+  const errSources = (data.sources || []).filter((s) => s.ok === false);
+  const errText = errSources.length
+    ? ` · ${errSources.length} 个信息源抓取失败（${errSources.slice(0, 3).map((s) => esc(s.label)).join('、')}${errSources.length > 3 ? '…' : ''}）` : '';
+  note.textContent = `监视 ${summary.total || 0} 个信息源`
+    + ` · 事件 ${events.length} 条 · 未读 ${unread} 条${errText}`;
+}
+
+$('changes-body').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-change-read]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    await api('/api/changes/read', { method: 'POST', body: { ids: [b.dataset.changeRead] } });
+    await loadChanges();
+  } catch (err) {
+    toast(err.message, 'bad');
+    b.disabled = false;
+  }
+});
 
 function maintItem(tag, cls, html) {
   return `<div class="maint-item"><span class="tag ${cls}">${tag}</span><span>${html}</span></div>`;
@@ -3209,6 +3277,43 @@ $('free-body').addEventListener('click', async (e) => {
 });
 
 $('btn-dash-free').onclick = () => switchPage('free');
+
+$('btn-refresh-changes').onclick = () => loadChanges().catch((e) => toast(e.message, 'bad'));
+
+$('btn-changes-readall').onclick = async (e) => {
+  const b = e.target;
+  b.disabled = true;
+  try {
+    await api('/api/changes/read', { method: 'POST', body: { all: true } });
+    toast('全部变更已标为已读');
+    await loadChanges();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+  }
+};
+
+$('btn-run-watch').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '扫描中…';
+  try {
+    const r = await api('/api/changes/run', { method: 'POST' });
+    if (r.busy) {
+      toast('上一次监视扫描仍在运行，本次已跳过', 'warn');
+    } else {
+      toast(`扫描完成：${r.summary || '监视完成'}`, r.error_sources ? 'warn' : 'ok');
+    }
+    await loadChanges();
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
 
 $('btn-run-maintenance').onclick = async (e) => {
   const b = e.target;
