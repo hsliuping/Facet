@@ -721,7 +721,7 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
           <div class="panel-head">
             <div>
               <h2>成员用量</h2>
-              <p>按人分开统计用量。成员使用的 Key 在「API Keys」页统一生成、暂停或删除；key 仅用于归属，不区分可用模型。</p>
+              <p>按人分开统计用量。成员使用的 Key 在「API Keys」页统一生成、暂停或删除，并可给每人设置 rpm/每日/每月配额；Key 不区分可用模型。</p>
             </div>
             <div class="actions">
               <button class="btn ghost" data-goto-tab="apikeys">管理 API Keys</button>
@@ -744,6 +744,7 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
                 <thead>
                   <tr>
                     <th>成员</th><th>请求 / 失败</th><th>Tokens</th><th>成功率</th>
+                    <th>今日配额</th><th>主要渠道</th>
                   </tr>
                 </thead>
                 <tbody id="member-usage-body"></tbody>
@@ -805,11 +806,11 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
               <table class="status-table">
                 <thead>
                   <tr>
-                    <th>名称</th><th>Key</th><th>状态</th><th>创建时间</th><th>操作</th>
+                    <th>名称</th><th>Key</th><th>状态</th><th>配额</th><th>创建时间</th><th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="api-keys-body">
-                  <tr><td colspan="5" class="sub-note">加载中…</td></tr>
+                  <tr><td colspan="6" class="sub-note">加载中…</td></tr>
                 </tbody>
               </table>
             </div>

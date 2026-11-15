@@ -1888,6 +1888,102 @@ async function loadApiKeys() {
   renderApiKeys(await api('/api/keys'));
 }
 
+// Per-member caps: label + field pairs shared by the summary and the dialog.
+const LIMIT_FIELDS = [
+  ['rpm', '每分钟请求上限 (rpm)'],
+  ['daily_requests', '每日请求数上限'],
+  ['daily_tokens', '每日 token 上限'],
+  ['monthly_requests', '每月请求数上限'],
+  ['monthly_tokens', '每月 token 上限'],
+];
+
+function quotaSummary(limits) {
+  if (!limits) return '未设限';
+  const parts = [];
+  if (limits.rpm) parts.push(limits.rpm + ' rpm');
+  if (limits.daily_requests) parts.push(fmtNum(limits.daily_requests) + ' 次/日');
+  if (limits.daily_tokens) parts.push(fmtTok(limits.daily_tokens) + ' tok/日');
+  if (limits.monthly_requests) parts.push(fmtNum(limits.monthly_requests) + ' 次/月');
+  if (limits.monthly_tokens) parts.push(fmtTok(limits.monthly_tokens) + ' tok/月');
+  return parts.length ? parts.join(' · ') : '未设限';
+}
+
+// Today's caps with used/limit; month/rpm caps ride along as a suffix since
+// the console only tracks "today" per member.
+function quotaProgress(row) {
+  const limits = row.limits || {};
+  const used = row.today || {};
+  const parts = [];
+  if (limits.daily_requests) {
+    parts.push(`${fmtNum(used.requests || 0)} / ${fmtNum(limits.daily_requests)} 次`);
+  }
+  if (limits.daily_tokens) {
+    parts.push(`${fmtTok(used.tokens || 0)} / ${fmtTok(limits.daily_tokens)} tok`);
+  }
+  const extras = [];
+  if (limits.monthly_requests) extras.push(fmtNum(limits.monthly_requests) + ' 次/月');
+  if (limits.monthly_tokens) extras.push(fmtTok(limits.monthly_tokens) + ' tok/月');
+  if (limits.rpm) extras.push(limits.rpm + ' rpm');
+  if (!parts.length && !extras.length) return '未设限';
+  if (!parts.length) parts.push('今日不限');
+  return parts.join(' · ') + (extras.length ? `（${extras.join(' · ')}）` : '');
+}
+
+function channelMix(channels) {
+  const entries = Object.entries(channels || {});
+  if (!entries.length) return '—';
+  entries.sort((a, b) => (b[1].requests || 0) - (a[1].requests || 0));
+  const top = entries.slice(0, 3).map(([name]) => esc(name));
+  const rest = entries.length - top.length;
+  return top.join('、') + (rest > 0 ? ` +${rest}` : '');
+}
+
+// Five numeric inputs; empty/0 clears a cap. Mirrors askText's overlay so
+// embedded webviews (no native dialogs) keep working.
+function editQuota(record) {
+  if (!record) return;
+  const limits = record.limits || {};
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop ask-backdrop';
+  wrap.innerHTML = `<div class="modal ask-modal" role="dialog" aria-modal="true">
+    <div class="modal-head"><h2>成员配额 — ${esc(record.name)}</h2></div>
+    <p class="hint ask-message">留空或填 0 表示不限制；保存后立即生效，只影响推理调用。</p>
+    ${LIMIT_FIELDS.map(([field, label]) => `<div class="field">
+      <label>${esc(label)}</label>
+      <input type="number" min="0" step="1" data-limit="${field}" value="${limits[field] || ''}">
+    </div>`).join('')}
+    <div class="modal-foot">
+      <button type="button" class="btn ghost" data-ask="cancel">取消</button>
+      <button type="button" class="btn primary" data-ask="ok">保存</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    wrap.remove();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  };
+  document.addEventListener('keydown', onKey, true);
+  wrap.querySelector('[data-ask="cancel"]').onclick = close;
+  wrap.querySelector('[data-ask="ok"]').onclick = async () => {
+    const limits = {};
+    wrap.querySelectorAll('[data-limit]').forEach((input) => {
+      const value = Number(input.value || 0);
+      if (value > 0) limits[input.dataset.limit] = value;
+    });
+    try {
+      await api('/api/keys/limits', { method: 'POST', body: { key: record.key, limits } });
+      close();
+      toast('配额已保存');
+      loadApiKeys().catch(() => {});
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  const first = wrap.querySelector('[data-limit]');
+  if (first) first.focus();
+}
+
 function renderApiKeys(payload) {
   const master = (payload && payload.master) || '';
   const enabled = payload ? payload.master_enabled !== false : true;
@@ -1919,7 +2015,7 @@ function renderApiKeys(payload) {
   const rows = (payload && payload.keys) || [];
   const body = $('api-keys-body');
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有 API Key。点右上角「生成新 Key」即可签发。</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="sub-note">还没有 API Key。点右上角「生成新 Key」即可签发。</td></tr>';
     return;
   }
   body.innerHTML = rows.map((r) => {
@@ -1929,15 +2025,20 @@ function renderApiKeys(payload) {
       <td>${esc(r.name)}</td>
       <td><code data-copy="${esc(r.key)}" title="点击复制">${esc(r.key)}</code></td>
       <td>${active ? '<span class="tag active">启用</span>' : '<span class="tag unknown">已暂停</span>'}</td>
+      <td>${esc(quotaSummary(r.limits))}</td>
       <td>${when}</td>
       <td>${active
         ? `<button class="btn small ghost" data-pause="${esc(r.key)}">暂停</button>`
         : `<button class="btn small" data-enable="${esc(r.key)}">启用</button>`}
+        <button class="btn small ghost" data-quota="${esc(r.key)}">配额</button>
         <button class="btn small ghost" data-delete="${esc(r.key)}">删除</button></td>
     </tr>`;
   }).join('');
   body.querySelectorAll('[data-copy]').forEach((el) => {
     el.onclick = () => copyText(el.dataset.copy);
+  });
+  body.querySelectorAll('[data-quota]').forEach((button) => {
+    button.onclick = () => editQuota(rows.find((r) => r.key === button.dataset.quota));
   });
   const bindAction = (selector, datasetKey, path, doneText, confirmText) => {
     body.querySelectorAll(selector).forEach((button) => {
@@ -1960,16 +2061,22 @@ function renderMemberUsage(usage) {
   const body = $('member-usage-body');
   const rows = (usage && usage.users) || [];
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="4" class="sub-note">暂无按人统计。成员开始用各自的 key 调用后自动累计。</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="sub-note">暂无按人统计。成员开始用各自的 key 调用后自动累计。</td></tr>';
     return;
   }
   body.innerHTML = rows.map((r) => {
     const rate = r.requests ? ((r.requests - r.failed) / r.requests * 100).toFixed(1) + '%' : '—';
+    const spike = r.spike
+      ? '<span class="tag warn" title="今日请求数达到 10 次以上且为此前日均的 3 倍">突增</span>'
+      : '';
+    const paused = r.enabled === false ? '<span class="tag unknown">已暂停</span>' : '';
     return `<tr>
-      <td>${esc(r.name || '匿名')}</td>
+      <td>${esc(r.name || '匿名')} ${spike} ${paused}</td>
       <td>${r.requests} / ${r.failed}</td>
       <td>${Number(r.tokens || 0).toLocaleString()}</td>
       <td>${rate}</td>
+      <td>${esc(quotaProgress(r))}</td>
+      <td>${channelMix(r.channels)}</td>
     </tr>`;
   }).join('');
 }
