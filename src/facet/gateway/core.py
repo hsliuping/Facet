@@ -511,6 +511,11 @@ class Defaults:
     # free channel's mappings are pinged, confirmed-dead ids get an expiring
     # label so routing stops calling them (manual button keeps working).
     free_verify_hours: int = 6
+    # 0 disables the source-watch sweep (watch.py): vendor registry docs /
+    # models URLs, channel catalogs and subscription plan docs are re-fetched
+    # and their model-set changes recorded as console change events. The
+    # watch only observes — it never edits config or registry data.
+    watch_hours: int = 12
     # Usage buckets (days/users) older than this are pruned on the day
     # switch, keeping usage.json and the model_usage scans bounded.
     # 0 keeps everything forever.
@@ -809,6 +814,7 @@ def parse_config(raw: dict) -> Config:
         maintenance_model=str(d.get("maintenance_model") or "").strip(),
         free_align_hours=float(d.get("free_align_hours", 0.5)),
         free_verify_hours=int(d.get("free_verify_hours", 6)),
+        watch_hours=int(d.get("watch_hours", 12)),
         usage_retention_days=int(d.get("usage_retention_days", 180)),
         disk_min_free_mb=int(d.get("disk_min_free_mb", 512)),
         not_found_cooldown_hours=int(d.get("not_found_cooldown_hours", 24)),

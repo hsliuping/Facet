@@ -27,6 +27,7 @@ from . import dsh as dsh_mod
 from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import facts as facts_mod
+from . import watch as watch_mod
 from . import (ark_quota, deepseek_quota, minimax_quota, moonshot_quota,
                opencode_quota, openrouter_quota, zhipu_quota)
 from .audit import RequestLog
@@ -128,6 +129,7 @@ PERSIST_KIND_LABELS = {
     "freealign_log": "免费额度日志 freealign.jsonl",
     "config_backup": "配置备份 config.json.bak",
     "maintenance_pool": "维护模型池 maintenance_models.json",
+    "change_log": "变更事件 change-events.jsonl",
 }
 # Report logs grow one line per sweep; past this size they keep only the last
 # REPORT_LOG_KEEP lines (audit.jsonl rotates by bytes, usage.json by retention).
@@ -803,6 +805,30 @@ class FreeVerifyRunner(ScheduledTask):
                 f" · 无法判定 {report.get('inconclusive', 0)}")
 
 
+class WatchRunner(ScheduledTask):
+    """Scheduled source watch (watch.py): observe upstream info sources.
+
+    The vendor registry's docs/models URLs, every enabled channel's models
+    endpoint and every subscription's plan doc are re-fetched; model-set
+    changes land in the console's change events. Purely observational —
+    nothing is auto-applied and no LLM is involved. Shares App.watch_lock
+    with the console button, so the two never overlap. Runs once after
+    startup settles, then every defaults.watch_hours (0 disables).
+    """
+
+    key = "watch"
+    label = "信息源监视"
+    description = "抓取厂家文档/模型接口、渠道目录与套餐文档，模型集变化记为变更事件"
+    hours_key = "watch_hours"
+    FIRST_DELAY = 180.0
+
+    def run_once(self) -> str:
+        report = self.app.run_change_watch("scheduled")
+        if report.get("busy"):
+            return "已有监视扫描在运行，本次跳过"
+        return report.get("summary") or "监视完成"
+
+
 class HealthProber:
     """Background liveness probes for channels sitting in a short cooldown.
 
@@ -1042,6 +1068,7 @@ class App:
         self.maintenance_runner: "MaintenanceRunner | None" = None
         self.free_align_runner: "FreeAlignRunner | None" = None
         self.free_verify_runner: "FreeVerifyRunner | None" = None
+        self.watch_runner: "WatchRunner | None" = None
         self.maintenance_reports: list[dict] = self._load_report_history("maintenance.jsonl")
         self.free_align_reports: list[dict] = self._load_report_history("freealign.jsonl")
         self.maintenance_lock = threading.Lock()
@@ -1054,6 +1081,8 @@ class App:
         self.config_apply_lock = threading.Lock()
         # Same for the free-pool verification sweep (scheduled + button).
         self.free_verify_lock = threading.Lock()
+        # Same for the source-watch sweep (scheduled + button).
+        self.watch_lock = threading.Lock()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
         self.maintenance_pool = maint.load_maintenance_pool(self)
         self.maintenance_pool_lock = threading.Lock()
@@ -1086,6 +1115,7 @@ class App:
         self.maintenance_runner = MaintenanceRunner(self)
         self.free_align_runner = FreeAlignRunner(self)
         self.free_verify_runner = FreeVerifyRunner(self)
+        self.watch_runner = WatchRunner(self)
         if self.config.defaults.catalog_refresh_hours:
             self.catalog_refresher.start()
         if self.config.defaults.maintenance_hours:
@@ -1094,6 +1124,8 @@ class App:
             self.free_align_runner.start()
         if self.config.defaults.free_verify_hours:
             self.free_verify_runner.start()
+        if self.config.defaults.watch_hours:
+            self.watch_runner.start()
         # Created even when switched off, so the console can list the sweep;
         # the thread only runs with a positive probe_interval_seconds.
         self.health_prober = HealthProber(self, self.config.defaults.probe_interval_seconds)
@@ -1107,6 +1139,8 @@ class App:
             self.free_align_runner.stop()
         if self.free_verify_runner:
             self.free_verify_runner.stop()
+        if self.watch_runner:
+            self.watch_runner.stop()
         if self.catalog_refresher:
             self.catalog_refresher.stop()
         if self.health_prober:
@@ -2950,6 +2984,35 @@ class App:
         finally:
             self.free_verify_lock.release()
 
+    def run_change_watch(self, trigger: str = "manual") -> dict:
+        """One source-watch sweep (watch.py): fetch, diff, record events.
+
+        The scheduled sweep and the console button share App.watch_lock —
+        both fetch the same dozens of URLs, and two overlapping sweeps would
+        race on change-snapshots.json and duplicate events.
+        """
+        if not self.watch_lock.acquire(blocking=False):
+            return {"busy": True, "trigger": trigger, "sources": 0,
+                    "appended": 0, "events": [], "summary": ""}
+        try:
+            report = watch_mod.run_watch(self)
+            report["trigger"] = trigger
+            # A manual run refreshes the task table's last outcome too.
+            if trigger == "manual" and self.watch_runner:
+                self.watch_runner.note_run(report.get("summary") or "")
+            return report
+        finally:
+            self.watch_lock.release()
+
+    def changes_payload(self, limit: int = watch_mod.EVENTS_VIEW_LIMIT) -> dict:
+        """Console payload: change events (newest first) + per-source state."""
+        return watch_mod.changes_payload(self, limit)
+
+    def mark_changes_read(self, ids: list[str], read: bool = True) -> dict:
+        """Flip read flags on change events; ids live in the snapshots file."""
+        changed = watch_mod.mark_read(self, ids, read)
+        return {"ok": True, "changed": changed}
+
     def dsh_status(self) -> dict:
         """Report whether the DeepSeek Harness client shares this host."""
         return dsh_mod.status()
@@ -3210,7 +3273,8 @@ class App:
     def tasks_payload(self) -> dict:
         """The console's task list: cycle, latest outcome and next run."""
         runners = (self.catalog_refresher, self.maintenance_runner,
-                   self.free_align_runner, self.free_verify_runner)
+                   self.free_align_runner, self.free_verify_runner,
+                   self.watch_runner)
         tasks = [runner.status() for runner in runners if runner]
         if self.notifier:
             tasks.append(self._notifier_task())

@@ -659,6 +659,45 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.run_maintenance("manual"))
         return True
 
+    if path == "/api/changes" and method == "GET":
+        # Change events (newest first) + per-source state, optional ?limit=N.
+        query = urlsplit(h.path or "").query
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        try:
+            limit = int(params.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        _json(h, 200, app.changes_payload(max(1, min(limit, 500))))
+        return True
+
+    if path == "/api/changes/run" and method == "POST":
+        # One watch sweep now; a busy sweep answers with busy: true (409).
+        report = app.run_change_watch("manual")
+        if report.get("busy"):
+            _json(h, 409, report)
+        else:
+            _json(h, 200, report)
+        return True
+
+    if path == "/api/changes/read" and method == "POST":
+        # {"ids": [...]} flips those events; {"all": true} flips everything
+        # currently visible in the console's list.
+        try:
+            body = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(body, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        if body.get("all"):
+            events = app.changes_payload()["events"]
+            ids = [event.get("id") for event in events if event.get("status") == "unread"]
+        else:
+            ids = [str(value) for value in (body.get("ids") or [])]
+        _json(h, 200, app.mark_changes_read(ids))
+        return True
+
     if (path == "/api/freealign/logs"
             or path.startswith("/api/freealign/logs/")) and method == "GET":
         parts = path.split("/")
