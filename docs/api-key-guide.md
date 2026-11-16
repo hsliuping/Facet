@@ -911,11 +911,13 @@ Console 上的用量页长这样，Facet 展示的就是同一口径的数据：
 
 **步骤**
 
-1. 打开 [dash.llm7.io](https://dash.llm7.io) 注册登录；
-2. 控制台领取 free token 并创建 API Key，复制保存；
-3. 填入 Facet：协议 `openai`，端点 `https://api.llm7.io/v1`，模式选「按量付费（免费注册）」。
-
-   📷 **截图 6-4** ｜ 拍什么：LLM7 控制台 Key 页（打码） ｜ 存为：`llm7-01-keys.png`
+1. 打开 [dash.llm7.io](https://dash.llm7.io) 注册登录，进入控制台首页——这里能看到 Plan（Free）与每日免费额度（示例账号 Daily token usage `0 / 100,000`，即 10 万 tokens/24h 免费层）；
+   ![LLM7 控制台首页：Free 套餐与每日免费额度](images/api-key-guide/llm7-01.png)
+2. 左侧 **API Keys** → **Create your first API key**（或 **Add API key**）创建 Key，创建后立即复制保存；
+   ![LLM7 API Keys 页：创建 API Key](images/api-key-guide/llm7-02.png)
+3. 左侧 **Models** 可查当前模型按量价格（PAY AS YOU GO，如 DeepSeek-V4-Flash-0731 输入 $0.02 / 输出 $0.04 每百万 tokens）；
+   ![LLM7 Models 页：模型按量定价](images/api-key-guide/llm7-03.png)
+4. 填入 Facet：协议 `openai`，端点 `https://api.llm7.io/v1`，模式选「按量付费（免费注册）」。
 
 **渠道参数**（与注册表一致）：协议 `openai`，端点 `https://api.llm7.io/v1`（`/v1/models` 支撑模型自动同步）。
 
@@ -1030,3 +1032,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 4.9 MiniMax 截图补全并重写步骤：新增 4 张（开放平台登录、控制台概览账户概况、API Key 创建与列表、M Plan 连续包年三档），明确按量 Key 填 payg / 订阅 Key 填 agent，补连续包年 ¥490/¥1,190/¥4,690 价格示例，删除 4-15 占位 |
 | 2026-11-16 | - | 删除 6.2 Command Code「桥启动终端 + 控制台测试通过」截图占位：Facet 已原生支持 Provider 的 OpenAI 端点，正文无桥接步骤，该占位为早期遗留 |
 | 2026-11-16 | - | 6.3 LLM7 口径订正：按官网 docs.llm7.io/limits 复核（2026-09-30 更新），label「免费匿名」改为「免费注册」（需在 dash.llm7.io 领 free token / 建 Key），补免费额度可无通知缩减提醒；账号抽象兼容性矩阵将 LLM7 由「匿名或免费」移到「单账号单 Key」 |
+| 2026-11-16 | - | 6.3 LLM7 截图补全并重写步骤：新增 3 张（控制台首页 Free 套餐与每日 10 万 tokens 额度、API Keys 创建页、Models 按量定价页），步骤按「登录看额度 → 建 Key → 查模型价 → 填渠道」重写，删除 6-4 占位 |
