@@ -29,6 +29,7 @@
         <button class="menu-item" data-tab="subscriptions">套餐订阅</button>
         <button class="menu-item" data-tab="vendors">厂家管理</button>
         <div class="menu-group">访问与安全</div>
+        <button class="menu-item" data-tab="access">接入信息</button>
         <button class="menu-item" data-tab="apikeys">API Keys</button>
         <button class="menu-item" data-tab="adminkey">管理密钥</button>
         <button class="menu-item" data-tab="integration">接入文档</button>
@@ -67,6 +68,18 @@
           </div>
           <section class="summary" id="dash-summary"></section>
           <div class="dash-grid">
+            <div class="card">
+              <div class="card-top">
+                <div>
+                  <h3>接入信息</h3>
+                  <p class="sub-note">地址、密钥、模型名与调用示例，一处拿全</p>
+                </div>
+                <div class="actions">
+                  <button class="btn small" data-goto-tab="access">查看接入信息</button>
+                </div>
+              </div>
+              <div class="dash-kv" id="dash-access"></div>
+            </div>
             <div class="card">
               <div class="card-top">
                 <div>
@@ -778,6 +791,111 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
           </div>
         </section>
 
+        <section class="panel" id="panel-access">
+          <div class="panel-head">
+            <div>
+              <h2>接入信息</h2>
+              <p>下游接入本网关需要的全部信息集中在这一页：接入地址、鉴权密钥、模型名与调用示例，逐项可复制。不必再去各处翻文档。</p>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="btn-refresh-access">刷新</button>
+              <button class="btn" id="btn-copy-access-all">复制接入摘要</button>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>接入地址</h3>
+                <p class="sub-note">OpenAI 与 Anthropic 协议共用同一个网关根地址，地址取自当前控制台的实际访问地址（换端口或域名后自动跟随）</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr><th>用途</th><th>协议 / 路径</th><th>Base URL</th><th></th></tr>
+                </thead>
+                <tbody id="access-endpoints">
+                  <tr><td colspan="4" class="sub-note">加载中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">OpenAI 协议可用路径：<code>/v1/chat/completions</code>、<code>/v1/responses</code>、<code>/v1/completions</code>、<code>/v1/models</code>、<code>/v1/embeddings</code>、<code>/v1/rerank</code>、<code>/v1/audio/speech</code>、<code>/v1/audio/transcriptions</code>；Anthropic 协议路径：<code>/v1/messages</code>、<code>/v1/messages/count_tokens</code>（Base URL 填根路径）。</p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>鉴权密钥</h3>
+                <p class="sub-note">推荐给每个下游工具 / 成员单独发一个 Key（可限速限配额）；主密钥全渠道通用，谨慎分发</p>
+              </div>
+              <div class="actions">
+                <button class="btn small" id="btn-access-copy-master">复制主密钥</button>
+                <button class="btn small ghost" data-goto-tab="apikeys">管理 API Keys</button>
+              </div>
+            </div>
+            <div class="dash-kv" id="access-keys"></div>
+            <div class="form-grid" style="margin-top:14px">
+              <div class="field wide">
+                <label for="access-auth">鉴权写法（两种等价，任选其一）</label>
+                <textarea id="access-auth" rows="3" readonly spellcheck="false"></textarea>
+              </div>
+            </div>
+            <p class="hint">Key 不区分可用模型，只做归属与限额；把上面的地址与任意一个 Key 填进工具即可开始调用。</p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>模型名</h3>
+                <p class="sub-note" id="access-models-note">这些名字始终代表「由 Facet 内部选路」，可直接填进工具的模型输入框</p>
+              </div>
+              <div class="actions">
+                <button class="btn small ghost" data-goto-tab="models">模型接入页</button>
+              </div>
+            </div>
+            <div id="access-models" class="model-list"></div>
+            <p class="hint">也可用 <code>auto:&lt;链名&gt;</code> / <code>facet:&lt;链名&gt;</code>（如 <code>facet:cheap</code>）；其它名字先按渠道声明的精确模型名匹配，未命中时内部调度（响应头 <code>X-Routed-Model-Mode</code> 标明 auto / exact / fallback）。全部可用名可用 <code>GET /v1/models</code> 拉取。</p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>调用示例</h3>
+                <p class="sub-note">选协议与模型名即可生成可运行示例；<code>&lt;API Key&gt;</code> 是占位符，替换为上面的密钥</p>
+              </div>
+              <div class="actions">
+                <button class="btn small" id="btn-copy-access-example">复制示例</button>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="access-example-protocol">协议</label>
+                <select id="access-example-protocol">
+                  <option value="openai">OpenAI（chat completions）</option>
+                  <option value="anthropic">Anthropic（messages）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="access-example-lang">形式</label>
+                <select id="access-example-lang">
+                  <option value="curl">curl</option>
+                  <option value="python">Python SDK</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="access-example-model">模型名</label>
+                <select id="access-example-model"></select>
+              </div>
+              <div class="field wide">
+                <label for="access-example">示例</label>
+                <textarea id="access-example" rows="14" readonly spellcheck="false"></textarea>
+              </div>
+            </div>
+            <p class="hint">Claude Code、Codex、Trae、Cline、DSH、OpenCode、CodeBuddy 等工具的整段配置在 <a href="#/models">模型接入 → 接入配置生成</a>；协议细节、流式行为与错误码见 <a href="#/integration">接入文档</a>。</p>
+          </div>
+        </section>
+
         <section class="panel" id="panel-apikeys">
           <div class="panel-head">
             <div>
@@ -947,7 +1065,7 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261114-5"></script>
+  <script src="/static/app.js?v=20261116-1"></script>
   <script src="/static/setup.js?v=20261114-1"></script>
 </body>
 </html>

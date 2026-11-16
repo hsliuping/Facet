@@ -25,6 +25,7 @@ const PAGE_TITLES = {
   dashboard: '仪表板', free: '免费模型',
   channels: '渠道配置', routes: '路由链', models: '模型接入',
   subscriptions: '套餐订阅', vendors: '厂家管理',
+  access: '接入信息',
   apikeys: 'API Keys', adminkey: '管理密钥',
   status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
   members: '成员用量',
@@ -673,6 +674,7 @@ function switchPage(name) {
     if (open) open.onclick = () => renderWizard('welcome').catch(() => {});
     renderWizard('welcome').catch(() => {});
   }
+  if (name === 'access') loadAccessPage().catch((e) => toast(e.message, 'bad'));
   if (name === 'apikeys') loadApiKeys().catch((e) => toast(e.message, 'bad'));
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
@@ -697,6 +699,172 @@ async function loadIntegrationDoc() {
   }
   body.innerHTML = renderMarkdown(res.markdown);
   body.dataset.loaded = 'yes';
+}
+
+// Access page: one place that answers "how do I point a client at this
+// gateway" — base URLs, auth keys, model names and runnable examples. Pure
+// frontend aggregation over /api/keys + /api/state + the console origin, so
+// a downstream user never has to hunt through separate pages.
+let accessState = { keys: null };
+
+async function loadAccessPage() {
+  if (!state.config) await loadConfig();
+  accessState.keys = await api('/api/keys').catch(() => null);
+  if (!state.snapshot) {
+    state.snapshot = await api('/api/state').catch(() => null);
+  }
+  renderAccessPage();
+}
+
+function renderAccessPage() {
+  const origin = location.origin;
+  const keys = accessState.keys || {};
+  const master = keys.master || '';
+  const enabled = keys ? keys.master_enabled !== false : true;
+  const memberKeys = keys.keys || [];
+  const memberOn = memberKeys.filter((k) => k.enabled !== false).length;
+
+  const rows = [
+    ['OpenAI 兼容（chat / responses / embeddings…）', 'openai', origin + '/v1'],
+    ['Anthropic 兼容（messages）', 'anthropic', origin + '（根路径）'],
+    ['模型清单', 'GET · openai', origin + '/v1/models'],
+    ['健康与运行状态', 'GET', origin + '/health'],
+  ];
+  $('access-endpoints').innerHTML = rows.map(([use, proto, url]) => {
+    const copyVal = url.endsWith('（根路径）') ? origin : url;
+    return `<tr><td>${esc(use)}</td><td><span class="tag">${esc(proto)}</span></td>` +
+      `<td><code>${esc(url)}</code></td>` +
+      `<td><button class="btn small ghost" data-access-copy="${esc(copyVal)}">复制</button></td></tr>`;
+  }).join('');
+
+  const statusTag = !master
+    ? '<span class="tag off">未设置（网关不校验密钥）</span>'
+    : (enabled ? '<span class="tag active">已启用</span>' : '<span class="tag warn">已暂停</span>');
+  $('access-keys').innerHTML = [
+    dashRow('主密钥', `<code>${master ? esc(master.slice(0, 6)) + '…' : '—'}</code> ${statusTag}`),
+    dashRow('成员 Key', `${memberKeys.length} 个（启用 ${memberOn}）· 可单独限速限配额`),
+  ].join('');
+  $('access-auth').value =
+    'Authorization: Bearer <API Key>\n' +
+    'x-api-key: <API Key>          # Anthropic 客户端常用，网关同样接受';
+  const masterBtn = $('btn-access-copy-master');
+  masterBtn.disabled = !master;
+  masterBtn.onclick = () => { if (master) copyText(master); else toast('当前没有配置主密钥', 'warn'); };
+
+  const branded = ((state.config || {}).models || {}).branded || {};
+  const names = Object.keys(branded);
+  const exact = ((state.snapshot || {}).model_states) || [];
+  $('access-models').innerHTML = names.length
+    ? names.map((n) => `<div class="model-row"><code>${esc(n)}</code>` +
+        `<span class="sub-note">→ ${esc(branded[n])} 链 · 内部调度</span>` +
+        `<button class="btn small ghost" data-copy="${esc(n)}">复制</button></div>`).join('')
+    : '<div class="chart-empty">还没有配置自有模型名；facet-auto / facet-cheap 等默认名始终可用，也可在「模型接入」页固化</div>';
+  $('access-models-note').textContent = names.length
+    ? `${names.length} 个自有模型名 + ${exact.length} 个精确匹配名，都可直接填进工具`
+    : `精确匹配名 ${exact.length} 个；内部调度名（facet-auto 等）始终可用`;
+
+  fillAccessExampleModels();
+  renderAccessExample();
+}
+
+function fillAccessExampleModels() {
+  const sel = $('access-example-model');
+  if (!sel) return;
+  const names = Object.keys(((state.config || {}).models || {}).branded || {});
+  const prev = sel.value;
+  sel.innerHTML = (names.length ? names : ['facet-auto'])
+    .map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (names.includes(prev)) sel.value = prev;
+}
+
+function renderAccessExample() {
+  const box = $('access-example');
+  if (!box) return;
+  box.value = buildAccessExample(
+    $('access-example-protocol').value,
+    $('access-example-lang').value,
+    $('access-example-model').value || 'facet-auto');
+}
+
+function buildAccessExample(protocol, lang, model) {
+  const origin = location.origin;
+  const base = origin + '/v1';
+  if (lang === 'python') {
+    if (protocol === 'anthropic') {
+      return [
+        '# pip install anthropic',
+        'from anthropic import Anthropic',
+        '',
+        'client = Anthropic(',
+        '    base_url="' + origin + '",        # 根路径，SDK 自动拼 /v1/messages',
+        '    api_key="<API Key>",              # 或环境变量 ANTHROPIC_API_KEY',
+        ')',
+        'resp = client.messages.create(',
+        '    model="' + model + '",',
+        '    max_tokens=256,',
+        '    messages=[{"role": "user", "content": "你好"}],',
+        ')',
+        'print(resp.content[0].text)',
+      ].join('\n');
+    }
+    return [
+      '# pip install openai',
+      'from openai import OpenAI',
+      '',
+      'client = OpenAI(',
+      '    base_url="' + base + '",',
+      '    api_key="<API Key>",              # 或环境变量 OPENAI_API_KEY',
+      ')',
+      'resp = client.chat.completions.create(',
+      '    model="' + model + '",',
+      '    messages=[{"role": "user", "content": "你好"}],',
+      ')',
+      'print(resp.choices[0].message.content)',
+    ].join('\n');
+  }
+  if (protocol === 'anthropic') {
+    return [
+      'curl ' + base + '/messages \\',
+      '  -H "x-api-key: <API Key>" \\',
+      '  -H "anthropic-version: 2023-06-01" \\',
+      '  -H "Content-Type: application/json" \\',
+      "  -d '{",
+      '    "model": "' + model + '",',
+      '    "max_tokens": 256,',
+      '    "messages": [{"role": "user", "content": "你好"}]',
+      "  }'",
+    ].join('\n');
+  }
+  return [
+    'curl ' + base + '/chat/completions \\',
+    '  -H "Authorization: Bearer <API Key>" \\',
+    '  -H "Content-Type: application/json" \\',
+    "  -d '{",
+    '    "model": "' + model + '",',
+    '    "messages": [{"role": "user", "content": "你好"}],',
+    '    "stream": false',
+    "  }'",
+  ].join('\n');
+}
+
+function buildAccessSummary() {
+  const branded = Object.keys(((state.config || {}).models || {}).branded || {});
+  const exact = ((state.snapshot || {}).model_states) || [];
+  const keys = accessState.keys || {};
+  return [
+    'Facet 网关接入摘要',
+    '──────────────────────',
+    'OpenAI 协议 Base URL：' + location.origin + '/v1',
+    '  路径：/v1/chat/completions、/v1/responses、/v1/models、/v1/embeddings、/v1/rerank、/v1/audio/*',
+    'Anthropic 协议 Base URL：' + location.origin + '（SDK 拼 /v1/messages）',
+    '鉴权：Authorization: Bearer <API Key>（或 x-api-key: <API Key>）',
+    '密钥：主密钥' + (keys.master ? '已配置，在控制台「API Keys」页复制' : '未设置（网关不校验）')
+      + '；给每个下游单独发成员 Key 更安全',
+    '模型名：' + (branded.length ? branded.join('、') : '默认内部调度名 facet-auto / facet-cheap / facet-free / facet-agent'),
+    '        精确匹配名 ' + exact.length + ' 个；全部可用名：GET ' + location.origin + '/v1/models',
+    '工具整段配置：控制台 → 模型接入 → 接入配置生成',
+    '协议细节与错误码：控制台 → 接入文档（docs/agent-integration.md）',
+  ].join('\n');
 }
 
 // Deep links rendered inside HTML strings (e.g. the fallback hint's jump to
@@ -789,6 +957,18 @@ function renderDashboard() {
       ? `<span class="days-left expired">${freeDead} 个（已停止路由）</span>` : '0 个'),
     dashRow('厂家额度', freeSummary.quota_unsynced
       ? `<span class="days-left expiring">${freeSummary.quota_unsynced} 个渠道未同步</span>` : '已同步'),
+  ].join('');
+
+  // 接入信息速览：下游接入三要素（地址 / 鉴权 / 模型名）的实时摘要。
+  const brandedNames = Object.keys(((state.config || {}).models || {}).branded || {});
+  const exactCount = (s.model_states || []).length;
+  $('dash-access').innerHTML = [
+    dashRow('接入地址', `<code>${esc(location.origin)}/v1</code>`),
+    dashRow('鉴权', '<code>Authorization: Bearer &lt;Key&gt;</code>'),
+    dashRow('模型名', brandedNames.length
+      ? `${brandedNames.length} 个自有名 · ${exactCount} 个精确名`
+      : `${exactCount} 个精确名 · 内部调度始终可用`),
+    dashRow('完整配置', '<button class="btn small ghost" data-goto-tab="access">打开接入信息页</button>'),
   ].join('');
 
   // 运行健康（稳定）：failover 面板。
@@ -2697,6 +2877,25 @@ $('set-fallback-route').addEventListener('input', syncModelPolicy);
 $('set-fallback').addEventListener('change', syncModelPolicy);
 $('access-tool').addEventListener('change', renderAccessSnippet);
 $('access-model').addEventListener('change', renderAccessSnippet);
+
+// 接入信息页（一处拿全：地址 / 密钥 / 模型名 / 示例）。
+$('btn-refresh-access').addEventListener('click', () => loadAccessPage().catch((e) => toast(e.message, 'bad')));
+$('btn-copy-access-all').addEventListener('click', async () => {
+  await loadAccessPage().catch(() => {});
+  copyText(buildAccessSummary());
+});
+$('access-example-protocol').addEventListener('change', renderAccessExample);
+$('access-example-lang').addEventListener('change', renderAccessExample);
+$('access-example-model').addEventListener('change', renderAccessExample);
+$('btn-copy-access-example').addEventListener('click', () => copyText($('access-example').value));
+$('access-endpoints').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-access-copy]');
+  if (btn) copyText(btn.dataset.accessCopy);
+});
+$('access-models').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-copy]');
+  if (btn) copyText(btn.dataset.copy);
+});
 $('btn-copy-access').addEventListener('click', () => copyText($('access-snippet').value));
 $('brand-list').addEventListener('click', (e) => {
   const chain = e.target.closest('button[data-chain-toggle]');
