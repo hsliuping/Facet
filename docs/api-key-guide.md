@@ -481,7 +481,17 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 **免费额度**：
 - **国内新用户注册实名后赠 15 元代金券**（3 个月有效），见官方帮助页：https://www.kimi.com/zh-cn/help/kimi-api/api-free-trial
 
-📷 **截图 4-9** ｜ 拍取免费试用领取页（打码） ｜ 存为：`kimi-01-free-trial.png`
+**步骤**
+
+1. 打开 [platform.kimi.com](https://platform.kimi.com)（KIMI 开放平台），验证码 / 手机 / 账号密码任选一种注册登录；
+   ![KIMI 开放平台登录页：验证码登录、手机登录、账号密码登录三种方式](images/api-key-guide/kimi-01.png)
+2. 左侧「模型认证」完成**个人认证**（实名）：未认证时 API 调用配额受限，15 元代金券也在实名后发放；企业主体可选「企业认证」；
+   ![KIMI 控制台「模型认证」页：完成个人认证解锁调用配额，个人认证与企业认证两种方式](images/api-key-guide/kimi-02.png)
+3. 左侧「账户总览」核对免费额度到账：余额卡显示**代金券 ¥15**（无门槛，示例提示限 Kimi K3.1 Pro Highspeed 版使用，以账户提示条为准），现金余额与今日 / 本月 / 总消费同行展示；
+   ![KIMI「账户总览」页：15 元无门槛代金券到账提示、代金券与现金余额、消费明细](images/api-key-guide/kimi-03.png)
+4. 左侧「API Key 管理」→ 右上「**创建 API Key**」，生成后立即复制保存（只显示一次）；
+   ![KIMI「API Key 管理」页：右上「创建 API Key」按钮与密钥列表（Key 打码）](images/api-key-guide/kimi-04.png)
+5. 把 Key 填进 Facet 渠道（协议 `openai`，端点见下）保存即可。
 
 **付费形态**：**仅按量付费**（官方明确「无订阅制方案」）：
 
@@ -490,8 +500,6 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 | **kimi-k3.1-pro** | 输入¥13/输出¥68 每百万 tokens | - |
 
 **渠道参数**：协议 `openai`，端点 `https://api.moonshot.cn/v1`（与注册表一致，`/v1/models` 支撑模型自动同步）。
-
-📷 **截图 4-10** ｜ 拍取按量计费页（打码） ｜ 存为：`kimi-02-pricing.png`
 
 **模式说明**：
 
@@ -589,7 +597,21 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 
 **渠道参数**（与注册表一致）：
 - `agent`（Token Plan）：`openai` 协议，端点 `https://tokenhub.tencentmaas.com/plan/v3`
-- `payg`（按量付费）：`openai` 协议，端点 `https://api.hunyuan.cloud.tencent.com/v1`
+- `payg`（按量付费 / 免费额度）：`openai` 协议，端点 `https://tokenhub.tencentmaas.com/v1`
+
+> ⚠️ **Key 与端点必须成对**：TokenHub「API Key 管理」创建的 `sk-` Key 只认 `tokenhub.tencentmaas.com`；旧域名 `api.hunyuan.cloud.tencent.com` 只认旧混元控制台（`console.cloud.tencent.com/hunyuan/start`）创建的 Key，混用报 401（`Incorrect API key provided`）。腾讯官方已全面转向 TokenHub，免费额度资源也在 TokenHub「开通管理」领取，新接入一律用上表端点。
+
+> ⚠️ **未购买 Token Plan 不要选套餐（agent）模式**：`/plan/v3` 是 Token Plan 订阅专用通道，且必须用**套餐专属 API Key**——在「Token Plan 个人版」页面内生成（每个套餐仅一把；通用 Token Plan 与 Hy Token Plan 共用同一把），与「API Key 管理」里的普通按量 Key **不是同一把**，混用报 401（`The API Key does not exist or signature verification failed`，引导链接指回 `console.tencentcloud.com/tokenhub/apikey`）。同一把 Key 在 `/v1` 鉴权通过、在 `/plan/v3` 报 401，即为此因——先走 `payg`（`/v1`）模式，买了套餐再切 agent。
+
+> 📋 **agent 模式的两个限制**：① Token Plan 没有模型列表接口（`/plan/v3/models` 为 404），渠道「拉取模型」必然失败，请直接手填 Model ID（注册表已预置 `hy4-flash`、`deepseek/deepseek-v4-flash`、`glm-5.3`、`kimi-k3` 等清单，可在厂家管理页展开）；② 官方限制套餐仅限 AI 工具（Claude Code、CodeBuddy Code 等）内使用，**禁止自动化脚本/应用后端批量调用**，违规可能封禁 Key——作为网关后端接入请优先 `payg`。
+
+> 📎 **Anthropic 协议入口**（注册表未单列模式，需要时在渠道编辑器里手动改）：套餐模式 Base 为 `https://tokenhub.tencentmaas.com/plan/anthropic`（Messages 路径 `/plan/anthropic/v1/messages`，Key 同套餐专属 Key）；按量模式 Base 为 `https://tokenhub.tencentmaas.com/v1`（Messages 路径 `/v1/messages`，仅部分模型支持）。
+
+> 🎯 **拉取模型为什么只列免费模型**：TokenHub 的 `GET /v1/models` 会返回 **140+ 个**服务 ID（含图像 19、视频 48、3D 27、语音 17、向量 4——这些按积分/另计费，chat 网关也用不上），而新人免费体验包覆盖的是**全部语言模型 + 全部多模态理解模型**（各 100 万 Tokens / 1 年，主账号共享额度，2026-12-31 前可领）。渠道「拉取模型」只回免费且在线的模型，具体来源见下两条。
+
+> 🔑 **实时清单（推荐，需 SecretId/SecretKey）**：TokenHub 管理面 `DescribeModelList` 会为每个模型返回 `FreeTrialInfo`（免费体验额度），是官方免费覆盖的机器可读来源。在「访问控制 → API 密钥管理」`https://console.cloud.tencent.com/cam/capi` 新建**SecretId/SecretKey**（子账号挂只读策略 `QcloudTokenHubReadOnlyAccess` 即可，别挂写权限），填到渠道凭据区。拉取时 `facet-tokenhub-quota` 用 TC3-HMAC-SHA256 签名调该接口，取有 `FreeTrialInfo` 且 token 计费的模型（语言 + 多模态理解，自动排除图像/视频/3D/语音等生成类）∩ 上游在线清单——官方新增或收缩免费模型**自动跟随，无需人工维护**。注意这里要的是 API 密钥，不是「API Key 管理」里 `sk-` 开头的 Bearer Key（后者只能调 chat，无法签名管理面）。
+
+> 🔧 **没配凭据时：静态子集 + 对账告警**：回退注册表 `free_models` 子集（44 个 = 语言模型 40 + 多模态理解 4，取自官方模型列表文档 1823/130051），拉取时取 `free_models ∩ 上游在线清单`；若一个都对不上（登记清单过时），自动回退全量并提示。日常维护任务**只对账、不自动改**：每天刷新上游 `models` 后，登记的免费模型已不在上游（下线/改名）或上游新增 chat 类模型未登记，维护面板出 `provider_free_models` 告警，确认后手动增删。三种变化的影响：① 模型下线/改名——与上游取交集，自动不显示，无需处理；② 新增免费模型——不登记则漏列，按告警补登记；③ 免费政策收缩——未及时删会继续列出（可能计费），按告警清理。免费渠道的周期对账（free-align）在凭据缺失时**静默跳过**、保留现有映射，不会反复告警。清单整体失效时拉取自动回退全量并提示，不会把渠道弄空。
 
 **第四步（可选）：购买 Token Plan**
 
@@ -609,9 +631,9 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 
 - `coding`：Coding Plan（可选，视官方是否保留旧版）
 
-**常见模型**：`hunyuan-a13b`, `hunyuan-lite`, `hunyuan-large` 等。
+**常见模型**（TokenHub 官方 Model ID）：`hy4-flash`（免费额度）、`hy4`、`hy3`、`hy4-preview`（2026-12-07 下线）、`tc-code-latest`（Auto 智能路由）、`deepseek/deepseek-v4-flash`（原厂直供）、`deepseek-v4.1-flash-1017`、`deepseek-v4-pro-0813`、`glm-5.3`、`kimi-k3`、`minimax-m3`、`mimo-v2.6-flash` 等；以 `GET /v1/models` 返回（`status: online`）为准，旧名 `hunyuan-a13b` / `hunyuan-lite` / `hunyuan-large` 已不再使用。
 
-**适用场景**：企业级大模型应用、8模型混合调度、需要按月预算的场景。
+**适用场景**：企业级大模型应用、8 模型混合调度、需要按月预算的场景。
 
 #### 套餐使用说明
 
@@ -689,14 +711,24 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 | **Token Plan** | 订阅制，按窗口限流 | 个人版五档 Mini / Lite / Standard / Pro / Max（Mini ¥4.9 为首购限时价，Standard ¥49.9） |
 | **算力包** | 专属部署算力单元 | 4500~7500 元/月起 |
 
+**步骤**
+
+1. 打开 [百度千帆官网](https://cloud.baidu.com/product/qianfan)，登录百度智能云账号（需实名）后点「控制台」进入千帆控制台；
+   ![百度千帆官网首页：「立即体验 / 控制台」入口与模型服务、Token Plan 订阅服务、百度 AI 搜索工具三大板块](images/api-key-guide/baidu-01.png)
+2. 按量调用选型：控制台「模型服务 → 文本模型」可勾选 ERNIE-5.5-Flash-Preview 等新模型「立即开启体验」在线试用；按量调用无需逐模型开通，`/v2/models` 会同步全部可用模型；
+   ![千帆控制台「模型服务 → 文本模型」选型页：ERNIE-5.5-Flash-Preview / ERNIE-Light-DT-1.0 / ERNIE-5.1，支持联网搜索、Function Call 标签与「立即开启体验」](images/api-key-guide/baidu-02.png)
+3. （订阅制可选）「Token Plan」→ 个人版：积分制 / Token 制两种计费，按月 / 季 / 年付，五档 Mini ¥4.9（限时价，原 ¥9.9）/ Lite ¥19.9 / Standard ¥49.9 / Pro ¥99.9 / Max ¥299.9，双十一期间首月 5 折；
+   ![千帆 Token Plan 个人版订阅页：Mini/Lite/Standard/Pro/Max 五档价格，积分制与 Token 制切换](images/api-key-guide/baidu-03.png)
+4. **创建 IAM API Key**：控制台左侧「API Key」→ 右上「创建 API Key」，填名称、选权限（建议自定义权限、最小化授权），创建后立即复制保存——这就是 `payg` 渠道要填的 Key；
+   ![千帆控制台「API Key」页：左侧菜单进入，「创建 API Key」弹窗填写名称与权限（全部权限 / 自定义权限）](images/api-key-guide/baidu-04.png)
+5. 把 Key 填进 Facet 渠道（协议 `openai`，端点见下表）保存即可。
+
 **渠道参数**（与注册表一致）：
 
 | 模式 | 协议 | 端点 | tier |
 |---|---|---|---|
 | `payg` | `openai` | `https://qianfan.baidubce.com/v2`（`/v2/models` 支撑模型自动同步） | `free`（新人免费额度以领取页为准） |
 | `agent`（Token Plan） | `openai` | `https://qianfan.baidubce.com/v2/tokenplan/personal` | `paid` |
-
-📷 **截图 4-16** ｜ 拍什么：IAM API Key 列表页（Key 打码） ｜ 存为：`qianfan-01-apikey.png`
 
 **模式说明**：
 
@@ -793,11 +825,15 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 **步骤**
 
-1. 打开 [opencode.ai](https://opencode.ai) 注册登录；
-2. **Console**（[opencode.ai/console](https://opencode.ai/console)）→ 订阅 **Go**（$10/月；另有 Go Plus $40/月、Go Teams $20/人/月）并绑定支付方式；
-3. Console 内直接**复制 API Key**。
-
-   📷 **截图 6-1** ｜ 拍什么：Console 概览页显示订阅状态与 Key（打码） ｜ 存为：`opencode-01-console.png`
+1. 打开 [opencode.ai](https://opencode.ai) 点 Sign in，用 GitHub / Google / 邮箱任选一种登录 Console（[opencode.ai/console](https://opencode.ai/console)）；
+   ![OpenCode Console 登录页：Continue with GitHub / Google / email 三种登录方式](images/api-key-guide/opencode-01.png)
+2. **Go** 标签页 →「Manage subscription」订阅 **Go**（$10/月；Go Plus $40/月、Go Teams $20/人/月），支付方式支持支付宝 / 微信支付；同页可看 5 小时滚动 / 周 / 月三窗口用量，以及套餐内可启用模型清单（Claude Haiku 5.5、DeepSeek V4 Pro、DeepSeek V4.1 Flash 1017、Gemini 4 Arrow 等，按需开关）；
+   ![OpenCode「Go」页与 Manage subscription 弹窗：三档套餐价格、当前档位与下次扣费，下方为三窗口用量与套餐模型开关](images/api-key-guide/opencode-06.png)
+3. **Activity** 页「Connect a client」→ **Create an API key** 创建 Key：Key 是 workspace 级服务密钥，只显示一次，创建后立即复制（`oc_sk_` 开头）；同页提供 SDK / cURL 接入示例（Base URL 即推理网关 `https://opencode.ai/inference/openai/v1`）；
+   ![OpenCode「Activity」页：Connect a client 的 Create API key 按钮、SDK 标签与 cURL 接入示例，右侧 Logs 显示最近请求](images/api-key-guide/opencode-02.png)
+4. （CI / 自动化可选）**Settings → Service accounts** → **Add Service Account**：GitHub Actions、Custom OIDC 走短期令牌（无需保存长期密钥）；其他环境选 **API key**（A secret key for anywhere else）创建常驻 Key；
+   ![OpenCode「Settings → Service accounts」：Add Service Account 弹窗可选 GitHub Actions、Custom OIDC 或 API key](images/api-key-guide/opencode-03.png)
+5. 把 Key 填进 Facet 渠道并保存。按量端点与 Go 订阅端点各配各的 Key，不可混用（见下表）。
 
 **渠道参数**：
 
@@ -816,9 +852,15 @@ Facet 已接入 Go 套餐用量查询，在「套餐订阅」页和仪表板「�
 | 用量窗口 | **滚动 5 小时窗口**（rolling）、**周窗口**（weekly）、**月窗口**（monthly） |
 | 余量口径 | 百分比（已用百分比） |
 | 重置时间 | ISO-8601 时间戳（厂家返回 `resetsAt`，Facet 自动转 epoch 秒） |
-| 可用模型 | Go 套餐可用模型以 Console 套餐页为准（待官网核实：完整模型清单） |
+| 可用模型 | 以 Console → Go 页 Models 列表为准（按需开关，见步骤 2 截图；示例含 Beam Free、Claude Haiku 5.5、DeepSeek V4 Pro、DeepSeek V4.1 Flash 1017、Gemini 4 Arrow） |
 | 用量查询 | 推理网关 `GET https://opencode.ai/inference/go/v1/usage`，用渠道的 `oc_sk_` Go key 直查（无需额外 AK/SK）；Facet 自动拉取，TTL 5 分钟 |
 | 注意 | Console 管理面（`/console/api/...`）对 Bearer key 返回 403（仅登录态），所以走推理网关路由 |
+
+Console 上的用量页长这样，Facet 展示的就是同一口径的数据：
+
+![OpenCode「Activity → My usage」：Go 订阅 Rolling / Weekly / Monthly 三窗口用量与余量、Credits 余额、Extra usage 开关与 Cost / Requests / Tokens 汇总](images/api-key-guide/opencode-04.png)
+
+![OpenCode「Activity → Usage」：工作区维度 Cost / Requests / Tokens 与按模型拆分 Usage by Model](images/api-key-guide/opencode-05.png)
 
 ---
 
@@ -970,3 +1012,9 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 4.3 百炼章节重构：嵌入 8 张真实截图（登录页/控制台入口/免费额度/Token Plan/API-KEY/RAM 建用户/AK 配置/RAM 授权），新增第一步～第四步步进结构；第四步补全 RAM 子用户查免费额度流程（创建用户 → 永久 AccessKey → AliyunBailianFullAccess 授权 → 百炼业务空间加成员），对齐注册表 credential_help 与报错码（NoPermission / Team.NotAuthorised / Workspace.NotAuthorised）；Token Plan 表补月 Credits 与首购 5 折；渠道参数补业务空间专属域名与 DashScope 维护公告；免费额度补「用完即停」（403 AllocationQuota.FreeTierOnly）机制；套餐使用说明更新免费额度查询已接入（bl usage free） |
 | 2026-11-16 | - | 4.3 百炼第四步补业务空间授权三张截图（bailian-09～11）：业务空间管理 → 账号管理「添加用户」选 RAM 用户 → 成员列表核对与权限管理入口；补业务空间链接 https://bailian.console.aliyun.com/cn-beijing/settings/workspace，说明业务空间 ID 即 API Host 前缀 |
 | 2026-11-16 | - | 4.7 DeepSeek、4.8 腾讯混元章节接入真实截图：DeepSeek 三张（登录页/API keys 创建与上限 300/用量信息与充值）；混元五张（官网入口/TokenHub 开通管理免费资源领取/语言模型体验/API Key 创建/Hy Token Plan 四档 28/78/238/468 元与积分 560/1560/4760/9360），并补通用 Token Plan 峰谷计费时段说明（工作日高峰、周末全天空闲）与 DeepSeek 联网搜索积分抵扣（2026-11-16 起） |
+| 2026-11-16 | - | 混元端点与官方逐一核对并修正：payg 迁至 TokenHub 标准入口 `https://tokenhub.tencentmaas.com/v1`（旧域名 `api.hunyuan.cloud.tencent.com` 只认旧控制台 Key，混用报 401），`keys_url`/`models_url` 同步；agent（`/plan/v3`）URL 与官方一致但补两点——Key 必须是 Token Plan 页生成的套餐专属 Key（普通按量 Key 报 401）、Token Plan 无模型列表接口（`/plan/v3/models` 404，拉取模型必失败），注册表预置 22 个官方 Model ID 兜底；新增 Anthropic 协议入口（`/plan/anthropic`、`/v1/messages`）说明；`常见模型` 由过时的 `hunyuan-a13b` 系列更新为 `hy4-flash`/`hy4`/`hy3` 等 |
+| 2026-11-16 | - | 拉取模型免费子集过滤：TokenHub `/v1/models` 全量 140+（含图像/视频/3D/语音等积分计费模型），而免费体验只覆盖语言+多模态理解模型。注册表 `payg` 模式新增 `free_models` 子集（44 个：语言 40 + 多模态 4，取自官方模型列表 1823/130051），渠道拉取时返回 `free_models ∩ 上游在线清单`（source 为 free-quota），交集为空自动回退全量；后台目录扫描不受影响仍走全量。通用机制：任意厂家模式登记 `free_models` 即生效 |
+| 2026-11-16 | - | free_models 持久化与维护对账：修两处会丢清单的缺口——`normalize_vendor` 字段白名单剥掉该字段（控制台保存厂家即丢）、旧 overlay 条目覆盖时不从内置注册表继承（均已修）；维护任务刷新上游 models 后对账免费子集（仅 api/llm 可信源）：已不在上游的发"已下线"告警、上游新增 chat 类模型发"疑似免费"告警，只告警不自动改（免费是政策判断），告警 kind 为 `provider_free_models` |
+| 2026-11-16 | - | 免费清单改为 AK/SK 实时拉取：之前判定"TokenHub 无管理面免费额度接口"有误——官方 API 3.0（`tokenhub.tencentcloudapi.com`，Version 2026-03-22，TC3-HMAC-SHA256）的 `DescribeModelList` 每个模型带 `FreeTrialInfo{CapacitySize,Unit}`，即免费体验包的机器可读来源。新增 `facet-tokenhub-quota` CLI（stdlib 实现签名+分页），只输出 token 计费且能走 /chat/completions 的模型（排除 Speech/Embedding 与图像/视频/3D 生成）；`payg` 模式登记 `free_quota_cmd` + `TENCENT_SECRET_ID/KEY` 凭据，配了即实时跟随官方政策，未配回退 `free_models` 静态子集（拉取提示补凭据，free-align 周期对账静默跳过不告警） |
+| 2026-11-16 | - | 截图补全并重写对应步骤：4.10 百度千帆 4 张（官网首页、文本模型选型、Token Plan 个人版五档价格、IAM API Key 创建弹窗），步骤按「控制台入口 → 选型 → 订阅可选 → 建 Key → 填渠道」重写；6.1 OpenCode 6 张（Console 登录、Go 订阅 Manage subscription 与三窗口用量、Activity 接入示例与建 Key、Service accounts 建 Key、My usage、Usage 工作区用量），建 Key 路径改为 Activity → Connect a client（或 Service accounts），套餐模型清单从截图落实（Claude Haiku 5.5、DeepSeek V4 Pro/Flash、Gemini 4 Arrow、Beam Free 等） |
+| 2026-11-16 | - | 4.6 Kimi 截图补全并重写步骤：新增 4 张（登录页、模型认证个人实名、账户总览 15 元代金券到账、API Key 管理创建入口），步骤按「登录 → 实名认证 → 核对代金券 → 建 Key → 填渠道」重写，删除 4-9/4-10 占位 |
