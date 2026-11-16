@@ -18,6 +18,11 @@ from .core import (ANTHROPIC, OPENAI, PROTOCOLS, VERSIONED_BASE, open_with_proxy
                    resolve_secret, upstream_path_for, apply_upstream_headers)
 
 DEFAULT_TIMEOUT = 8.0
+# The console's test button is a single manual click, so it can afford to wait
+# out a slow relay: foreign vendors reached through an outbound proxy inside a
+# container routinely need 10-20s for the TLS handshake yet still succeed. The
+# cyclic health prober keeps DEFAULT_TIMEOUT so a hung node cannot stall it.
+TEST_TIMEOUT = 60.0
 MAX_CHANNELS = 8
 PING_PROMPT = "ping"
 ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

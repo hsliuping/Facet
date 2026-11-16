@@ -47,7 +47,7 @@ from .core import (
 from .keys import KeyStore
 from .notifier import ReminderService
 from .persistence import StatePersistence
-from .probe import (MAX_CHANNELS, pick_model, pick_probe_model,
+from .probe import (MAX_CHANNELS, TEST_TIMEOUT, pick_model, pick_probe_model,
                     probe_channel, probe_models)
 from .quota import parse_quota, quota_exhaustion_wait
 from .report import build_member_costs, build_report
@@ -2428,7 +2428,9 @@ class App:
             prepared.append({**base, **item})
         merged = merge_secrets({"channels": prepared}, self.raw)["channels"]
         with ThreadPoolExecutor(max_workers=min(4, len(merged))) as pool:
-            results = list(pool.map(lambda channel: probe_channel(channel, wanted), merged))
+            results = list(pool.map(
+                lambda channel: probe_channel(channel, wanted, TEST_TIMEOUT),
+                merged))
         self._append_probe_log(results)
         return {
             "ok": all(result.get("ok") for result in results),
