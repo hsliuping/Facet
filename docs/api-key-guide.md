@@ -770,11 +770,15 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 **步骤**
 
-1. 打开 [platform.openai.com](https://platform.openai.com) 注册；
-2. Billing 页预充值（最低 $5）；
-3. **API keys**（直链：[platform.openai.com/api-keys](https://platform.openai.com/api-keys)）→ **Create new secret key**（`sk-proj-` 开头）。
-
-   📷 **截图 5-2** ｜ 拍什么：API keys 页（Key 打码） ｜ 存为：`openai-01-apikeys.png`
+1. 打开 [chatgpt.com](https://chatgpt.com)（OpenAI 官网）→ 右上「登录」；或直接访问 [platform.openai.com](https://platform.openai.com)；
+   ![OpenAI 官网首页：右上登录入口与对话输入框](images/api-key-guide/openai-01.png)
+2. 登录方式任选：邮箱 / Google / Apple / Microsoft / 手机号（新账号注册走同一入口）；
+   ![OpenAI Platform 登录页：Continue with email / Google / Apple / Microsoft / phone](images/api-key-guide/openai-02.png)
+3. 进入控制台首页：**创建 API 密钥 / 测试密钥 / 添加积分** 三张卡片与 `Default project` 用量概览；调用前先充值——左下「添加积分」→ Go to Billing（最低 $5，新账号赠送额度以账户为准；余额为零时调用报 `insufficient_quota`）；
+   ![OpenAI 控制台首页「欢迎！」：创建 API 密钥 / 测试密钥 / 添加积分卡片、Default project 用量与 Credits remaining USD$0.00 提示](images/api-key-guide/openai-03.png)
+4. **API keys**（直链：[platform.openai.com/api-keys](https://platform.openai.com/api-keys)）→ **Create new secret key**：Created by 选 You（个人）或 Service account（服务账号）；Name 选填；Project 选 `Default project`；权限 All / Restricted / Read only（建议按需最小化），创建后**立即复制**——`sk-proj-` 开头，只显示一次；
+   ![OpenAI「Create new secret key」弹窗：You / Service account、Name、Project 与 All / Restricted / Read only 权限](images/api-key-guide/openai-04.png)
+5. 把 Key 填进 Facet 渠道保存。国内直连不通时在渠道「出站代理」填代理：**网关跑在容器里，必须填宿主机网关地址**（如 `http://host.docker.internal:10809`），填 `127.0.0.1` 会 `Connection refused`。
 
 **渠道参数**：协议 `openai`，端点 `https://api.openai.com/v1`。国内直连不通时配 `proxy`。
 
@@ -786,10 +790,17 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 **步骤**
 
-1. 打开 [console.x.ai](https://console.x.ai)，用 X（Twitter）账号登录；
-2. 团队/计费初始化后 → **API Keys** → **Create API Key**（`xai-` 开头）；新账号常有少量赠送额度。
-
-   📷 **截图 5-3** ｜ 拍什么：API Keys 页（Key 打码） ｜ 存为：`xai-01-apikeys.png`
+1. 打开 [x.ai](https://x.ai) 官网 →「Try Grok」旁进 Console，或直接访问 [console.x.ai](https://console.x.ai)；
+   ![x.ai 官网首页：Meet Grok 4.7 横幅与 Try Grok / View Documentation 入口](images/api-key-guide/grok-01.png)
+2. Console 登录页 Sign in / Create an account（X、Google 或邮箱均可）；右侧列明 Console 能力：Manage API keys、Manage your team、Access latest models、Centralized billing；
+   ![xAI Console 登录页：Sign in / Create an account 与 Manage API keys、Manage your team、Access latest models、Centralized billing 四项能力](images/api-key-guide/grok-02.png)
+3. Overview 总览：Free 套餐免费额度（示例 Resets Dec 1 / 每月重置）与 credit balance $0.00；调用前点 **Buy credits / Auto top-up** 充值（$10 起）；
+   ![xAI Console「Overview」：Free 套餐额度、$0.00 credit balance 与 Buy credits / Auto top-up，下方 Start a team 与工具入口](images/api-key-guide/grok-03.png)
+4. 左侧 **Settings → API keys** → 右上「**Create API Key**」，命名并创建后**立即复制**——`xai-` 开头，只显示一次；
+   ![xAI Console「API keys」页：Grok API docs / models / SDK docs / Agent API docs 四卡、key 列表与右上 Create API key 按钮（Key 打码）](images/api-key-guide/grok-04.png)
+5. 左侧 **Models** 页可查当前可用模型与单价（Grok 4.7 / Grok 4.3 / Grok Build 0.1 等，按每百万 tokens 计价）及速率限制（RPM / TPM）；
+   ![xAI Console「Models」页：Grok 4.7 / Grok 4.3 与 Code & Chat、Voice & Audio 分类及每百万 tokens 单价](images/api-key-guide/grok-05.png)
+6. 把 Key 填进 Facet 渠道保存。国内直连不通时配出站代理（同 5.2：容器内填宿主机网关地址，不填 `127.0.0.1`）。
 
 **渠道参数**：协议 `openai`，端点 `https://api.x.ai/v1`。
 
@@ -1018,3 +1029,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 免费清单改为 AK/SK 实时拉取：之前判定"TokenHub 无管理面免费额度接口"有误——官方 API 3.0（`tokenhub.tencentcloudapi.com`，Version 2026-03-22，TC3-HMAC-SHA256）的 `DescribeModelList` 每个模型带 `FreeTrialInfo{CapacitySize,Unit}`，即免费体验包的机器可读来源。新增 `facet-tokenhub-quota` CLI（stdlib 实现签名+分页），只输出 token 计费且能走 /chat/completions 的模型（排除 Speech/Embedding 与图像/视频/3D 生成）；`payg` 模式登记 `free_quota_cmd` + `TENCENT_SECRET_ID/KEY` 凭据，配了即实时跟随官方政策，未配回退 `free_models` 静态子集（拉取提示补凭据，free-align 周期对账静默跳过不告警） |
 | 2026-11-16 | - | 截图补全并重写对应步骤：4.10 百度千帆 4 张（官网首页、文本模型选型、Token Plan 个人版五档价格、IAM API Key 创建弹窗），步骤按「控制台入口 → 选型 → 订阅可选 → 建 Key → 填渠道」重写；6.1 OpenCode 6 张（Console 登录、Go 订阅 Manage subscription 与三窗口用量、Activity 接入示例与建 Key、Service accounts 建 Key、My usage、Usage 工作区用量），建 Key 路径改为 Activity → Connect a client（或 Service accounts），套餐模型清单从截图落实（Claude Haiku 5.5、DeepSeek V4 Pro/Flash、Gemini 4 Arrow、Beam Free 等） |
 | 2026-11-16 | - | 4.6 Kimi 截图补全并重写步骤：新增 4 张（登录页、模型认证个人实名、账户总览 15 元代金券到账、API Key 管理创建入口），步骤按「登录 → 实名认证 → 核对代金券 → 建 Key → 填渠道」重写，删除 4-9/4-10 占位 |
+| 2026-11-16 | - | 5.2 OpenAI / 5.3 xAI Grok 截图补全并重写步骤：OpenAI 4 张（官网首页、Platform 登录方式、控制台首页三卡片与 Billing 充值、Create new secret key 弹窗），并加容器场景出站代理提示；Grok 5 张（x.ai 官网、Console 登录、Overview 免费额度与 Buy credits、API keys 创建、Models 页定价与限速），删除 5-2/5-3 占位 |
