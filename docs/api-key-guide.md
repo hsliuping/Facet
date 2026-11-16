@@ -666,7 +666,17 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 | `agent`（Token Plan） | `openai` | `https://api.minimax.cn/v1`，Key 填**订阅 Key** |
 | （可选）Anthropic 协议 | `anthropic` | `https://api.minimax.cn/anthropic` |
 
-📷 **截图 4-15** ｜ 拍取 Token Plan 订阅页（打码） ｜ 存为：`minimax-01-token-plan.png`
+**步骤**
+
+1. 打开 [platform.minimaxi.com](https://platform.minimaxi.com) → 微信扫码 / 手机号 / 账号邮箱登录；
+   ![MiniMax 开放平台登录页：微信扫码登录、手机号登录与账号邮箱登录](images/api-key-guide/minimax-01.png)
+2. 控制台「概览」核对账户情况：账户可用额度、最近 7 天消费金额与 M Plan 订阅状态（新人赠金到账也在这里看）；
+   ![MiniMax 控制台「概览」：账户概况显示可用额度 ¥0.00、最近 7 天消费 ¥0.00 与 M Plan 订阅状态](images/api-key-guide/minimax-02.png)
+3. 左侧 **API Key** → 右上「**创建 API Key**」，创建后立即复制；列表可查 API 类型（按量付费 / 订阅）、到期时间、创建时间与状态；
+   ![MiniMax「API Key」页：创建 API Key 按钮与 Key 列表（按量付费 / 订阅、到期时间、状态，Key 打码）](images/api-key-guide/minimax-03.png)
+4. 需要包月时进 **M Plan** 订阅页（顶部「M Plan」）：连续包年视图示例 Go ¥490/年、Explore ¥1,190/年、Build ¥4,690/年（原价 ¥588 / ¥1,428 / ¥5,628；切「连续包月」查看月付价），订阅后拿到的是订阅 Key；
+   ![MiniMax「M Plan」订阅页：连续包月 / 连续包年切换与 Go ¥490/年、Explore ¥1,190/年、Build ¥4,690/年三档](images/api-key-guide/minimax-04.png)
+5. 按 Key 类型填进 Facet 渠道：`sk-api-` 按量 Key 选 `payg` 模式；M Plan 订阅 Key 选 `agent`（Token Plan）模式，端点均见上表。
 
 **模式说明**：
 
@@ -1017,3 +1027,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 5.2 OpenAI / 5.3 xAI Grok 截图补全并重写步骤：OpenAI 4 张（官网首页、Platform 登录方式、控制台首页三卡片与 Billing 充值、Create new secret key 弹窗），并加容器场景出站代理提示；Grok 5 张（x.ai 官网、Console 登录、Overview 免费额度与 Buy credits、API keys 创建、Models 页定价与限速），删除 5-2/5-3 占位 |
 | 2026-11-16 | - | 移除 5.4 Z.AI（智谱海外）整节（含截图占位）与厂家总览表 Z.AI 行，模式速查表去掉 zai；总览表序号 11-19 重排为 10-18 |
 | 2026-11-16 | - | 6.2 Command Code 截图补全并重写步骤：新增 5 张（官网首页、Studio 用量与 CLI、概览免费层与 GO/GOAT/MAX 档位、模型服务 Provider $15 付费卡、API 密钥生成），明确 GO/GOAT/MAX 无 API 权限须选 Provider，删除 6-2 占位 |
+| 2026-11-16 | - | 4.9 MiniMax 截图补全并重写步骤：新增 4 张（开放平台登录、控制台概览账户概况、API Key 创建与列表、M Plan 连续包年三档），明确按量 Key 填 payg / 订阅 Key 填 agent，补连续包年 ¥490/¥1,190/¥4,690 价格示例，删除 4-15 占位 |
