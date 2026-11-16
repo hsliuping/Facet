@@ -6,13 +6,13 @@
       "name": "火山引擎方舟",
       "credential_help": {
         "steps": [
-          "用主账号登录火山引擎控制台，打开「访问控制 → 用户」页 https://console.volcengine.com/iam/identitymanage/user（个人图省事也可跳过建子用户，直接以主账号身份在「API 访问密钥」页 https://console.volcengine.com/iam/keymanage 创建密钥）。",
+          "用主账号登录火山引擎控制台，打开「访问控制 → 用户」页 https://console.volcengine.com/iam/identitymanage/user。不要拿主账号 AK/SK 来查额度。",
           "点「新建用户」创建 IAM 用户，填写用户名，访问方式选择编程访问 / API 调用（无需控制台登录密码）。",
-          "授权：回到用户列表，在该用户右侧操作列点「添加权限」，搜索并勾选系统策略 ArkFullAccess，提交；不限制项目资源即全局生效，若限制到项目需选择 default（默认项目）。",
+          "授权：回到用户列表，在该用户右侧操作列点「添加权限」，搜索并勾选只读系统策略 ArkReadOnlyAccess，提交；查询免费额度与套餐余量只读权限即可，不要挂 ArkFullAccess 等写权限。",
           "创建密钥：进入该用户详情页，切到「密钥」Tab，点「新建密钥」，得到 Access Key ID（AK）与 Secret Access Key（SK）。",
           "把 AK、SK 分别填入本渠道凭据区并保存（保存后回显 ***）。"
         ],
-        "permissions": "IAM 用户需挂方舟系统策略 ArkFullAccess——免费额度对齐与套餐余量查询都是用 IAM Access Key 签名调用火山云 API（GetPersonalPlan / GetAFPUsage / 模型额度接口）；纯查询场景也可用只读策略 ArkReadOnlyAccess。",
+        "permissions": "IAM 用户挂只读系统策略 ArkReadOnlyAccess 即可——免费额度对齐与套餐余量查询都是用 IAM Access Key 签名调用火山云 API（GetPersonalPlan / GetAFPUsage / GetCodingPlanUsage / 模型额度接口），纯查询无需写权限。",
         "note": "Secret Access Key（SK）只在创建时显示一次，关闭弹窗前立即复制保存。这里填的是 IAM Access Key（AK/SK），不是方舟控制台里 ark- 开头的 API Key——那是数据面推理 Key，无法查询套餐与额度。"
       },
       "modes": {

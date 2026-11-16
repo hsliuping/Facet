@@ -163,36 +163,67 @@
 
 **官方入口**：[https://console.volcengine.com/ark](https://console.volcengine.com/ark)
 
-**免费额度**：
-- 注册开通模型自动领取免费推理额度（**约 50 万 tokens/模型**，仅抵扣按量后付费）；
-- 另有「安心体验模式」用完即停。
+**第一步：开通服务，并开启「免费额度用完即停」**
 
-📷 **截图 4-1** ｜ 拍取免费额度展示页（打码） ｜ 存为：`volcengine-01-free-quota.png`
+- 实名账号登录后按提示开通方舟模型服务。只有开通后，各模型才会发放免费推理额度（约 **50 万 tokens/模型**，一次性，仅抵扣按量后付费）。没开通时拿不到额度，调用会直接计费。
+- **按量付费是后付费结算**：免费额度用完后，如果没有停服保护，请求会继续走付费通道并产生扣款。开通页 / 模型广场里的「安心体验模式 / 免费额度用完即停」务必打开——这是避免后付费扣款的关键，不要只依赖余额告警。
+- 开通后再去模型广场逐个开通要用到的模型，免费额度是按模型分别发放的。
+
+![火山引擎注册 / 登录页（手机号登录，支持豆包账号）](images/api-key-guide/volcengine-01.png)
+
+![方舟「开通管理」：领取免费资源包，各模型免费推理额度（剩 499,398 / 共 500,000 tokens）与用量上限开关、关闭服务入口](images/api-key-guide/volcengine-01-free-quota.png)
+
+**第二步：建只读 IAM 子账号，用来查免费 token 剩余额度**
+
+- 免费 token 余量不在数据面 API Key 里，要通过管理面 OpenAPI（`GetPersonalPlan` 等，AK/SK 签名）查询，所以**必须用 IAM 的 AK/SK**，不能用 `ark-` 开头的推理 Key。
+- 到 [访问控制 → 用户](https://console.volcengine.com/iam/identitymanage/user) 新建一个**子账号**，访问方式选「编程访问 / API 调用」（无需控制台登录密码）。
+- 权限设为**只读**：勾选系统策略 `ArkReadOnlyAccess` 即可，不要给主账号、也不要挂写权限（如 `ArkFullAccess`）。查询场景只读足够，能降低密钥泄露后的风险。
+- 在该子账号详情页「密钥」Tab 新建密钥，得到 **Access Key ID（AK）** 与 **Secret Access Key（SK）**——SK 只在创建时显示一次，立刻复制保存。把 AK/SK 填到 Facet 火山渠道的「管理凭据 / credential_envs（`VOLC_ACCESSKEY`、`VOLC_SECRETKEY`）」里；它们只用于查额度与套餐余量，不是推理调用 Key。
+
+![访问控制「API 访问密钥」：子账号创建 Access Key 成功弹窗，AccessKeyID 与 SecretAccessKey 均已打码](images/api-key-guide/volcengine-02-AKSK.png)
+
+**第三步：按量付费、Agent Plan、Coding Plan 的 Key 各不相同，要分别获取**
+
+三套凭据相互独立，**不能互换**，每个都要单独获取：
+
+| 形态 | Key 类型 | 获取位置 |
+|---|---|---|
+| 按量付费 `payg` | `ark-` 开头的 API Key（数据面推理 Key） | [方舟 API Key 管理](https://console.volcengine.com/ark/region:cn-beijing/apiKey) |
+| Coding Plan `coding` | Coding 套餐专用 Key | 同上页面，开通 Coding 套餐后才显示 |
+| Agent Plan `agent` | Agent 套餐专用 Key | [Agent Plan 订阅页](https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan?projectName=default) 开通后获取 |
+
+注意区分：第二步建的是 **IAM AK/SK**（管理面，查额度用），这里三种是 **`ark-` 推理 Key**（数据面，调模型用），两套东西别填混；同厂家三种模式也各填各的 Key。
+
+![方舟「API Key 管理」：左侧菜单 API Key 管理 →「创建 API Key」，得到 ark- 开头的推理 Key（按量付费用）](images/api-key-guide/volcengine-01-keys.png)
+
+**第四步：三种形态的调用 URL 也不一样**
+
+| 形态 | 协议 | `base_url` |
+|---|---|---|
+| 按量付费 `payg` | `openai` | `https://ark.cn-beijing.volces.com/api/v3` |
+| Coding Plan `coding` | `openai` | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+| Agent Plan `agent` | `openai` | `https://ark.cn-beijing.volces.com/api/plan/v3` |
+
+在 Facet 里选对模式后 URL 会自动带出；手工填写时务必按上表选，否则会出现 404 或「模型不存在 / 无权限」。路径只需填 `/chat/completions`（或留空自动补），**不要**在已含 `/v3` 的 `base_url` 后再拼 `/v1/chat/completions`，否则会变成 `/v3/v1/...` 而 404。
+
+![订阅 → Agent Plan「我的订阅」：套餐档位、起止时间与 Agent 燃料值（AFP）用量](images/api-key-guide/volcengine-03-Agentplan.png)
+
+![Agent Plan 订阅页「开始使用」区块：① 获取专属 API Key（套餐 Key 独立于按量 Key）② 配置 Base URL 与模型](images/api-key-guide/volcengine-03-Agentplan-key.png)
 
 **付费形态**：
 
 | 形态 | 说明 | 价格 |
 |---|---|---|
-| **按量付费** | 计费：doubao-seed-1.6 输入 0.8~2.4 元/百万 tokens | - |
+| **按量付费** | 计费：doubao-seed-1.6 输入 0.8~2.4 元/百万 tokens；免费额度用完即停 | - |
 | **Coding Plan 个人版** | Lite 40 元/月、Pro 200 元/月（新用户首购特惠已于 2026-03-17 暂停） | - |
 | **Coding Plan 企业版** | Team Lite 120 / Team Pro 600 元/月 | - |
 | **Agent Plan 个人版** | Small 40 / Medium 200 / Large 500 / Max 1000 元 | - |
 
-**渠道参数**：协议 `openai`，端点 `https://ark.cn-beijing.volces.com/api/v3`。
-
-📷 **截图 4-2** ｜ 拍取 Coding/Agent 套餐页（打码） ｜ 存为：`volcengine-02-plans.png`
-
-https://console.volcengine.com/iam/identitymanage/user
-创建用户，授与只读权限，用来生成ak和sk，获取token免费额度剩余情况，不要用主帐号
-
-https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan?projectName=default
-agent-plan的链接，进入可以管理agent-plan
-
 **模式说明**：
 
-- `payg`：按量付费，免费额度 `free_quota: {tokens: 500000, period: "total"}`（约 50 万 tokens，一次性）
-- `coding`：Coding Plan 套餐，`tier: "paid"`，月付制
-- `agent`：Agent Plan 套餐，`tier: "paid"`，月付制，含 `billing: "agent_plan"` 标识
+- `payg`：按量付费，免费额度 `free_quota: {tokens: 500000, period: "total"}`（约 50 万 tokens，一次性，**务必配合用完即停**）
+- `coding`：Coding Plan 套餐，`tier: "paid"`，月付制，`base_url` 为 `/api/coding/v3`
+- `agent`：Agent Plan 套餐，`tier: "paid"`，月付制，含 `billing: "agent_plan"` 标识，`base_url` 为 `/api/plan/v3`
 
 **常见模型**：`doubao-seed-1.6`, `doubao-seed-32b`, `ernie-turbo`, `ernie-speed` 等。
 
@@ -232,12 +263,19 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **官方入口**：[https://www.bigmodel.cn](https://www.bigmodel.cn)
 
-**免费额度**：
-- **注册送 2000 万 tokens 体验包**（https://www.bigmodel.cn/invite）；
-- **GLM-4-Flash 长期免费**（官方文档：https://docs.bigmodel.cn/cn/guide/start/pricing.md）；
-- **GLM-4.7-Flash / FlashX 等限时免费**（以官网公告为准）。
+![BigModel 登录 / 注册弹窗：完成登录 / 注册开启开发之旅，支持手机号、账号、微信扫码与 CCF 会员授权登录](images/api-key-guide/zhipu-01.png)
 
-📷 **截图 4-3** ｜ 拍取免费额度页（打码） ｜ 存为：`zhipu-01-free-quota.png`
+**免费额度**：
+- **注册送 2000 万 tokens 体验包**（注册页横幅实测文案，https://www.bigmodel.cn/invite）；
+- **GLM-4-Flash 长期免费**（官方文档：https://docs.bigmodel.cn/cn/guide/start/pricing.md）；
+- **GLM-4.7-Flash / FlashX 等限时免费**（以官网公告为准）；
+- **邀好友领资源包**：控制台右上角活动入口，最高 **2 亿 Tokens**，是体验包用完后的补充免费来源。
+
+![BigModel 登录 / 注册页：手机号、账号、微信扫码登录，横幅「新用户免费赠送专享 2000 万 tokens 体验包」](images/api-key-guide/zhipu-06.png)
+
+![BigModel 官网首页：GLM-5.3 / GLM-5.3-FlashX / GLM Coding Plan 三大入口](images/api-key-guide/zhipu-02.png)
+
+![控制台首页「立即体验」：GLM-5.3 对话入口与「API 接入」，右上角邀好友领取最高 2 亿 Tokens 资源包](images/api-key-guide/zhipu-03.png)
 
 **付费形态**：
 
@@ -249,7 +287,15 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **渠道参数**：协议 `openai`，端点 `https://open.bigmodel.cn/api/paas/v4`。
 
-📷 **截图 4-4** ｜ 拍取 Coding Plan 页（打码） ｜ 存为：`zhipu-02-coding-plan.png`
+**Key 获取注意：标准 Key 与套餐 Key 分开管理**
+
+- 「模型标准 API（按量计费/资源包）」与「套餐的 API Key」是两套凭据，自 10 月 16 日起在「API Key」页新建的 Key **仅可用于标准 API**（页面提示原文）；
+- Coding Plan 的 Key 要在 Coding Plan 订阅流程里单独获取，不能拿标准 Key 调套餐额度，反之亦然——和火山引擎三种 Key 各自独立是同一个道理。
+- 标准 Key 入口：控制台左侧「API Key」→「标准 API key」→「+ 新建API Key」。
+
+![「标准 API key」管理页：标准 API（按量计费/资源包）与套餐 API Key 分开管理，新建 Key 仅用于标准 API（Key 已打码）](images/api-key-guide/zhipu-04.png)
+
+![Coding Plan 套餐概览：未订阅时点「立即订阅」，左侧「用量统计」可查套餐用量](images/api-key-guide/zhipu-05.png)
 
 **模式说明**：
 
@@ -263,7 +309,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 #### 套餐使用说明
 
 - **按量付费（payg）**：Facet 已接入账户余额查询，渠道配置页渠道卡「厂家用量」行显示「余额 / 充值 / 累计消费」（接口 `GET /api/biz/account/query-customer-account-report`，用渠道 key 直查）。
-- **GLM Coding Plan（积分制）**：待接入套餐用量查询。需调研项：Coding Plan 的积分消耗窗口（日/周/月）、积分余额接口、可用模型清单（待官网核实）。
+- **GLM Coding Plan（积分制）**：待接入套餐用量查询。控制台「Coding Plan → 用量统计」页可直接人工查看套餐消耗（见上方 zhipu-05 截图）；需调研项：Coding Plan 的积分消耗窗口（日/周/月）、积分余额接口、可用模型清单（待官网核实）。
 
 ---
 
