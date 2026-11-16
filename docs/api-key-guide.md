@@ -315,26 +315,41 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 ### 4.3 阿里云百炼
 
-**官方入口**：[https://consoles.aliyun.com/model-studio](https://consoles.aliyun.com/model-studio)
+**官方入口**：[https://bailian.console.aliyun.com/ ](https://bailian.console.aliyun.com/)
 
-**免费额度**：
-- **新人每款模型约 100 万 tokens**（全平台约 7000 万），90 天有效；
-- 实名认证后额外赠送少量 tokens。
+**第一步：注册/登录阿里云，进入百炼控制台**
 
-📷 **截图 4-5** ｜ 拍取新人免费额度页（打码） ｜ 存为：`bailian-01-free-quota.png`
+1. 打开阿里云登录页，用手机号验证码登录（没有账号点「前往注册」；右下角「RAM 登录」是子账号入口，主账号不用管）；
+   ![阿里云登录页：手机号验证码登录，右下角 RAM 用户登录入口（手机号已打码）](images/api-key-guide/bailian-01.png)
+2. 登录后进入百炼控制台，首页底部三个入口各管一件事：**API Key**（创建数据面推理 Key）、**Token Plan**（购买/管理套餐）、**免费额度**（查看各模型免费 Token 余量）；
+   ![百炼控制台首页：API Key / Token Plan / 免费额度 三个入口](images/api-key-guide/bailian-02.png)
+
+**第二步：查看新人免费额度**
+
+- **新人每款模型约 100 万 tokens**（全平台约 7000 万），90 天有效；实名认证后额外赠送少量 tokens。
+- 「费用用量 → 免费额度」页可逐模型查看剩余额度、到期时间与状态（示例账号 68 个模型有额度）。每行的「用完即停」开关默认开启——官方机制是免费额度用尽即返回 403（`AllocationQuota.FreeTierOnly`）并自动停止服务，**不会转按量扣费**；
+  ![百炼「免费额度」页：有额度模型总数、各模型剩余额度/到期时间/状态与「用完即停」开关（打码）](images/api-key-guide/bailian-03.png)
 
 **付费形态**：
 
 | 形态 | 说明 | 价格 |
 |---|---|---|
 | **按量付费** | 所有模型均支持按量计费 | - |
-| **Token Plan 个人版** | Lite 39 / Essential 79 / Standard 139 / Pro 312 元/月 | - |
+| **Token Plan 个人版** | Lite 39 / Essential 79 / Standard 139 / Pro 312 元/月，月 Credits 20,000 / 45,000 / 80,000 / 200,000；新客首购 Lite、Essential 享 5 折 | - |
 | **Token Plan 团队版** | 150 元/坐席/月 | - |
 | **Coding Plan（旧版）** | 仅剩 Pro 200 元/月，停售过渡中 | - |
 
-**渠道参数**：协议 `openai`，端点 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
+Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5 折限时活动）：
 
-📷 **截图 4-6** ｜ 拍取 Token Plan 页（打码） ｜ 存为：`bailian-02-token-plan.png`
+![Token Plan 个人版：Lite/Essential/Standard/Pro 四档价格、月 Credits 与可并发 Agent 数，首购 5 折横幅](images/api-key-guide/bailian-04.png)
+
+**渠道参数**：协议 `openai`，端点 `https://dashscope.aliyuncs.com/compatible-mode/v1`（控制台 API-KEY 页展示的业务空间专属域名 `*.maas.aliyuncs.com` 亦可；DashScope 旧域名自 2026-09-10 起进入维护状态，仍可正常使用但不再新增特性）。
+
+**第三步：创建数据面 API Key（`sk-` 开头，调模型用）**
+
+- 控制台首页「API Key」进入 API-KEY 管理页，点「创建 API-KEY」；Key 创建后**只显示一次**，立即复制保存；
+- 页面顶部同时展示按量付费 Base URL（openai 与 anthropic 两种协议端点），配置 Facet 渠道时可直接参考；
+  ![百炼 API-KEY 管理页：按量付费 Base URL 与「创建 API-KEY」按钮（Key 已打码）](images/api-key-guide/bailian-05.png)
 
 **模式说明**：
 
@@ -346,9 +361,29 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **适用场景**：企业级应用、大规模并发、长文本处理等。
 
+**第四步：新建 RAM 子用户拿 AK/SK，并完成双重授权（查免费 token 使用量的前提）**
+
+- 免费 token 使用量**不在 `sk-` 数据面 Key 里**，要经百炼管理面 OpenAPI 查询（Facet 的 `bl usage free` 免费额度对齐任务用的就是它），所以**必须新建一个 RAM 子用户**（[https://ram.console.aliyun.com/users](https://ram.console.aliyun.com/users)）获取 AccessKey ID / AccessKey Secret 两个参数，不要用数据面 Key，也不要直接用主账号 AK/SK。
+- 主账号打开 [RAM 访问控制 → 用户](https://ram.console.aliyun.com/users)，点「创建用户」；
+  ![RAM 访问控制「用户」列表：「创建用户」入口（用户名已打码）](images/api-key-guide/bailian-06.png)
+- 填写登录名（如 `facet`），访问方式**勾选「使用永久 AccessKey 访问」**（生成 AK/SK，无需控制台登录密码）；创建成功后立即复制 AccessKey ID / AccessKey Secret——**Secret 只显示一次**；
+  ![RAM 创建用户：填写登录名并勾选「使用永久 AccessKey 访问」（打码）](images/api-key-guide/bailian-07.png)
+- **RAM 授权**：在该用户「权限管理」→「新增授权」，勾选系统策略 **AliyunBailianFullAccess**（免费额度查询走百炼 OpenAPI 需要它；仅调模型可改挂 AliyunBailianDataFullAccess），缺这一步查询报 `NoPermission`；
+  ![RAM 用户「权限管理」：已授权 AliyunBailianReadOnlyAccess / AliyunBailianFullAccess 系统策略](images/api-key-guide/bailian-08.png)
+- **百炼控制台授权（把子账号加进业务空间）**：RAM 策略只解决「能访问百炼」，还要在百炼控制台把该 RAM 用户**关联到业务空间**，缺这一步查询报 `Team.NotAuthorised`：
+  1. 打开百炼控制台 [业务空间管理](https://bailian.console.aliyun.com/cn-beijing/settings/workspace)（左侧「管理 → 业务空间管理」），确认要使用的业务空间——**默认业务空间**即可，其「业务空间 ID」就是控制台 API Host 的前缀（示例 `llm-g8xkhenk48bvujpa`）；
+     ![百炼「业务空间管理」页：业务空间列表（默认业务空间、业务空间 ID / API Host），左侧「账号管理」菜单（打码）](images/api-key-guide/bailian-09.png)
+  2. 在该业务空间的「账号管理」中点「添加用户」，类型选 **RAM 用户**，在下拉列表中选中刚创建的子账号（如 `facet`），点「确定」；
+     ![业务空间「添加用户」弹窗：类型选 RAM 用户并选择刚创建的子账号（打码）](images/api-key-guide/bailian-10.png)
+  3. 添加成功后「账号管理」列表会出现这条记录（类型列显示 **RAM 用户**，含登录名称与 RAM ID），行内「权限管理」可继续细分它在空间内的模型 / 功能权限；
+     ![业务空间「账号管理」列表：新增的 RAM 用户记录（类型 RAM 用户）与「权限管理」入口（打码）](images/api-key-guide/bailian-11.png)
+- 默认业务空间全部模型可调；自建业务空间还需由超级管理员在空间内为模型开通「模型调用」，否则报 `Workspace.NotAuthorised`。
+- 最后把 AK/SK 填到 Facet 百炼渠道「管理凭据 / credential_envs（`BAILIAN_ACCESS_KEY_ID`、`BAILIAN_ACCESS_KEY_SECRET`）」——它们只用于查免费额度使用量，**不是**推理调用的 `sk-` Key。
+
 #### 套餐使用说明
 
-- **Token Plan（个人/团队版）**：待接入套餐用量查询。需调研项：Token Plan 的额度窗口（日/月）、用量查询接口（阿里云百炼控制台）、各档位可用模型清单（待官网核实）。
+- **免费额度使用量查询（已接入）**：RAM 子用户 AK/SK 完成上述 RAM 授权 + 业务空间成员双重授权后，Facet 经 `bl usage free` 每日定时对齐各模型剩余免费额度，额度用尽的模型自动移出免费渠道并向用户告警。
+- **Token Plan（个人/团队版）**：待接入套餐用量查询。需调研项：Token Plan 的额度窗口（日/月）、用量查询接口、各档位可用模型清单（待官网核实）。
 - **按量付费**：余额/欠费查询待接入（需确认百炼是否提供 API key 可查的余额接口）。
 
 ---
@@ -901,3 +936,5 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-14 | - | 新增「八、常见问题」：窗口用尽的精确冷却与自动恢复、显式模型全量用尽的两层兜底、显式模型的计费优先顺序 |
 | 2026-11-15 | - | 修正 NVIDIA NIM 口径：免费层是速率限制（多数模型约 40 RPM）而非 credits；10,000 请求/日非官方承诺；端点对齐注册表 integrate.api.nvidia.com/v1 |
 | 2026-11-16 | - | 全文口径核对：修正混元/智谱/百炼端点（混元此前误写火山方舟域名）；DeepSeek 峰谷价互换与在售模型、火山 doubao-seed-1.6 输入价与新用户特惠（已暂停）、魔搭免费口径（魔粒计费、完善邮箱即可，无需阿里云实名）、千帆 Token Plan 五档与免费额度软化、OpenCode 三档价、Anthropic 试用金有效期；CommandCode 模式说明与注册表对齐（仅 agent 模式）；新增 4.10 百度千帆、6.3 LLM7 章节；订正 2026-11-13 LLM7 修订记录（原文声称已新增说明但当时未落文）；3.1 NVIDIA、3.2 OpenRouter 截图占位替换为真实截图（各 4 张），5.4 Z.AI 补截图占位 |
+| 2026-11-16 | - | 4.3 百炼章节重构：嵌入 8 张真实截图（登录页/控制台入口/免费额度/Token Plan/API-KEY/RAM 建用户/AK 配置/RAM 授权），新增第一步～第四步步进结构；第四步补全 RAM 子用户查免费额度流程（创建用户 → 永久 AccessKey → AliyunBailianFullAccess 授权 → 百炼业务空间加成员），对齐注册表 credential_help 与报错码（NoPermission / Team.NotAuthorised / Workspace.NotAuthorised）；Token Plan 表补月 Credits 与首购 5 折；渠道参数补业务空间专属域名与 DashScope 维护公告；免费额度补「用完即停」（403 AllocationQuota.FreeTierOnly）机制；套餐使用说明更新免费额度查询已接入（bl usage free） |
+| 2026-11-16 | - | 4.3 百炼第四步补业务空间授权三张截图（bailian-09～11）：业务空间管理 → 账号管理「添加用户」选 RAM 用户 → 成员列表核对与权限管理入口；补业务空间链接 https://bailian.console.aliyun.com/cn-beijing/settings/workspace，说明业务空间 ID 即 API Host 前缀 |
