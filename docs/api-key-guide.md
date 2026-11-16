@@ -884,8 +884,6 @@ Console 上的用量页长这样，Facet 展示的就是同一口径的数据：
 
 **渠道参数**：协议 `openai`，端点 `https://api.commandcode.ai/provider/v1`。
 
-📷 **截图 6-3** ｜ 拍什么：桥启动后的终端 + 控制台渠道行测试通过 ｜ 存为：`bridge-01-running.png`
-
 **模式说明**：
 
 - `agent`：套餐订阅（注册表登记的唯一模式，`tier: "free"`），Provider $15/月 + $1.01 手续费，含 $15 永不过期额度，按量扣；免费模型随套餐 `models` 清单下发（如 glyph-cluster:free 1000 requests/天、crouton-alpha 1000 requests/天、inkling-2-small:free 200 requests/天），无需额外配置即可使用
@@ -1028,3 +1026,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 移除 5.4 Z.AI（智谱海外）整节（含截图占位）与厂家总览表 Z.AI 行，模式速查表去掉 zai；总览表序号 11-19 重排为 10-18 |
 | 2026-11-16 | - | 6.2 Command Code 截图补全并重写步骤：新增 5 张（官网首页、Studio 用量与 CLI、概览免费层与 GO/GOAT/MAX 档位、模型服务 Provider $15 付费卡、API 密钥生成），明确 GO/GOAT/MAX 无 API 权限须选 Provider，删除 6-2 占位 |
 | 2026-11-16 | - | 4.9 MiniMax 截图补全并重写步骤：新增 4 张（开放平台登录、控制台概览账户概况、API Key 创建与列表、M Plan 连续包年三档），明确按量 Key 填 payg / 订阅 Key 填 agent，补连续包年 ¥490/¥1,190/¥4,690 价格示例，删除 4-15 占位 |
+| 2026-11-16 | - | 删除 6.2 Command Code「桥启动终端 + 控制台测试通过」截图占位：Facet 已原生支持 Provider 的 OpenAI 端点，正文无桥接步骤，该占位为早期遗留 |
