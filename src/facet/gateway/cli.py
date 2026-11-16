@@ -32,8 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(args.config)
     seeded = False
     if not args.check and not config_path.exists():
-        # Zero-key first start: no config -> write a seed (anonymous
-        # Pollinations + disabled free-tier templates) and serve it.
+        # First start: no config -> write a seed (disabled free-tier templates
+        # + anthropic placeholder) and serve it.
         write_seed(config_path)
         seeded = True
     try:

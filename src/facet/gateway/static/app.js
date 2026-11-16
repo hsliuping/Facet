@@ -4395,9 +4395,8 @@ function applyProviderPreset() {
 // listed here fall back to the whole manual. Values must match the guide's
 // ### headings exactly (extractGuideSection compares verbatim).
 const GUIDE_SECTIONS = {
-  pollinations: '3.1 Pollinations——免注册免 Key',
-  nvidia: '3.2 NVIDIA NIM——免费层',
-  openrouter: '3.3 OpenRouter——免费池',
+  nvidia: '3.1 NVIDIA NIM——免费层',
+  openrouter: '3.2 OpenRouter——免费池',
   volcengine: '4.1 火山引擎方舟',
   zhipu: '4.2 智谱 GLM',
   bailian: '4.3 阿里云百炼',

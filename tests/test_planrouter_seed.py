@@ -1,4 +1,4 @@
-"""Zero-key first start: seed config generation and CLI integration."""
+"""First start: seed config generation and CLI integration."""
 from __future__ import annotations
 
 import contextlib
@@ -24,22 +24,14 @@ class SeedConfigTests(unittest.TestCase):
         by_name = {c.name: c for c in config.channels}
         self.assertEqual(
             {c.name for c in config.channels},
-            {"ovhcloud", "pollinations", "nvidia-nim", "google-ai-studio",
+            {"nvidia-nim", "google-ai-studio",
              "z-ai-glm", "anthropic-template"},
         )
-        ovhcloud = by_name["ovhcloud"]
-        self.assertTrue(ovhcloud.enabled)
-        self.assertEqual(ovhcloud.tier, "free")
-        self.assertEqual(ovhcloud.rate.rpm, 2)
-        self.assertEqual(ovhcloud.models.get("auto"), "gpt-oss-20b")
-        self.assertIsNone(ovhcloud.api_key)  # "" normalizes to None (no auth)
-        pollinations = by_name["pollinations"]
-        self.assertFalse(pollinations.enabled)
-        for name in ("pollinations", "nvidia-nim", "google-ai-studio",
+        for name in ("nvidia-nim", "google-ai-studio",
                      "z-ai-glm", "anthropic-template"):
             self.assertFalse(by_name[name].enabled, name)
         self.assertEqual(config.routes["openai:default"].channels,
-                         ("ovhcloud",))
+                         ("nvidia-nim",))
         self.assertEqual(config.routes["anthropic:default"].channels,
                          ("anthropic-template",))
         self.assertEqual(config.defaults.maintenance_model, "auto")
@@ -77,12 +69,12 @@ class CliSeedTests(unittest.TestCase):
             config_path = Path(tmp) / "router.json"
             code, output = self._run_serve(["--config", str(config_path)])
             self.assertEqual(code, 0)
-            self.assertIn("零密钥首启", output)
-            self.assertIn("ovhcloud", output)
+            self.assertIn("首启引导", output)
+            self.assertNotIn("ovhcloud", output)
             config = load_config(config_path)  # seeded file parses
             self.assertEqual(
                 {c.name for c in config.channels if c.enabled},
-                {"ovhcloud"})
+                set())
 
     def test_existing_config_is_not_touched(self):
         config = {
@@ -106,7 +98,7 @@ class CliSeedTests(unittest.TestCase):
             config_path.write_text(json.dumps(config), encoding="utf-8")
             code, output = self._run_serve(["--config", str(config_path)])
             self.assertEqual(code, 0)
-            self.assertNotIn("零密钥首启", output)
+            self.assertNotIn("首启引导", output)
             self.assertEqual(
                 json.loads(config_path.read_text(encoding="utf-8")), config)
 

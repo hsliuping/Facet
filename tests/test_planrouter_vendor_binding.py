@@ -36,12 +36,12 @@ def legacy_config() -> dict:
     }
 
 
-def pollinations_channel(name: str = "pollinations") -> dict:
+def nvidia_channel(name: str = "nvidia-nim") -> dict:
     # The pair used by the shipped seed; guaranteed present in the registry
     # (the seed-binding test below would fail otherwise).
     return {"name": name, "tier": "free",
-            "provider": "pollinations", "mode": "payg",
-            "base_url": "https://text.pollinations.ai/openai",
+            "provider": "nvidia", "mode": "payg",
+            "base_url": "https://integrate.api.nvidia.com/v1",
             "api_key": "k", "models": {"auto": "openai"}}
 
 
@@ -91,32 +91,32 @@ class VendorBindingTests(BindingTestBase):
                          "api_key": "k", "models": {"auto": "a"}}])
 
     def test_unknown_provider_rejected(self):
-        channel = pollinations_channel()
+        channel = nvidia_channel()
         channel["provider"] = "no-such-vendor"
         with self.assertRaisesRegex(ValueError, "厂家 no-such-vendor 不存在"):
             self.apply([channel])
 
     def test_unknown_mode_rejected(self):
-        channel = pollinations_channel()
-        channel["mode"] = self.unknown_mode_for("pollinations")
+        channel = nvidia_channel()
+        channel["mode"] = self.unknown_mode_for("nvidia")
         with self.assertRaisesRegex(ValueError, "不支持模式"):
             self.apply([channel])
 
     def test_one_sided_binding_rejected(self):
-        channel = pollinations_channel()
+        channel = nvidia_channel()
         channel.pop("mode")
         with self.assertRaisesRegex(ValueError, "厂家信息不完整"):
             self.apply([channel])
-        channel = pollinations_channel("pollinations-2")
+        channel = nvidia_channel("nvidia-2")
         channel.pop("provider")
         with self.assertRaisesRegex(ValueError, "厂家信息不完整"):
             self.apply([channel])
 
     def test_valid_binding_saved_and_persisted(self):
-        self.apply([self.raw["channels"][0], pollinations_channel()])
+        self.apply([self.raw["channels"][0], nvidia_channel()])
         saved = json.loads(self.path.read_text(encoding="utf-8"))
-        new = next(c for c in saved["channels"] if c["name"] == "pollinations")
-        self.assertEqual((new["provider"], new["mode"]), ("pollinations", "payg"))
+        new = next(c for c in saved["channels"] if c["name"] == "nvidia-nim")
+        self.assertEqual((new["provider"], new["mode"]), ("nvidia", "payg"))
 
     def test_legacy_channel_tolerated(self):
         # Pre-existing vendor-less channels keep loading and saving untouched.
@@ -124,23 +124,23 @@ class VendorBindingTests(BindingTestBase):
 
     def test_stale_tab_inherits_vendor(self):
         vendor_raw = {"listen": {"host": "127.0.0.1", "port": 0},
-                      "channels": [pollinations_channel(),
+                      "channels": [nvidia_channel(),
                                    {"name": "anthro", "protocol": "anthropic",
                                     "provider": "anthropic", "mode": "payg",
                                     "base_url": "https://x.example/v1",
                                     "api_key": "k", "models": {"c": "c"}}],
                       "routes": [{"name": "default", "protocol": "openai",
-                                  "channels": ["pollinations"]},
+                                  "channels": ["nvidia-nim"]},
                                  {"name": "default", "protocol": "anthropic",
                                   "channels": ["anthro"]}]}
         self.path.write_text(json.dumps(vendor_raw), encoding="utf-8")
         self.app = App(parse_config(vendor_raw), config_path=self.path)
-        stale = pollinations_channel()
+        stale = nvidia_channel()
         stale.pop("provider")
         stale.pop("mode")
         self.apply([stale])
         # An editor older than vendor bookkeeping must not erase the binding.
-        self.assertEqual(self.app.raw["channels"][0]["provider"], "pollinations")
+        self.assertEqual(self.app.raw["channels"][0]["provider"], "nvidia")
         self.assertEqual(self.app.raw["channels"][0]["mode"], "payg")
 
 

@@ -373,23 +373,6 @@
       }
     },
     {
-      "id": "pollinations",
-      "name": "Pollinations.ai",
-      "modes": {
-        "payg": {
-          "label": "免费注册",
-          "protocol": "openai",
-          "base_url": "https://gen.pollinations.ai/v1",
-          "docs_url": "https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md",
-          "keys_url": "https://enter.pollinations.ai/keys",
-          "models_url": "https://gen.pollinations.ai/v1/models",
-          "free_limits": {"rpm": 12, "note": "key 免费注册即领：Seed 档约 12 次/分钟；模型清单可匿名查看"},
-          "tier": "free",
-          "models": []
-        }
-      }
-    },
-    {
       "id": "llm7",
       "name": "LLM7",
       "modes": {
@@ -407,22 +390,6 @@
       }
     },
     {
-      "id": "ovhcloud",
-      "name": "OVHcloud AI Endpoints",
-      "modes": {
-        "payg": {
-          "label": "免费匿名",
-          "protocol": "openai",
-          "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
-          "docs_url": "https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started",
-          "models_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models",
-          "free_limits": {"rpm": 2, "note": "匿名免注册：2 次/分/IP/模型，超限 429"},
-          "tier": "free",
-          "models": []
-        }
-      }
-    },
-    {
       "id": "nvidia",
       "name": "NVIDIA NIM",
       "modes": {
@@ -433,7 +400,7 @@
           "docs_url": "https://docs.api.nvidia.com/nim/",
           "keys_url": "https://build.nvidia.com/settings/api-keys",
           "models_url": "https://integrate.api.nvidia.com/v1/models",
-          "free_limits": {"rpm": 40, "note": "免费 1,000 credits（1 次 ≈ 1 credit）+ 约 40 次/分"},
+          "free_limits": {"rpm": 40, "note": "免费层=速率限制（个人上限约 40 RPM，控制台右上角显示），非 credits；10,000 请求/日为页面嵌入值、非官方承诺；试用无时间限制"},
           "tier": "free",
           "models": []
         }

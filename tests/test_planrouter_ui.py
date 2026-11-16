@@ -131,9 +131,9 @@ class ConsoleTests(unittest.TestCase):
             "name": "plan-c", "protocol": "openai", "base_url": "http://127.0.0.1:9004",
             "api_key": "env:PLAN_C_KEY", "models": {"auto": "model-c"}, "priority": 30,
             # New channels must carry a vendor binding (see
-            # test_planrouter_vendor_binding.py); pollinations/payg is a
+            # test_planrouter_vendor_binding.py); nvidia/payg is a
             # builtin registry entry.
-            "provider": "pollinations", "mode": "payg",
+            "provider": "nvidia", "mode": "payg",
         })
         config["routes"][0]["channels"].append("plan-c")
         status, _, body = self.call(base, "POST", "/api/config", config, key="")
@@ -187,7 +187,7 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(status, 200)
         guide = json.loads(body)
         self.assertTrue(guide["available"])
-        self.assertIn("3.1 Pollinations", guide["markdown"])
+        self.assertIn("3.1 NVIDIA NIM——免费层", guide["markdown"])
         self.assertIn("5.4 Z.AI（智谱海外）", guide["markdown"])
 
     def test_guide_image_route_confines_to_docs(self):
