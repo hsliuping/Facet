@@ -516,10 +516,23 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 
 **官方入口**：[https://api-docs.deepseek.com](https://api-docs.deepseek.com)
 
+**第一步：注册/登录开放平台**
+
+1. 打开 DeepSeek 开放平台，用手机号验证码或微信扫码登录（没有账号验证码登录时自动注册）；
+   ![DeepSeek 开放平台登录页：手机号验证码与微信扫码两种方式](images/api-key-guide/deepseek-01.png)
+
+**第二步：创建 API Key**
+
+- 登录后左侧「API keys」→「创建 API key」；Key **仅在创建时可复制**，立即保存；单个账号最多可保留 300 个 API Key；
+  ![DeepSeek API keys 列表页：「创建 API key」按钮与 Key 列表（Key 已打码）](images/api-key-guide/deepseek-03.png)
+
+**用量与充值**（左侧「用量信息」）：
+
+- 页面展示充值余额与累计消费金额，以及近 7 天消费金额 / API 请求次数 / Tokens 消耗图表，可按 API Key 过滤并导出；余额不足时在此「去充值」（建议顺手开启余额告警）；
+  ![DeepSeek 用量信息页：充值余额、累计消费金额与消费/请求次数/Tokens 图表（金额已打码）](images/api-key-guide/deepseek-02.png)
+
 **免费额度**：
 - **无明确官方免费额度**（仅活动性「赠送余额」机制，非常规福利）。
-
-📷 **截图 4-11** ｜ 拍取定价页（打码） ｜ 存为：`deepseek-01-pricing.png`
 
 **付费形态**：**仅按量付费**（峰谷计价，峰时 = 谷时 ×2）：
 
@@ -529,8 +542,6 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 | **deepseek-v4-pro** | 同等峰谷计价（具体以官网定价页为准） | - |
 
 **渠道参数**：协议 `openai`，端点 `https://api.deepseek.com/v1`。
-
-📷 **截图 4-12** ｜ 拍取峰谷计价说明（打码） ｜ 存为：`deepseek-02-pricing-note.png`
 
 **模式说明**：
 
@@ -547,11 +558,26 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 
 **官方入口**：[https://cloud.tencent.com/product/hunyuan](https://cloud.tencent.com/product/hunyuan)
 
+**第一步：进入混元产品控制台**
+
+1. 打开腾讯混元大模型官网，点「产品控制台」进入 TokenHub（模型调用、免费资源与 API Key 都在 TokenHub 里）；
+   ![腾讯混元大模型官网首页：Hy3 preview 发布横幅与「产品控制台 / 产品文档」入口](images/api-key-guide/hunyuan-01.png)
+
+**第二步：开通管理与领取免费资源**
+
+- TokenHub 左侧「开通管理」：顶部「免费体验」显示可领资源数（示例 23/53），点「领取免费资源」；下方模型列表逐行展示**免费额度余量、到期时间**与「开通按量计费」开关（示例 hy4-flash / hy4 / hy3 / kimi-k3.1-pro 等 34 个模型，免费额度剩余 100%、到期 2027-11-16）；顶部「按量计费」支持一键开启 / 一键关闭；
+  ![TokenHub「开通管理」页：免费体验可领资源、模型免费额度余量与到期时间、按量计费一键开关（打码）](images/api-key-guide/hunyuan-03.png)
+- 领取后可在「语言模型」页直接在线体验（当前旗舰 Hy4），无需写代码即可验证效果；
+  ![TokenHub「语言模型」体验页：Hy4 模型在线对话体验](images/api-key-guide/hunyuan-02.png)
+
+**第三步：创建 API Key**
+
+- TokenHub 左侧「API Key 管理」→「创建 API Key」，创建后即可通过 API Key 调用 TokenHub 提供的模型和推理服务；
+  ![TokenHub「API Key 管理」页：「创建 API Key」入口与「用户 → API Key 验证身份与权限 → 允许访问模型」流程示意](images/api-key-guide/hunyuan-04.png)
+
 **免费额度**：
 - **首次开通送一次性资源包**（8 款模型共享 100 万 tokens，1 年有效）；
 - **TokenHub 新用户免费体验包**（活动至 2026-12-31）。
-
-📷 **截图 4-13** ｜ 拍取开通送资源包页（打码） ｜ 存为：`hunyuan-01-free-resource.png`
 
 **付费形态**：
 
@@ -565,7 +591,12 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 - `agent`（Token Plan）：`openai` 协议，端点 `https://tokenhub.tencentmaas.com/plan/v3`
 - `payg`（按量付费）：`openai` 协议，端点 `https://api.hunyuan.cloud.tencent.com/v1`
 
-📷 **截图 4-14** ｜ 拍取 Token Plan 与 Agent 套餐页（打码） ｜ 存为：`hunyuan-02-plans.png`
+**第四步（可选）：购买 Token Plan**
+
+- 「Token Plan 个人版」→「Hy Token Plan」（混元专用）四档：Lite 28 元/月（560 积分，约 70 轮问答）、Standard 78 元/月（推荐，1560 积分，约 200 轮）、Pro 238 元/月（4760 积分）、Max 468 元/月（9360 积分）；面向 Agent 工作负载设计，适配 Coding Agent、文档自动化、多步工具调用等工作流；
+  ![Hy Token Plan 个人版购买页：Lite/Standard/Pro/Max 四档价格、积分与适用规模](images/api-key-guide/hunyuan-05.png)
+- **峰谷计费说明**（通用 Token Plan）：自北京时间 2026-10-30 22:30 起，除 DeepSeek-V4 Flash / DeepSeek-V4-Pro（原厂直供）外的其余 DeepSeek 模型执行峰谷计费——工作日（周一至周五）9:00–12:00、14:00–18:00 为高峰时段，其余时段为空闲时段，周末（周六、周日）全天为空闲时段；
+- **联网搜索计费**：自北京时间 2026-11-16 00:00 起，Token Plan 中 DeepSeek 原厂供型发起的联网搜索调用（Search 搜索 / Fetch 网页抓取）计入套餐包积分抵扣。
 
 **模式说明**：
 
@@ -938,3 +969,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 全文口径核对：修正混元/智谱/百炼端点（混元此前误写火山方舟域名）；DeepSeek 峰谷价互换与在售模型、火山 doubao-seed-1.6 输入价与新用户特惠（已暂停）、魔搭免费口径（魔粒计费、完善邮箱即可，无需阿里云实名）、千帆 Token Plan 五档与免费额度软化、OpenCode 三档价、Anthropic 试用金有效期；CommandCode 模式说明与注册表对齐（仅 agent 模式）；新增 4.10 百度千帆、6.3 LLM7 章节；订正 2026-11-13 LLM7 修订记录（原文声称已新增说明但当时未落文）；3.1 NVIDIA、3.2 OpenRouter 截图占位替换为真实截图（各 4 张），5.4 Z.AI 补截图占位 |
 | 2026-11-16 | - | 4.3 百炼章节重构：嵌入 8 张真实截图（登录页/控制台入口/免费额度/Token Plan/API-KEY/RAM 建用户/AK 配置/RAM 授权），新增第一步～第四步步进结构；第四步补全 RAM 子用户查免费额度流程（创建用户 → 永久 AccessKey → AliyunBailianFullAccess 授权 → 百炼业务空间加成员），对齐注册表 credential_help 与报错码（NoPermission / Team.NotAuthorised / Workspace.NotAuthorised）；Token Plan 表补月 Credits 与首购 5 折；渠道参数补业务空间专属域名与 DashScope 维护公告；免费额度补「用完即停」（403 AllocationQuota.FreeTierOnly）机制；套餐使用说明更新免费额度查询已接入（bl usage free） |
 | 2026-11-16 | - | 4.3 百炼第四步补业务空间授权三张截图（bailian-09～11）：业务空间管理 → 账号管理「添加用户」选 RAM 用户 → 成员列表核对与权限管理入口；补业务空间链接 https://bailian.console.aliyun.com/cn-beijing/settings/workspace，说明业务空间 ID 即 API Host 前缀 |
+| 2026-11-16 | - | 4.7 DeepSeek、4.8 腾讯混元章节接入真实截图：DeepSeek 三张（登录页/API keys 创建与上限 300/用量信息与充值）；混元五张（官网入口/TokenHub 开通管理免费资源领取/语言模型体验/API Key 创建/Hy Token Plan 四档 28/78/238/468 元与积分 560/1560/4760/9360），并补通用 Token Plan 峰谷计费时段说明（工作日高峰、周末全天空闲）与 DeepSeek 联网搜索积分抵扣（2026-11-16 起） |
