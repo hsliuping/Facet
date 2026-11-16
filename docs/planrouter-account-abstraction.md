@@ -244,8 +244,8 @@ channel.creds（显式覆盖）
 
 | 厂家形态 | 代表 | 需要 Account | 落法 |
 | --- | --- | --- | --- |
-| 单账号单 Key | OpenRouter、DeepSeek、Moonshot、xAI、NVIDIA NIM | 否 | `channel.account=""`，不出现账号 UI 提示，凭据仍在渠道 / 厂家级 |
-| 匿名或免费 | Pollinations、LLM7、OVHcloud、魔搭 | 否 | 无凭据、无账号、无订阅，零改动 |
+| 单账号单 Key | OpenRouter、DeepSeek、Moonshot、xAI、NVIDIA NIM、LLM7 | 否 | `channel.account=""`，不出现账号 UI 提示，凭据仍在渠道 / 厂家级 |
+| 匿名或免费 | Pollinations、OVHcloud、魔搭 | 否 | 无凭据、无账号、无订阅，零改动 |
 | 本地桥 | claude-plan / codex-plan | 否 | 渠道自成账户 |
 | 单账号多业务线 | 火山引擎、百炼、智谱（coding + payg） | 是 | 1 Account + N Channel，AK/SK 只填一次 |
 | 多账号同厂家 | 火山两个主账号 | 是 | 2 Account，渠道按账号分组 |
