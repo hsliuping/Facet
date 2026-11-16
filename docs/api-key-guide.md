@@ -860,11 +860,17 @@ Console 上的用量页长这样，Facet 展示的就是同一口径的数据：
 
 **步骤**
 
-1. 打开 [commandcode.ai](https://commandcode.ai) 注册；
-2. Studio → **Billing**（[commandcode.ai/billing](https://commandcode.ai/billing)）选套餐：**Provider** $15/月 + $1.01 手续费，含 $15 永不过期额度，按量扣；Go 档（$1/月）**没有 API 权限**，勿选；
-3. **Settings → Keys**（[commandcode.ai/settings/keys](https://commandcode.ai/settings/keys)）创建并复制。
-
-   📷 **截图 6-2** ｜ 拍什么：Keys 页（Key 打码） ｜ 存为：`commandcode-01-keys.png`
+1. 打开 [commandcode.ai](https://commandcode.ai) 官网 →「立即安装 / Sign up」注册（10 秒即可注册）；
+   ![Command Code 官网首页：为开源模型而生的编程智能体，立即安装 / Sign up 入口](images/api-key-guide/commandcode-01.png)
+2. 登录后进入 **Studio** 首页：欢迎条、今日 / 本周 / 本月用量与 Command Code CLI 安装命令；
+   ![Command Code Studio 首页：欢迎回来、用量统计与 Command Code CLI 安装说明](images/api-key-guide/commandcode-02.png)
+3. 左侧 **概览** 核对免费层：Free 套餐 $0.00，免费模型 `glyph-cluster-free`（1000 请求/天）、`inkling-2-small-free`（200 请求/天）等；下方套餐卡 GO $1/月、GOAT $10/月、MAX $100/月——**这些档没有 API 权限**，Facet 要用必须选 Provider（下一步）；
+   ![Command Code「概览」页：Free 套餐 $0.00、免费模型列表与 GO / GOAT / MAX 套餐卡](images/api-key-guide/commandcode-03.png)
+4. 左侧 **账单 / 模型服务** 选 **Provider $15/月**（+ $1.01 支付手续费，含 $15 永不过期额度，按量扣；季付 / 年付有折扣），完成支付后才开放 API 权限；
+   ![Command Code「模型服务」页：一个 API，调用所有模型，Provider $15/月付费服务卡与支付说明](images/api-key-guide/commandcode-04.png)
+5. 左侧 **API 密钥** → 右上「**生成 API 密钥**」，创建并立即复制；
+   ![Command Code「API 密钥」页：生成 API 密钥按钮与用户 API 密钥列表（Key 打码）](images/api-key-guide/commandcode-05.png)
+6. 把 Key 填进 Facet 渠道（协议 `openai`，端点见下）保存。
 
 **渠道参数**：协议 `openai`，端点 `https://api.commandcode.ai/provider/v1`。
 
@@ -1010,3 +1016,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 4.6 Kimi 截图补全并重写步骤：新增 4 张（登录页、模型认证个人实名、账户总览 15 元代金券到账、API Key 管理创建入口），步骤按「登录 → 实名认证 → 核对代金券 → 建 Key → 填渠道」重写，删除 4-9/4-10 占位 |
 | 2026-11-16 | - | 5.2 OpenAI / 5.3 xAI Grok 截图补全并重写步骤：OpenAI 4 张（官网首页、Platform 登录方式、控制台首页三卡片与 Billing 充值、Create new secret key 弹窗），并加容器场景出站代理提示；Grok 5 张（x.ai 官网、Console 登录、Overview 免费额度与 Buy credits、API keys 创建、Models 页定价与限速），删除 5-2/5-3 占位 |
 | 2026-11-16 | - | 移除 5.4 Z.AI（智谱海外）整节（含截图占位）与厂家总览表 Z.AI 行，模式速查表去掉 zai；总览表序号 11-19 重排为 10-18 |
+| 2026-11-16 | - | 6.2 Command Code 截图补全并重写步骤：新增 5 张（官网首页、Studio 用量与 CLI、概览免费层与 GO/GOAT/MAX 档位、模型服务 Provider $15 付费卡、API 密钥生成），明确 GO/GOAT/MAX 无 API 权限须选 Provider，删除 6-2 占位 |
