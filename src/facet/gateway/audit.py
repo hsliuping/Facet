@@ -18,7 +18,8 @@ from pathlib import Path
 ALLOWED_FIELDS = (
     "ts", "api", "protocol", "model", "mode", "reason", "route", "channel",
     "wire_model", "attempt", "status", "http_status", "cooldown_seconds",
-    "tokens", "ms", "stream", "sticky", "model_unverified", "vision",
+    "tokens", "input_tokens", "cached_tokens", "ms", "stream", "sticky",
+    "model_unverified", "vision",
 )
 
 

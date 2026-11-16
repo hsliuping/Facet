@@ -14,13 +14,15 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from facet.gateway.core import load_config, parse_config
-from facet.gateway.responses import ResponsesAdapter, chat_to_response, to_chat_request
+from facet.gateway.responses import (
+    ResponsesAdapter, _cached_tokens, chat_to_response, to_chat_request,
+)
 from facet.gateway.server import App, Handler
 
 TEXT_SSE = [
     b'data: {"choices":[{"delta":{"content":"forty-"}}]}\n\n',
     b'data: {"choices":[{"delta":{"content":"two!"}}]}\n\n',
-    b'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\n\n',
+    b'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4}}}\n\n',
     b'data: [DONE]\n\n',
 ]
 TOOL_SSE = [
@@ -55,7 +57,8 @@ def chat_response(text="ok", tool_calls=None):
         message["tool_calls"] = tool_calls
     return {
         "choices": [{"message": message}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+                  "prompt_tokens_details": {"cached_tokens": 6}},
     }
 
 
@@ -187,6 +190,16 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(obj["output"][1]["type"], "function_call")
         self.assertEqual(obj["output"][1]["call_id"], "call_1")
         self.assertEqual(obj["usage"]["total_tokens"], 15)
+        self.assertEqual(obj["usage"]["input_tokens"], 10)
+        self.assertEqual(obj["usage"]["input_tokens_details"]["cached_tokens"], 6)
+
+    def test_cached_tokens_reads_every_vendor_shape(self):
+        self.assertEqual(_cached_tokens({"prompt_tokens_details": {"cached_tokens": 7}}), 7)
+        self.assertEqual(_cached_tokens({"prompt_cache_hit_tokens": 8}), 8)
+        self.assertEqual(_cached_tokens({"cache_read_input_tokens": 9}), 9)
+        self.assertEqual(_cached_tokens({"cached_tokens": 10}), 10)
+        self.assertEqual(_cached_tokens({}), 0)
+        self.assertEqual(_cached_tokens({"prompt_tokens_details": None}), 0)
 
     def test_stream_adapter_emits_complete_event_sequence(self):
         adapter = ResponsesAdapter("gpt-5-codex", True, "resp_x", 1700000000)
@@ -208,6 +221,7 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(response["output"][0]["content"][0]["text"], "forty-two!")
         self.assertEqual(response["output"][1]["arguments"], '{"cmd":"ls"}')
         self.assertEqual(response["usage"]["total_tokens"], 15)
+        self.assertEqual(response["usage"]["input_tokens_details"]["cached_tokens"], 4)
 
     def test_stream_adapter_handles_tool_only(self):
         adapter = ResponsesAdapter("m", True)
@@ -271,6 +285,16 @@ class ResponsesGatewayTests(unittest.TestCase):
 
     def audit(self):
         return self.httpd.app.audit.recent()  # type: ignore[union-attr]
+
+    def test_response_headers_expose_prompt_cache(self):
+        req = Request(self.base + "/v1/responses",
+                      data=json.dumps(codex_request()).encode(),
+                      headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.headers.get("X-Input-Tokens"), "10")
+            self.assertEqual(resp.headers.get("X-Cached-Tokens"), "6")
+            obj = json.loads(resp.read())
+        self.assertEqual(obj["usage"]["input_tokens_details"]["cached_tokens"], 6)
 
     def test_non_stream_responses_are_bridged(self):
         status, raw = self.request("POST", "/v1/responses", codex_request())

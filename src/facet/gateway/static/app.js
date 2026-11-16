@@ -2390,8 +2390,10 @@ function brandRecentHtml(name) {
     const dest = e.channel
       ? esc(e.channel) + (e.wire_model ? ' <span class="sub-note">·</span> ' + esc(e.wire_model) : '')
       : '—';
+    const cached = Number(e.cached_tokens || 0);
+    const cacheNote = cached ? ` · 缓存 ${fmtTok(cached)}` : '';
     return `<li><span class="sub-note">${esc(at.date)} ${esc(at.time)}</span>${requestTag(e.status)}`
-      + `<span>${dest}</span><span class="sub-note">${esc(e.mode || '')} · ${esc(e.tokens ?? 0)} tok · ${esc(e.ms ?? 0)} ms</span></li>`;
+      + `<span>${dest}</span><span class="sub-note">${esc(e.mode || '')} · ${esc(e.tokens ?? 0)} tok${cacheNote} · ${esc(e.ms ?? 0)} ms</span></li>`;
   }).join('') + '</ul>';
 }
 
@@ -2729,7 +2731,7 @@ function renderRequests() {
   const data = state.requests;
   const tbody = $('requests-body');
   if (!data || !data.entries || !data.entries.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
     $('requests-note').textContent = (data && data.note) || '请求审计未启用';
     return;
   }
@@ -2751,8 +2753,22 @@ function renderRequests() {
       <td>${esc(e.attempt ?? 0)}</td>
       <td>${esc(e.ms ?? 0)} ms</td>
       <td>${esc(e.tokens ?? 0)}</td>
+      <td>${cacheCell(e)}</td>
     </tr>`;
   }).join('');
+}
+
+// Prompt-cache hits per request. Upstream reports differ (OpenAI
+// prompt_tokens_details.cached_tokens, Anthropic cache_read_input_tokens,
+// DeepSeek prompt_cache_hit_tokens) but the audit already stores the
+// normalized pair; entries from before this field existed show "—".
+function cacheCell(e) {
+  const cached = Number(e.cached_tokens || 0);
+  const input = Number(e.input_tokens || 0);
+  if (!cached && !input) return '<span class="sub-note">—</span>';
+  if (!input) return '<span class="sub-note">未上报输入</span>';
+  const rate = (cached / input * 100).toFixed(1);
+  return `${rate}%<br><span class="sub-note">${Number(cached).toLocaleString()} / ${Number(input).toLocaleString()} tok</span>`;
 }
 
 $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));

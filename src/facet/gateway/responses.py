@@ -189,10 +189,29 @@ def _output_from_chat_message(message: dict, text=None, tool_calls=None) -> list
     return output
 
 
+def _cached_tokens(usage: dict) -> int:
+    """Prompt-cache hits from any vendor's usage shape.
+
+    Chat usage reports them as prompt_tokens_details.cached_tokens, DeepSeek as
+    prompt_cache_hit_tokens, Anthropic as cache_read_input_tokens: the Responses
+    object must carry the real number either way, otherwise downstream clients
+    always see a zeroed cache hit.
+    """
+    try:
+        cached = int(usage.get("cache_read_input_tokens")
+                     or (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                     or usage.get("prompt_cache_hit_tokens")
+                     or usage.get("cached_tokens") or 0)
+        return max(cached, 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def build_response(model: str, response_id: str, created_at: int,
                    output: list[dict], usage: dict | None = None,
                    status: str = "completed") -> dict:
     usage = usage or {}
+    cached = _cached_tokens(usage)
     return {
         "id": response_id,
         "object": "response",
@@ -216,7 +235,7 @@ def build_response(model: str, response_id: str, created_at: int,
         "reasoning": {"effort": None, "summary": None},
         "usage": {
             "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
-            "input_tokens_details": {"cached_tokens": 0},
+            "input_tokens_details": {"cached_tokens": cached},
             "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             "output_tokens_details": {"reasoning_tokens": 0},
             "total_tokens": int(usage.get("total_tokens") or 0),

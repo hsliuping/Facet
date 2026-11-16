@@ -5589,7 +5589,9 @@ class App:
                         with self.store.lock:
                             self.store.states[channel.name].handoffs += 1
                     self.log_request(**entry, status="ok", http_status=200,
-                                     tokens=delivery.get("tokens", 0))
+                                     tokens=delivery.get("tokens", 0),
+                                     input_tokens=delivery.get("input_tokens", 0),
+                                     cached_tokens=delivery.get("cached_tokens", 0))
                     self.store.bind_session(session, channel.name, time.time())
                     return
 
@@ -5832,6 +5834,8 @@ class App:
             self.apply_quota(channel.name, resp.headers)
             if delivery is not None:
                 delivery["tokens"] = stream_tokens
+                delivery["input_tokens"] = stream_input
+                delivery["cached_tokens"] = stream_cached
             return None
 
         data = resp.read()
@@ -5847,12 +5851,21 @@ class App:
         tokens, input_tokens, cached_tokens = _usage(data, protocol)
         if delivery is not None:
             delivery["tokens"] = tokens
+            delivery["input_tokens"] = input_tokens
+            delivery["cached_tokens"] = cached_tokens
         with self.store.lock:
             self.store.states[channel.name].mark_success(tokens, time.time(), wire)
         self.store.record_score(channel.name, wire, 1)
         self.record_usage(channel.name, True, tokens, model=wire, h=h,
                           input_tokens=input_tokens, cached_tokens=cached_tokens)
         self.apply_quota(channel.name, resp.headers)
+        # Hand the cache economics back to the caller as well: for non-stream
+        # responses headers are the only place a downstream service can read
+        # them without parsing the body (streams carry it in the final usage
+        # chunk, where headers are already gone).
+        if input_tokens:
+            extra["X-Input-Tokens"] = str(input_tokens)
+            extra["X-Cached-Tokens"] = str(cached_tokens)
         if adapter is not None:
             data = adapter.finish(data)
         h.send_response(200)

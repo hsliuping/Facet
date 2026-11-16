@@ -114,6 +114,16 @@ class AuditUnitTests(unittest.TestCase):
         self.assertNotIn("messages", entry)
         self.assertIn("ts", entry)
 
+    def test_prompt_cache_hits_are_recorded_for_the_log(self):
+        """The audit keeps normalized cache numbers so the console can show
+        per-request cache hits; unknown fields are still dropped."""
+        log = RequestLog(self.path)
+        log.record(model="glm-5.3-flash", status="ok",
+                   tokens=2000, input_tokens=1800, cached_tokens=900)
+        entry = log.recent()[0]
+        self.assertEqual(entry["input_tokens"], 1800)
+        self.assertEqual(entry["cached_tokens"], 900)
+
     def test_recent_is_reverse_chronological(self):
         log = RequestLog(self.path)
         for index in range(5):
@@ -357,8 +367,11 @@ class CliAndConsoleTests(unittest.TestCase):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="requests-body"', html)
+        self.assertIn('<th>缓存命中</th>', html)
         self.assertIn('id="btn-admin-key-save"', html)
         self.assertIn("loadRequests", js)
+        self.assertIn("function cacheCell(", js)
+        self.assertIn("cached_tokens", js)
         self.assertIn("X-Admin-Key", js)
 
 
