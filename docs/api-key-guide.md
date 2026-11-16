@@ -50,7 +50,7 @@
 |---|---|---|
 | `payg` | 按量付费 | 大部分厂家 |
 | `agent` / `token_plan` | Token 包月/套餐 | xiaomi、bailian、hunyuan、qianfan、minimax |
-| `coding` / `coding_plan` | 编程套餐 | zhipu、volcengine、zai、commandcode |
+| `coding` / `coding_plan` | 编程套餐 | zhipu、volcengine、commandcode |
 
 ---
 
@@ -67,16 +67,15 @@
 | 7 | DeepSeek | ❌ 无明确免费额度 | payg（峰谷计价） | 一致 |
 | 8 | 腾讯混元 | ✅ 开通送100万tokens(1年) | payg + token_plan(TokenHub) | **已补 token_plan 模式**：Token Plan 28/78/238/468 元/月；payg 加免费额度 100 万 tokens/1 年 |
 | 9 | 百度千帆 | ⚠️ 新人免费额度以控制台领取页为准 | payg + token_plan + 算力包 | **已补 token_plan 模式**；Token Plan 个人版五档 Mini/Lite/Standard/Pro/Max（Mini ¥4.9 为首购限时价，Standard ¥49.9）；免费额度口径以官方活动页为准 |
-| 10 | Z.AI 智谱海外 | ✅ GLM-4.7-Flash等完全免费 | payg + coding_plan($18起) | **已补 coding_plan 模式**；Coding Plan Lite $18/Pro $80/Max $168/月；payg 加免费模型标注（GLM-4.7-Flash/4.5-Flash/4.6V-Flash 完全免费，其余按量计费） |
-| 11 | Grok xAI | ❌ 无标准免费层（活动:数据共享换$150/月） | payg | 基本一致 |
-| 12 | OpenAI | ❌ 新账号无赠送credits | payg（订阅不含API） | 一致 |
-| 13 | Anthropic | ⚠️ 一次性$5试用 | payg（Max/Ultra订阅送API credits） | 一致；可加免费note |
-| 14 | OpenCode | ✅ 12+免费模型 | payg + agent_plan(Go订阅) | Go $10/月、Go Plus $40/月、Go Teams $20/人/月；v2 文档含 console.opencode.ai/inference 域名变体 |
-| 15 | Command Code | ✅ 免费模型1000请求/天 | 套餐订阅（Provider $15/月，含 $15 额度按量扣） | 免费模型随 agent 套餐 models 清单下发（tier: free） |
-| 16 | LLM7 | ✅ 60次/分·250/时·10万tokens/24h | Pro $12/月订阅 | Pro $12/月 为官网订阅档，注册表仅登记免费 payg 模式（见 6.3） |
-| 17 | NVIDIA NIM | ✅ 免费层=速率限制（约 40 RPM，控制台右上角显示） | ❌ 无按量付费通道；提额需付费部署/自托管 | 免费层是速率限制非 credits；10,000 请求/日为页面嵌入值、非官方承诺 |
-| 18 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
-| 19 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
+| 10 | Grok xAI | ❌ 无标准免费层（活动:数据共享换$150/月） | payg | 基本一致 |
+| 11 | OpenAI | ❌ 新账号无赠送credits | payg（订阅不含API） | 一致 |
+| 12 | Anthropic | ⚠️ 一次性$5试用 | payg（Max/Ultra订阅送API credits） | 一致；可加免费note |
+| 13 | OpenCode | ✅ 12+免费模型 | payg + agent_plan(Go订阅) | Go $10/月、Go Plus $40/月、Go Teams $20/人/月；v2 文档含 console.opencode.ai/inference 域名变体 |
+| 14 | Command Code | ✅ 免费模型1000请求/天 | 套餐订阅（Provider $15/月，含 $15 额度按量扣） | 免费模型随 agent 套餐 models 清单下发（tier: free） |
+| 15 | LLM7 | ✅ 60次/分·250/时·10万tokens/24h | Pro $12/月订阅 | Pro $12/月 为官网订阅档，注册表仅登记免费 payg 模式（见 6.3） |
+| 16 | NVIDIA NIM | ✅ 免费层=速率限制（约 40 RPM，控制台右上角显示） | ❌ 无按量付费通道；提额需付费部署/自托管 | 免费层是速率限制非 credits；10,000 请求/日为页面嵌入值、非官方承诺 |
+| 17 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
+| 18 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
 
 ---
 
@@ -806,27 +805,7 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 ---
 
-### 5.4 Z.AI（智谱海外）
 
-**官方入口**：[https://z.ai](https://z.ai)
-
-**步骤**
-
-1. 打开 [z.ai](https://z.ai) 注册登录；
-2. 进入 **API Keys**（直链：[z.ai/manage-api-key/apikey-keys](https://z.ai/manage-api-key/apikey-keys)）→ 创建并复制 API Key。
-
-   📷 **截图 5-4** ｜ 拍什么：z.ai API Keys 页（Key 打码） ｜ 存为：`zai-01-apikeys.png`
-
-**渠道参数**：协议 `openai`，端点 `https://api.z.ai/api/paas/v4`。
-
-**模型套餐信息**（同一账号可同时使用）：
-
-| 形态 | 说明 | 端点/备注 |
-|---|---|---|
-| 按量计费 | GLM-5.3 等模型，按输入输出 tokens 计费 | 同一 Key 双模式切换 |
-| **Coding Plan 订阅**（新增） | **Lite $18/月、Pro $80/月、Max $168/月**（季/年付有折扣）<br>基于 OpenAI Chat Completions 协议，兼容 Facet coding 模式 | 访问 [z.ai/subscribe](https://z.ai/subscribe) 完成订阅 |
-
----
 
 ## 六、订阅聚合类
 
@@ -1030,3 +1009,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 截图补全并重写对应步骤：4.10 百度千帆 4 张（官网首页、文本模型选型、Token Plan 个人版五档价格、IAM API Key 创建弹窗），步骤按「控制台入口 → 选型 → 订阅可选 → 建 Key → 填渠道」重写；6.1 OpenCode 6 张（Console 登录、Go 订阅 Manage subscription 与三窗口用量、Activity 接入示例与建 Key、Service accounts 建 Key、My usage、Usage 工作区用量），建 Key 路径改为 Activity → Connect a client（或 Service accounts），套餐模型清单从截图落实（Claude Haiku 5.5、DeepSeek V4 Pro/Flash、Gemini 4 Arrow、Beam Free 等） |
 | 2026-11-16 | - | 4.6 Kimi 截图补全并重写步骤：新增 4 张（登录页、模型认证个人实名、账户总览 15 元代金券到账、API Key 管理创建入口），步骤按「登录 → 实名认证 → 核对代金券 → 建 Key → 填渠道」重写，删除 4-9/4-10 占位 |
 | 2026-11-16 | - | 5.2 OpenAI / 5.3 xAI Grok 截图补全并重写步骤：OpenAI 4 张（官网首页、Platform 登录方式、控制台首页三卡片与 Billing 充值、Create new secret key 弹窗），并加容器场景出站代理提示；Grok 5 张（x.ai 官网、Console 登录、Overview 免费额度与 Buy credits、API keys 创建、Models 页定价与限速），删除 5-2/5-3 占位 |
+| 2026-11-16 | - | 移除 5.4 Z.AI（智谱海外）整节（含截图占位）与厂家总览表 Z.AI 行，模式速查表去掉 zai；总览表序号 11-19 重排为 10-18 |
