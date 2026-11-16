@@ -31,6 +31,7 @@ from urllib.request import Request
 
 from . import providers as providers_mod
 from .core import AUTO_MODEL, QUOTA_MARKERS, open_with_proxy
+from .probe import is_chat_model
 
 JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 PLAN_LIST_BLOCK = re.compile(r"\[.*\]", re.DOTALL)
@@ -882,6 +883,8 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
     if not added and not removed:
         return False
     mode["models"] = new
+    if source in ("api", "llm"):
+        _reconcile_free_models(mode, new, added, label, report)
     report["applied"].append({
         "channel": provider.get("id") or "",
         "action": "update_provider_models",
@@ -892,6 +895,40 @@ def _refresh_provider_mode(app, provider: dict, mode_key: str,
         "reason": f"厂家{where}更新模型清单：{label} 新增 {len(added)} 个、移除 {len(removed)} 个",
     })
     return True
+
+
+def _reconcile_free_models(mode: dict, new_models: list[str],
+                           added: list[str], label: str,
+                           report: dict) -> None:
+    """Report free_models drift instead of silently rewriting policy.
+
+    Free coverage is a vendor policy, not something a /models fetch can
+    infer. After a trusted (api/llm) refresh, alert on ids the upstream
+    dropped (likely retired — confirm before removing) and on newly served
+    chat-capable ids the subset missed (likely new free models — confirm
+    before adding). Alert-only keeps the curated subset honest without
+    letting one flaky extraction rewrite which models are free; a pull
+    intersect still masks retired ids meanwhile, so nothing breaks while
+    an alert awaits a human.
+    """
+    free = [str(m) for m in mode.get("free_models") or [] if str(m).strip()]
+    if not free:
+        return
+    known = {str(m) for m in new_models}
+    gone = [m for m in free if m not in known]
+    fresh = [m for m in added if m not in free and is_chat_model(str(m))]
+    if gone:
+        report["alerts"].append({
+            "channel": "", "kind": "provider_free_models",
+            "message": (f"{label} 免费子集有 {len(gone)} 个模型已不在上游清单"
+                        f"（{', '.join(gone[:3])}），确认下线后可从 free_models 移除"),
+        })
+    if fresh:
+        report["alerts"].append({
+            "channel": "", "kind": "provider_free_models",
+            "message": (f"{label} 上游新增 {len(fresh)} 个疑似免费模型"
+                        f"（{', '.join(fresh[:3])}），确认免费后可加入 free_models"),
+        })
 
 
 def refresh_providers(app, report: dict, vendor_id=None) -> None:

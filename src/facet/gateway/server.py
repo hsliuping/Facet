@@ -2595,6 +2595,55 @@ class App:
                 envs.append(env)
         return cmd, envs
 
+    def _registry_free_models(self, channel: dict) -> list[str]:
+        """Registry ``free_models`` subset of the linked vendor mode.
+
+        Vendors whose free trial covers only part of the data-plane catalog
+        (TokenHub: every language/multimodal model ships a 1M-token free
+        pack, image/video/3D/speech ids do not) declare that subset as
+        ``free_models`` on the mode, so a console catalog pull can keep just
+        the free-and-served ids instead of dumping the whole 140+ catalog
+        onto a free channel.
+        """
+        pid = str(channel.get("provider") or "").strip()
+        mode_key = str(channel.get("mode") or "").strip()
+        if not pid or not mode_key:
+            return []
+        provider = next((p for p in getattr(self, "providers", None) or []
+                         if isinstance(p, dict) and p.get("id") == pid), None)
+        mode = (provider or {}).get("modes", {}).get(mode_key) if provider else None
+        if not isinstance(mode, dict):
+            return []
+        return [str(m).strip() for m in mode.get("free_models") or []
+                if str(m).strip()]
+
+    def _probe_registry_free_models(self, channel: dict,
+                                    free_ids: list[str]) -> dict:
+        """Data-plane /models filtered down to the registry free subset.
+
+        The upstream list stays authoritative for what is actually callable
+        (withdrawn ids never get mapped); the registry supplies which of
+        them the vendor's free trial covers. An empty intersection means
+        the registry list went stale — return the full catalog with a hint
+        instead of silently emptying the channel.
+        """
+        result = probe_models(channel)
+        if not result.get("ok"):
+            return result
+        upstream = {str(m) for m in result.get("models") or []}
+        kept = [m for m in free_ids if m in upstream]
+        if not kept:
+            result["hint"] = ("上游清单里没有注册表登记的免费模型"
+                              "（登记清单可能已过时），已返回全量清单，请手动挑选")
+            return result
+        dropped = max(0, len(upstream) - len(kept))
+        result.update({"source": "free-quota", "models": kept,
+                       "count": len(kept)})
+        if dropped:
+            result["hint"] = (f"已按免费额度过滤：{len(kept)} 个免费模型，"
+                              f"另有 {dropped} 个为计费/视觉生成模型")
+        return result
+
     def _free_quota_credentials(self, channel: dict,
                                 envs: list[str]) -> dict[str, str]:
         """Management-plane credentials for a free-quota CLI pull.
@@ -2637,13 +2686,27 @@ class App:
         defined by the quota the vendor still grants, so the data-plane
         /models dump is never used as a fallback — mapping a billed model
         onto a free channel would silently charge per token. The vendor CLI
-        (bailian: ``bl usage free``) already names callable models, so no
-        family→version resolution is needed.
+        (bailian: ``bl usage free``; tokenhub: ``facet-tokenhub-quota``)
+        already names callable models, so no family→version resolution is
+        needed. Without management credentials a registry free_models
+        subset (TokenHub's documented policy list) keeps the pull working —
+        it is the curated fallback, the CLI is the live source.
         """
         name = channel.get("name")
         creds = self._free_quota_credentials(channel, envs)
         missing = [key for key in envs if not creds.get(key)]
         if missing:
+            free_ids = self._registry_free_models(channel)
+            if free_ids:
+                result = self._probe_registry_free_models(channel, free_ids)
+                if result.get("ok"):
+                    hint = ("未配置管理面凭据（%s），已回退注册表静态免费清单；"
+                            "在渠道凭据区填写 %s 后可按官方政策实时拉取"
+                            % ("、".join(missing), " / ".join(missing)))
+                    if result.get("hint"):
+                        hint = f"{result['hint']}；{hint}"
+                    result["hint"] = hint
+                return result
             return {"ok": False, "name": name,
                     "error": "未配置免费额度查询凭据（%s）" % "、".join(missing),
                     "hint": ("在渠道编辑器的凭据区填写并保存后重试"
@@ -2677,7 +2740,10 @@ class App:
         take their catalog from the vendor's quota source instead of the
         data-plane /models dump: volcengine payg uses the IAM-signed
         management plane, other vendors declaring a registry free_quota_cmd
-        (bailian) run that CLI and keep only models with free quota left.
+        (bailian ``bl usage free``, tokenhub ``facet-tokenhub-quota``) run
+        that CLI and keep only models with free quota left; when the
+        management credentials are missing but the mode declares a
+        ``free_models`` subset, the pull falls back to that curated list.
         The background catalog sweep keeps using the data-plane route.
         """
         if not isinstance(channel, dict):
@@ -2706,6 +2772,8 @@ class App:
             result = self._probe_ark_quota(merged)
         elif allow_ark_quota and (quota_mode := self._free_quota_mode(merged)):
             result = self._probe_free_quota(merged, *quota_mode)
+        elif allow_ark_quota and (free_ids := self._registry_free_models(merged)):
+            result = self._probe_registry_free_models(merged, free_ids)
         else:
             result = probe_models(merged)
         if result.get("ok") and result.get("models"):

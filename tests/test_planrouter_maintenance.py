@@ -1087,6 +1087,40 @@ class ProviderModelsEndpointTests(unittest.TestCase):
         self.assertEqual(saved["modes"]["payg"]["models"],
                          ["doubao-seed-2.1-pro", "kimi-k3"])
 
+    def test_free_models_reconciled_after_trusted_refresh(self):
+        # free_models drifts: a retired id is gone from upstream while a
+        # new chat-capable id joined. Both directions alert; the curated
+        # subset itself is never rewritten by a fetch (policy, not data).
+        mode = self.app.providers[0]["modes"]["payg"]
+        mode["free_models"] = ["doubao-seed-2.1-pro", "retired-free"]
+        self.patch_models_fetch(
+            '{"data":[{"id":"doubao-seed-2.1-pro"},{"id":"hy4-flash"}]}')
+        report = self.refresh()
+        self.assertEqual(mode["models"],
+                         ["doubao-seed-2.1-pro", "hy4-flash"])
+        free_alerts = [a for a in report["alerts"]
+                       if a["kind"] == "provider_free_models"]
+        self.assertEqual(len(free_alerts), 2)
+        self.assertIn("retired-free", free_alerts[0]["message"])
+        self.assertIn("已不在上游清单", free_alerts[0]["message"])
+        self.assertIn("hy4-flash", free_alerts[1]["message"])
+        self.assertIn("疑似免费模型", free_alerts[1]["message"])
+        self.assertEqual(mode["free_models"],
+                         ["doubao-seed-2.1-pro", "retired-free"])
+
+    def test_free_models_reconcile_ignores_non_chat_additions(self):
+        # An image/embedding id joining upstream is not a free-model
+        # candidate; only chat-capable additions prompt a human.
+        mode = self.app.providers[0]["modes"]["payg"]
+        mode["free_models"] = ["doubao-seed-2.1-pro"]
+        self.patch_models_fetch(
+            '{"data":[{"id":"doubao-seed-2.1-pro"},{"id":"doubao-embed-2"}]}')
+        report = self.refresh()
+        # Other modes may raise doc-fetch noise; this mode must not alert.
+        self.assertNotIn("provider_free_models",
+                         [a["kind"] for a in report["alerts"]])
+        self.assertEqual(mode["free_models"], ["doubao-seed-2.1-pro"])
+
     def test_models_url_json_failure_alerts_and_keeps_data(self):
         self.patch_models_fetch("not json at all")
         report = self.refresh()

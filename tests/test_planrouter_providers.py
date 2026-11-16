@@ -151,6 +151,22 @@ class LoadProvidersTests(unittest.TestCase):
         self.assertEqual(merged["modes"]["payg"].get("credential_help"),
                          builtin.get("credential_help"))
 
+    def test_overlay_mode_inherits_free_models(self):
+        """An overlay written before free_models existed must not erase it."""
+        builtin = provider_by_id(pmod.load_providers(None), "hunyuan")
+        expected = builtin["modes"]["payg"].get("free_models")
+        self.assertTrue(expected)
+        overlay = {"id": "hunyuan", "name": "腾讯混元",
+                   "modes": {"payg": {
+                       "label": "按量付费", "protocol": "openai",
+                       "base_url": "https://tokenhub.tencentmaas.com/v1",
+                       "tier": "paid", "models": []}}}
+        (self.config_dir / "providers.json").write_text(
+            json.dumps({"providers": [overlay]}, ensure_ascii=False),
+            encoding="utf-8")
+        merged = provider_by_id(pmod.load_providers(self.config_dir), "hunyuan")
+        self.assertEqual(merged["modes"]["payg"].get("free_models"), expected)
+
     def test_overlay_may_add_new_provider(self):
         extra = {"id": "custom-vendor", "name": "自建网关",
                  "modes": {"payg": {"label": "按量付费", "protocol": "openai",
@@ -331,6 +347,22 @@ class NormalizeVendorTests(unittest.TestCase):
     def test_non_list_models_raises(self):
         entry = valid_vendor()
         entry["modes"]["payg"]["models"] = "acme-large"
+        with self.assertRaises(ValueError):
+            pmod.normalize_vendor(entry)
+
+    def test_free_models_are_normalized(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["free_models"] = ["  hy4-flash ", "", "hy3"]
+        mode = pmod.normalize_vendor(entry)["modes"]["payg"]
+        self.assertEqual(mode["free_models"], ["hy4-flash", "hy3"])
+
+    def test_free_models_absent_stays_absent(self):
+        mode = pmod.normalize_vendor(valid_vendor())["modes"]["payg"]
+        self.assertNotIn("free_models", mode)
+
+    def test_bad_free_models_raises(self):
+        entry = valid_vendor()
+        entry["modes"]["payg"]["free_models"] = "hy4-flash"
         with self.assertRaises(ValueError):
             pmod.normalize_vendor(entry)
 

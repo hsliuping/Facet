@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import time
@@ -312,6 +313,45 @@ class SweepTests(unittest.TestCase):
         captured.clear()
         freealign.run_free_align(app2, "manual", _run_cmd=run)
         self.assertEqual(captured, [(("fake-bl", "usage", "free"), {})])
+
+    def test_missing_credentials_skip_sweep_without_alert(self):
+        # TokenHub channels declare SecretId/SecretKey for the management
+        # CLI; without them the sweep must keep the current mapping and
+        # stay silent instead of alerting on every run.
+        raw = align_config()
+        raw["channels"][0]["provider"] = "hunyuan"
+        raw["channels"][0]["mode"] = "payg"
+        self.app = App(parse_config(raw))
+        self.app.providers = [{
+            "id": "hunyuan", "name": "腾讯混元",
+            "modes": {"payg": {
+                "label": "按量付费", "tier": "paid", "models": [],
+                "free_quota_cmd": ["facet-tokenhub-quota"],
+                "credential_envs": [
+                    {"env": "TENCENT_SECRET_ID", "label": "SecretId"},
+                    {"env": "TENCENT_SECRET_KEY", "label": "SecretKey"}],
+            }},
+        }]
+        ran = []
+
+        def run(cmd, timeout=120, extra_env=None):
+            ran.append(cmd)
+            return json.dumps(bl_rows())
+
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("TENCENT_SECRET_ID", "TENCENT_SECRET_KEY")}
+        with mock.patch.dict(os.environ, env, clear=True):
+            report = freealign.run_free_align(self.app, "manual", _run_cmd=run)
+        self.assertEqual(ran, [])
+        self.assertEqual(report["alerts"], [])
+        self.assertEqual(report["patch"], {})
+        self.assertEqual(report["skipped"],
+                         [{"channel": "百炼免费",
+                           "missing": ["TENCENT_SECRET_ID",
+                                       "TENCENT_SECRET_KEY"]}])
+        # Mapping untouched: the pull-time static subset still applies.
+        channel = self.app.config.channel("百炼免费")
+        self.assertEqual(channel.models.get("old-paid"), "old-paid")
 
     def test_same_command_same_credentials_run_once(self):
         seen = []

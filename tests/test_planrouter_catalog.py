@@ -3,6 +3,7 @@ soft validation applied to routing candidates."""
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -290,6 +291,90 @@ class CatalogAppTests(unittest.TestCase):
         view = self.app.store.catalog_view("plan-a")
         self.assertEqual(view["endpoint"], "registry:volcengine/coding")
         self.assertEqual(self.upstream.seen, [])
+
+    def test_probe_channel_models_filters_registry_free_models(self):
+        self.app.providers = [{
+            "id": "hunyuan", "name": "腾讯混元",
+            "modes": {"payg": {"label": "按量付费", "models": [],
+                               "free_models": ["hy4-flash", "hy3"]}},
+        }]
+        full = {"ok": True, "endpoint": "https://tokenhub.tencentmaas.com/v1/models",
+                "models": ["hy3", "hy-image-v3.5-preview", "hy4-flash",
+                           "kling-video-v4", "hy4-preview"]}
+        with mock.patch("facet.gateway.server.probe_models", return_value=full):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "hunyuan", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "free-quota")
+        self.assertEqual(result["models"], ["hy4-flash", "hy3"])
+        self.assertEqual(result["count"], 2)
+        self.assertIn("已按免费额度过滤", result["hint"])
+        # catalogs persist alphabetically; the pull order is free_ids order
+        self.assertEqual(self.app.store.catalog_view("plan-a")["models"],
+                         ["hy3", "hy4-flash"])
+
+    def test_probe_channel_models_free_subset_stale_falls_back_to_full(self):
+        self.app.providers = [{
+            "id": "hunyuan", "name": "腾讯混元",
+            "modes": {"payg": {"label": "按量付费", "models": [],
+                               "free_models": ["retired-model"]}},
+        }]
+        full = {"ok": True, "endpoint": "https://tokenhub.tencentmaas.com/v1/models",
+                "models": ["hy4-flash", "hy3"]}
+        with mock.patch("facet.gateway.server.probe_models", return_value=full):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "hunyuan", "mode": "payg"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["models"], ["hy4-flash", "hy3"])
+        self.assertNotIn("source", result)
+        self.assertIn("全量清单", result["hint"])
+
+    def test_probe_channel_models_free_quota_without_creds_falls_back(self):
+        # TokenHub now declares a management-plane CLI; a free pull with no
+        # SecretId/SecretKey must fall back to the registry subset (not fail)
+        # and point the user at the credentials that unlock the live list.
+        self.app.providers = [{
+            "id": "hunyuan", "name": "腾讯混元",
+            "modes": {"payg": {
+                "label": "按量付费", "models": [],
+                "free_quota_cmd": ["facet-tokenhub-quota", "--output", "json"],
+                "credential_envs": [
+                    {"env": "TENCENT_SECRET_ID", "label": "SecretId"},
+                    {"env": "TENCENT_SECRET_KEY", "label": "SecretKey"}],
+                "free_models": ["hy4-flash", "hy3"]}},
+        }]
+        full = {"ok": True,
+                "endpoint": "https://tokenhub.tencentmaas.com/v1/models",
+                "models": ["hy3", "hy-image-v3.5-preview", "hy4-flash"]}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("TENCENT_SECRET_ID", "TENCENT_SECRET_KEY")}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("facet.gateway.server.probe_models",
+                           return_value=full):
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "hunyuan", "mode": "payg",
+                 "tier": "free"},
+                allow_ark_quota=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "free-quota")
+        self.assertEqual(result["models"], ["hy4-flash", "hy3"])
+        self.assertIn("未配置管理面凭据", result["hint"])
+        self.assertIn("TENCENT_SECRET_ID", result["hint"])
+
+    def test_probe_channel_models_background_sweep_keeps_full_catalog(self):
+        self.app.providers = [{
+            "id": "hunyuan", "name": "腾讯混元",
+            "modes": {"payg": {"label": "按量付费", "models": [],
+                               "free_models": ["hy4-flash"]}},
+        }]
+        with mock.patch("facet.gateway.server.probe_models", return_value={
+                "ok": True, "endpoint": "e", "models": ["hy4-flash", "video-x"]}) as pm:
+            result = self.app.probe_channel_models(
+                {"name": "plan-a", "provider": "hunyuan", "mode": "payg"})
+        self.assertEqual(result["models"], ["hy4-flash", "video-x"])
+        pm.assert_called_once()
 
     def test_probe_channel_models_payg_without_credentials_refuses(self):
         self.app.providers = [{

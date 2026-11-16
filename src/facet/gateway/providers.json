@@ -263,6 +263,15 @@
     {
       "id": "hunyuan",
       "name": "腾讯元宝（混元）",
+      "credential_help": {
+        "steps": [
+          "用腾讯云主账号登录访问控制 → API 密钥管理 https://console.cloud.tencent.com/cam/capi，点「新建密钥」，得到 SecretId 与 SecretKey（保存后 SecretKey 只显示一次，立即复制保存）。",
+          "如使用子账号：请在子账号上挂只读策略 QcloudTokenHubReadOnlyAccess（或自定义策略允许 tokenhub 的 DescribeModelList），查询免费模型清单只需只读权限，不要挂写权限。",
+          "把 SecretId、SecretKey 分别填入本渠道凭据区并保存（保存后回显 ***）。"
+        ],
+        "permissions": "管理面凭据（SecretId/SecretKey）通过 TC3-HMAC-SHA256 签名调用 TokenHub 控制面 API DescribeModelList，用于拉取当前官方免费体验包覆盖的模型清单；只读即可，无需写权限。",
+        "note": "这里填的是腾讯云 API 密钥（访问控制 → API 密钥管理），不是 TokenHub 控制台创建的 Bearer API Key——后者只能调 /v1/chat/completions，无法签名管理面接口。未配置管理面凭据时，渠道拉取会回退到注册表内置的免费模型静态清单（跟随腾讯政策变化的实时清单需配置凭据）。"
+      },
       "modes": {
         "agent": {
           "label": "Token Plan 套餐",
@@ -272,18 +281,56 @@
           "docs_url": "https://cloud.tencent.com/document/product/1823/130060",
           "keys_url": "https://console.cloud.tencent.com/tokenhub/tokenplan/common",
           "tier": "paid",
-          "models": []
+          "models": [
+            "hy4-flash", "hy4", "hy3", "hy3-preview", "hy3-202608",
+            "tc-code-latest",
+            "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017",
+            "deepseek-v4-pro", "deepseek-v4-pro-0813",
+            "deepseek/deepseek-flash", "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-pro-0813",
+            "glm-5.3", "glm-5.3-flash", "glm-5.2",
+            "kimi-k2.7-code", "kimi-k3",
+            "minimax-m3", "mimo-v2.6-flash"
+          ]
         },
         "payg": {
           "label": "按量付费",
           "protocol": "openai",
-          "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
-          "docs_url": "https://cloud.tencent.com/document/product/1729",
-          "keys_url": "https://console.cloud.tencent.com/hunyuan/start",
-          "models_url": "https://api.hunyuan.cloud.tencent.com/v1/models",
+          "base_url": "https://tokenhub.tencentmaas.com/v1",
+          "docs_url": "https://cloud.tencent.com/document/product/1823/130051",
+          "keys_url": "https://console.cloud.tencent.com/tokenhub/apikey",
+          "models_url": "https://tokenhub.tencentmaas.com/v1/models",
           "tier": "paid",
+          "free_quota_cmd": ["facet-tokenhub-quota", "--output", "json"],
           "free_quota": {"tokens": 1000000, "period": "total"},
-          "models": []
+          "credential_envs": [
+            {"env": "TENCENT_SECRET_ID", "label": "API 密钥 SecretId"},
+            {"env": "TENCENT_SECRET_KEY", "label": "API 密钥 SecretKey"}
+          ],
+          "models": [],
+          "free_models": [
+            "hy4-flash", "hy4", "hy4-preview", "hy3",
+            "hy-mt2-pro", "hy-mt2-plus", "hy-mt2-lite",
+            "hunyuan-role-latest", "hy-role",
+            "deepseek/deepseek-flash", "deepseek-v4-flash-202605",
+            "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-flash",
+            "deepseek-v4-pro-202606", "deepseek/deepseek-v4-pro-0813",
+            "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash-vision-exp",
+            "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash",
+            "deepseek-v4-pro-0813", "deepseek-v4-pro",
+            "glm-5.3-flash", "glm-5.3-flashx", "glm-5.3", "glm-5.2",
+            "glm-5v-turbo",
+            "kimi-k2.7-code-highspeed", "kimi-k3.1-pro-highspeed",
+            "kimi-k3.1-pro", "kimi-k3", "kimi-k2.8-preview",
+            "kimi-k2.7-code", "kimi-k2.6",
+            "minimax-m3.1-flash", "minimax-m3", "minimax-m2.7",
+            "mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5-pro",
+            "step-5-preview",
+            "youtu-vita", "hy-vision-2.0-instruct",
+            "hunyuan-t1-vision-20250916",
+            "hunyuan-turbos-vision-video-20250728"
+          ]
         }
       }
     },

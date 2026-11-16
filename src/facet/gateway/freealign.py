@@ -22,7 +22,7 @@ from datetime import date, datetime
 
 from .ark_quota import resolve_callable_names
 from .core import (AUTO_MODEL, FREE_RESERVE_DEFAULT_TOKENS,
-                   FREE_RESERVE_TOKENS)
+                   FREE_RESERVE_TOKENS, resolve_secret)
 from .probe import probe_models
 
 # `bl usage free` shells out to the vendor CLI and may do network I/O.
@@ -167,6 +167,43 @@ def _creds_for(app, channel) -> dict[str, str]:
     return resolve_creds(channel, app.config)
 
 
+def _mode_envs(app, channel) -> list[str]:
+    """credential_envs declared by the channel's registry mode (may be [])."""
+    pid = str(getattr(channel, "provider", "") or "")
+    mode_key = str(getattr(channel, "mode", "") or "")
+    if not pid or not mode_key:
+        return []
+    provider = next((p for p in getattr(app, "providers", None) or []
+                     if isinstance(p, dict) and p.get("id") == pid), None)
+    mode = (provider or {}).get("modes", {}).get(mode_key) if provider else None
+    if not isinstance(mode, dict):
+        return []
+    out = []
+    for entry in mode.get("credential_envs") or []:
+        env = str((entry.get("env") if isinstance(entry, dict) else entry)
+                  or "").strip()
+        if env:
+            out.append(env)
+    return out
+
+
+def _missing_envs(envs: list[str], creds: dict[str, str]) -> list[str]:
+    """Declared credential envs with no resolvable value anywhere.
+
+    A saved ``***`` placeholder counts as missing (the real secret lives in
+    the config, not in this snapshot); ``env:VAR`` references resolve
+    against the process environment like the console pull does.
+    """
+    out = []
+    for env in envs:
+        value = resolve_secret(str(creds.get(env) or ""))
+        if not value or value == "***":
+            value = os.environ.get(env, "").strip()
+        if not value:
+            out.append(env)
+    return out
+
+
 def _resolve_volcengine_callables(channel, families: list[str]) -> list[str]:
     """Map ark free-quota family names to data-plane callable ids.
 
@@ -233,7 +270,7 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
     the console can show the real numbers instead of the gateway's counter.
     """
     report: dict = {"trigger": trigger, "aligned": [], "alerts": [],
-                    "patch": {}, "quota": {},
+                    "skipped": [], "patch": {}, "quota": {},
                     "quota_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     runner = _run_cmd or run_vendor_cmd
     results: dict[tuple, list[dict] | None] = {}
@@ -244,6 +281,16 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
         if not cmd:
             continue
         creds = _creds_for(app, channel)
+        missing = _missing_envs(_mode_envs(app, channel), creds)
+        if missing:
+            # No management credentials: the channel keeps its current
+            # mapping (for TokenHub that is the registry free_models
+            # subset applied at pull time). Skip silently — an alert here
+            # would nag every sweep for a configuration the user may
+            # simply not need.
+            report["skipped"].append({"channel": channel.name,
+                                      "missing": missing})
+            continue
         key = (tuple(cmd), tuple(sorted(creds.items())))
         if key not in results:
             try:

@@ -48,7 +48,8 @@ INHERIT_IF_EMPTY = ("keys_url", "docs_url")
 # CLI knowledge), so an older overlay entry written before the field existed
 # must not erase it. credential_help is the vendor-level AK/SK walkthrough.
 INHERIT_LISTS = ("free_quota_cmd", "credential_envs", "credential_help",
-                 "free_quota", "free_limits", "free_limit_presets")
+                 "free_quota", "free_limits", "free_limit_presets",
+                 "free_models")
 
 
 def _credential_help(value, where: str) -> dict | None:
@@ -213,6 +214,13 @@ def normalize_vendor(entry) -> dict:
         if not isinstance(models_raw, list):
             raise ValueError(f"模式 {key} 的模型清单必须是字符串数组")
         models = [str(item).strip() for item in models_raw if str(item).strip()]
+        free_models_raw = mode.get("free_models")
+        free_models: list[str] | None = None
+        if free_models_raw is not None:
+            if not isinstance(free_models_raw, list):
+                raise ValueError(f"模式 {key} 的 free_models 必须是字符串数组")
+            free_models = [str(item).strip() for item in free_models_raw
+                           if str(item).strip()]
         cmd_raw = mode.get("free_quota_cmd")
         quota_cmd: list[str] = []
         if cmd_raw:
@@ -260,6 +268,8 @@ def normalize_vendor(entry) -> dict:
             "credential_help": mode_help,
             "models": models,
         }
+        if free_models is not None:
+            modes[key]["free_models"] = free_models
     # Vendor-level walkthrough (declared once) expands into modes that lack
     # their own, so overlay entries saved after a console edit stay
     # self-contained.
