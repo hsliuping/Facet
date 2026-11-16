@@ -10,7 +10,7 @@
 本手册把注册入口、Key 位置、免费额度规则聚合在一起，照着点一遍即可。Facet 还会**每日自动对齐**
 哪些模型还有免费额度（见 [4.3 百炼](#43-阿里云百炼) 的 `usage free` 定时任务），帮您把白嫖额度一直用满。
 
-真正「匿名免注册」现在只剩极少数端点（且限速极低，见 [3.1](#31-pollinations免注册免-key)），
+真正「匿名免注册」现在几乎绝迹（多数平台都以注册送免费额度为前提），
 其余各家**注册是拿免费额度的前提**，不是收费门槛。
 
 密钥属于敏感信息：截图前请**遮住或截掉完整 Key**，只保留开头几个字符（如 `nvapi-…`）。
@@ -61,85 +61,66 @@
 | 1 | 火山引擎方舟 | ✅ 各模型约50万tokens/模型 | payg + coding_plan + agent_plan | 一致；遗漏企业版Coding Plan |
 | 2 | 智谱 GLM | ✅ 注册送2000万tokens + Flash系列免费 | payg + coding_plan | payg应加免费标注 |
 | 3 | 阿里云百炼 | ✅ 新人每模型100万tokens(90天) | payg + token_plan | 一致；遗漏旧版Coding Plan |
-| 4 | 魔搭 ModelScope | ✅ 纯免费(魔粒200/日) | 无 | 免费额度应为200魔粒/日非250 |
+| 4 | 魔搭 ModelScope | ✅ 魔粒免费（登录 200/日） | 无 | 免费靠魔粒抵扣（0.5/1/2 粒/次，随模型）；完善邮箱即可用，无需阿里云实名 |
 | 5 | 小米 MiMo | ✅ 新人¥10体验金(40天) | payg + token_plan | payg应加免费标注 |
 | 6 | Kimi (月之暗面) | ✅ 新人15元代金券(3个月) | payg（API无订阅） | payg应加免费标注 |
 | 7 | DeepSeek | ❌ 无明确免费额度 | payg（峰谷计价） | 一致 |
 | 8 | 腾讯混元 | ✅ 开通送100万tokens(1年) | payg + token_plan(TokenHub) | **已补 token_plan 模式**：Token Plan 28/78/238/468 元/月；payg 加免费额度 100 万 tokens/1 年 |
-| 9 | 百度千帆 | ✅ 17模型各100万tokens(3个月)+¥20券 | payg + token_plan + 算力包 | **已补 token_plan 模式**；Token Plan 个人版 Mini/Lite/Pro/Max（首购 4.9 元起）；payg 加免费额度 17×100 万 tokens |
+| 9 | 百度千帆 | ⚠️ 新人免费额度以控制台领取页为准 | payg + token_plan + 算力包 | **已补 token_plan 模式**；Token Plan 个人版五档 Mini/Lite/Standard/Pro/Max（Mini ¥4.9 为首购限时价，Standard ¥49.9）；免费额度口径以官方活动页为准 |
 | 10 | Z.AI 智谱海外 | ✅ GLM-4.7-Flash等完全免费 | payg + coding_plan($18起) | **已补 coding_plan 模式**；Coding Plan Lite $18/Pro $80/Max $168/月；payg 加免费模型标注（GLM-4.7-Flash/4.5-Flash/4.6V-Flash 完全免费，其余按量计费） |
 | 11 | Grok xAI | ❌ 无标准免费层（活动:数据共享换$150/月） | payg | 基本一致 |
 | 12 | OpenAI | ❌ 新账号无赠送credits | payg（订阅不含API） | 一致 |
 | 13 | Anthropic | ⚠️ 一次性$5试用 | payg（Max/Ultra订阅送API credits） | 一致；可加免费note |
-| 14 | OpenCode | ✅ 12+免费模型 | payg + agent_plan(Go订阅) | 一致 |
-| 15 | Command Code | ✅ 免费模型1000请求/天 | 套餐订阅 + 按量充值 | **已补按量充值形态 + 免费模型标注** |
-| 16 | Pollinations | ✅ 匿名1次/15秒，Seed 1次/5秒 | 付费档Flower/Nectar | 一致 |
-| 17 | LLM7 | ✅ 60次/分·250/时·10万tokens/24h | Pro $12/月订阅 | **已补Pro订阅形态** |
-| 18 | OVHcloud AI Endpoints | ⚠️ 非真免费层（匿名2rpm限速试用） | payg（按token后付） | tier标注需修正 |
-| 19 | NVIDIA NIM | ✅ 1000 credits(个人)/5000(企业) | ❌ 官方无按量付费通道 | free准确；无付费选项 |
-| 20 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
-| 21 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
+| 14 | OpenCode | ✅ 12+免费模型 | payg + agent_plan(Go订阅) | Go $10/月、Go Plus $40/月、Go Teams $20/人/月；v2 文档含 console.opencode.ai/inference 域名变体 |
+| 15 | Command Code | ✅ 免费模型1000请求/天 | 套餐订阅（Provider $15/月，含 $15 额度按量扣） | 免费模型随 agent 套餐 models 清单下发（tier: free） |
+| 16 | LLM7 | ✅ 60次/分·250/时·10万tokens/24h | Pro $12/月订阅 | Pro $12/月 为官网订阅档，注册表仅登记免费 payg 模式（见 6.3） |
+| 17 | NVIDIA NIM | ✅ 免费层=速率限制（约 40 RPM，控制台右上角显示） | ❌ 无按量付费通道；提额需付费部署/自托管 | 免费层是速率限制非 credits；10,000 请求/日为页面嵌入值、非官方承诺 |
+| 18 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
+| 19 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
 
 ---
 
 ## 三、免费渠道（零成本起步）
 
-### 3.1 Pollinations——免注册免 Key
-
-**官方入口**：[https://pollinations.ai](https://pollinations.ai)
-
-**使用方式**：
-- **匿名调用**：无需注册，直接通过 HTTP 请求访问基础模型。
-  - 基础模型：1 次/15 秒（速率限制较低，适合轻量级试用）。
-  - Seed 模型：免费注册 1 次/5 秒，获取后可持续使用。
-- **注册/登录**：可选，登录后可获得 slightly higher rate limits 和 额外 Seed 配额。
-- **关键点**：完全不需要 API Key，直接在代理或网关中使用对应的 `model` 名称即可。
-
-📷 **截图 3-1** ｜ 拍什么：Pollinations 官网首页或 API 文档页（打码） ｜ 存为：`pollinations-01-home.png`
-
-**渠道参数**（在 Facet 中配置时）：
-
-| 字段 | 值 |
-|---|---|
-| 协议 | `openai`（兼容 OpenAI 格式的请求） |
-| 端点 | `https://api.pollinations.ai/v1`（或根据实际部署地址） |
-| 模式 | `payg`（按量），但**免费额度由平台直接提供**，不消耗用户 Key 余额 |
-| free_limits | `rpm: 12`（约 1 次/5秒），`rpd: 约 1700/日`，`note: 匿名 1次/15秒，Seed 1次/5秒` |
-
-**常见模型**：`pollinations/base-model`、`pollinations/v3` 等（以官方文档为准）。
-
-**适用场景**：极速原型验证、不想暴露 Key 的快速测试、教育演示等。
-
----
-
-### 3.2 NVIDIA NIM——免费层
+### 3.1 NVIDIA NIM——免费层
 
 **官方入口**：[https://build.nvidia.com/](https://build.nvidia.com/)
 
 **使用方式**：
-- **个人邮箱注册**：1,000 credits（1 credit ≈ 1 次请求），约 40 RPM，无需信用卡。
-- **企业邮箱注册**：5,000 credits，同等使用量。
-- ** credits 使用**：每次请求扣除 1 credit，用于访问 NIM 管理的模型（如 Llama 3.1, Nemotron 等）。
-- **官方声明**：**无按量付费、无包月通道**。生产环境需购买 NIM 许可 ($4,500/GPU/年) 或使用伙伴端点。
+- **速率限制而非余额**：登录 [build.nvidia.com](https://build.nvidia.com)，导航栏右上角显示账号的最大速率限制（例如 "Up to 40 RPM"），不是余额。官方 FAQ 原话："Your personal rate limit is shown in the top-right of the dashboard"。
+- **请求速率**：多数模型最高 40 RPM，无 per-token billing（官方 FAQ 公开口径）。
+- **每日上限**：10,000 requests/day——存在于页面嵌入 JSON，**非官方承诺值**，dashboard 未必显示。
+- **每模型具体值**：不公布，随模型、用途、当前总流量浮动；版主明确 "The rate limits vary for each model, and we do not publish those"。
+- **试用期限**：无时间限制（"The trial period is not limited by a time period"）。
+- **提额**：免费档无官方通道——想提高只能付费部署或自托管 NIM。
 
-📷 **截图 3-2** ｜ 拍什么：build.nvidia.com 注册页显示 credit 数量（打码） ｜ 存为：`nvidia-nim-01-signup.png`
+**步骤**
+
+1. 打开 [build.nvidia.com](https://build.nvidia.com)，点「创建账户」用邮箱注册；
+   ![NVIDIA 创建账户页（邮箱已打码）](images/api-key-guide/nvidia-01-signup.png)
+2. 首次生成 Key 前需验证手机号（一次性 OTP），官方提示验证通过后账号才能生成 API Key；
+   ![NVIDIA 手机号验证弹窗](images/api-key-guide/nvidia-02-signup.png)
+3. 登录后展开右上角账号菜单——这里就是官方 FAQ 说的「速率限制显示位置」（示例账号显示 "Up to 40 rpm"）；菜单内点 **API Keys** 进入密钥页；
+   ![NVIDIA 账号菜单：右上角速率限制与 API Keys 入口](images/api-key-guide/nvidia-02-keys-page.png)
+4. 点 **Generate API Key**，填 Key 名称与有效期（默认 12 months），生成后立即复制保存。
+   ![NVIDIA Generate API Key 弹窗](images/api-key-guide/nvidia-03-key-created.png)
 
 **渠道参数**（在 Facet 中配置时）：
 
 | 字段 | 值 |
 |---|---|
 | 协议 | `openai` |
-| 端点 | `https://api.nvidia.com/v1`（实际使用需通过 NIM 网关） |
-| 模式 | `free`（免费层， credits 耗尽后不可继续，需重新注册或升级） |
-| free_quota | `tokens: 1000（个人）/5000（企业），period: "total"` |
+| 端点 | `https://integrate.api.nvidia.com/v1` |
+| 模式 | `free`（免费层按速率限制运行，无 per-token 计费；限额随模型浮动，免费档无提额通道） |
+| free_limits | `rpm: 40（官方口径上限）+ note：每日 10,000 请求为页面嵌入值、非官方承诺；试用无时间限制` |
 
-**常见模型**：`nvidia/llama-3.1-8b`, `nvidia/nemotron`, `nvidia/mistral` 等。
+**常见模型**：`nvidia/nemotron-3-ultra-550b-a55b`, `nvidia/nemotron-3-super-120b-a12b`, `nvidia/mistral` 等。
 
 **适用场景**：个人开发试用、快速原型验证、不需要大规模生产的场景。
 
 ---
 
-### 3.3 OpenRouter——免费池
+### 3.2 OpenRouter——免费池
 
 **官方入口**：[https://openrouter.ai](https://openrouter.ai)
 
@@ -150,7 +131,16 @@
   - 同时共享率限制：20 RPM（每分钟请求数）
 - **付费模型**：预付 credits 按量（pass-through 原价），Standard 档购值收 5.5% 手续费（Business 8%），BYOK 每月 $25,000 推理额免平台费。
 
-📷 **截图 3-3** ｜ 拍什么：openrouter.ai 仪表盘显示余额与每日配额（打码） ｜ 存为：`openrouter-01-dashboard.png`
+**步骤**
+
+1. 打开 [openrouter.ai](https://openrouter.ai)，点 **Get API Key** 注册登录；
+   ![OpenRouter 官网首页：Get API Key 入口](images/api-key-guide/openrouter-01.png)
+2. 进入 **Activity** 仪表盘，可查看消费（Total spend）、请求量、token 用量与缓存命中率等汇总；
+   ![OpenRouter Activity 仪表盘](images/api-key-guide/openrouter-01-dashboard.png)
+3. **Models** 页搜「free」筛出当前所有 `:free` 免费模型（输入输出均 $0/M tokens），示例：NVIDIA Nemotron 3 Ultra (free)、Nemotron 3.5 Super VL (free)、Baidu ERNIE-5.5-Flash-Preview (free)；
+   ![OpenRouter Models 页搜索 free 模型](images/api-key-guide/openrouter-02-free.png)
+4. 侧栏 **Keys** → **New key** 创建 API Key（可为单 Key 设 Key limit 消费上限），创建后立即复制。
+   ![OpenRouter API keys 页：侧栏 Keys → New key](images/api-key-guide/openrouter-03-keys.png)
 
 **渠道参数**（在 Facet 中配置时）：
 
@@ -161,7 +151,7 @@
 | 模式 | `payg`（预付 credits） |
 | free_limits | `note: :free 模型 50→1000次/天（余额<$10→50/≥$10累充1000），20 RPM` |
 
-**常见免费模型**：`openrouter/anthropic/claude-3-haiku`, `openrouter/mistral/mistral-large`, `openrouter/google/gemini-flash` 等（随平台更新而变化）。
+**常见免费模型**：`nvidia/nemotron-3.5-lightning:free`, `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-ultra-550b-a55b` 等（随平台更新而变化）。
 
 **适用场景**：希望同时使用多家厂家模型、免费额度有需求的开发者、跨平台兼容性要求。
 
@@ -183,14 +173,20 @@
 
 | 形态 | 说明 | 价格 |
 |---|---|---|
-| **按量付费** | 计费：doubao-seed-1.6 输入 0.6~2.4 元/百万 tokens | - |
-| **Coding Plan 个人版** | Lite 40 元/月、Pro 200 元/月（新用户 Lite 首两月 9.9 元） | - |
+| **按量付费** | 计费：doubao-seed-1.6 输入 0.8~2.4 元/百万 tokens | - |
+| **Coding Plan 个人版** | Lite 40 元/月、Pro 200 元/月（新用户首购特惠已于 2026-03-17 暂停） | - |
 | **Coding Plan 企业版** | Team Lite 120 / Team Pro 600 元/月 | - |
 | **Agent Plan 个人版** | Small 40 / Medium 200 / Large 500 / Max 1000 元 | - |
 
 **渠道参数**：协议 `openai`，端点 `https://ark.cn-beijing.volces.com/api/v3`。
 
 📷 **截图 4-2** ｜ 拍取 Coding/Agent 套餐页（打码） ｜ 存为：`volcengine-02-plans.png`
+
+https://console.volcengine.com/iam/identitymanage/user
+创建用户，授与只读权限，用来生成ak和sk，获取token免费额度剩余情况，不要用主帐号
+
+https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan?projectName=default
+agent-plan的链接，进入可以管理agent-plan
 
 **模式说明**：
 
@@ -251,7 +247,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 | **GLM Coding Plan**（积分制） | Lite 118 / Pro 538 / Max 1078 元/月（老用户保留 49/149 元） | - |
 | **Coding 团队版** | 2 席位起购 | - |
 
-**渠道参数**：协议 `openai`，端点 `https://bigmodel.cn/api/v1`。
+**渠道参数**：协议 `openai`，端点 `https://open.bigmodel.cn/api/paas/v4`。
 
 📷 **截图 4-4** ｜ 拍取 Coding Plan 页（打码） ｜ 存为：`zhipu-02-coding-plan.png`
 
@@ -290,7 +286,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 | **Token Plan 团队版** | 150 元/坐席/月 | - |
 | **Coding Plan（旧版）** | 仅剩 Pro 200 元/月，停售过渡中 | - |
 
-**渠道参数**：协议 `openai`，端点 `https://api.bailian.aliyun.com/api/v1`。
+**渠道参数**：协议 `openai`，端点 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
 
 📷 **截图 4-6** ｜ 拍取 Token Plan 页（打码） ｜ 存为：`bailian-02-token-plan.png`
 
@@ -316,8 +312,8 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 **官方入口**：[https://modelscope.cn](https://modelscope.cn)
 
 **免费额度**：
-- **每日登录领 200 魔粒**（24h 有效，约 200–500 次调用，非 250/日）；
-- **API-Inference 免费开放**（非商用，需绑定阿里云实名）；
+- **每日登录领 200 魔粒**（24h 有效，约 200–400 次调用）；
+- **API-Inference 按魔粒计费**（0.5 / 1 / 2 粒/次，随模型浮动），**完善邮箱即可使用**，无需绑定阿里云实名；
 - 魔粒不可购买，官方明示商用请用商业平台 API。
 
 **步骤**
@@ -340,14 +336,12 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 **模式说明**：
 
-- 免费层：`tier: "free"`，`free_limits: {rpm: 约 12, rpd: 约 1700/日, note: 每日登录领 200 魔粒（24h 有效）}`；
+- 免费层：`tier: "free"`，`free_limits: {rpd: 250, note: 每日登录领 200 魔粒（约 200–400 次调用），当日有效}`（与注册表一致）；
 - 无付费套餐，仅供非商用免费研究。
 
 **常见模型**：`qwen-2-57b-a3b`, `chatglm3-6b`, `stable-diffusion` 等。
 
 **适用场景**：学术研究、个人项目、非商业实验等。
-
-**⚠️ 备注**：手册第 3.7 章已更新为“每日登录领 200 魔粒（约 200–500 次调用）”。
 
 ---
 
@@ -446,12 +440,12 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 
 📷 **截图 4-11** ｜ 拍取定价页（打码） ｜ 存为：`deepseek-01-pricing.png`
 
-**付费形态**：**仅按量付费**（峰谷计价，谷半价）：
+**付费形态**：**仅按量付费**（峰谷计价，峰时 = 谷时 ×2）：
 
 | 形态 | 说明 | 价格 |
 |---|---|---|
-| **deepseek-flash** | 谷输入 $0.15/输出 $0.3，峰输入 $0.6/输出 $1.2 每百万 | - |
-| **deepseek-coder** | 同等峰谷计价 | - |
+| **deepseek-flash** | 谷输入 $0.15/输出 $0.6，峰输入 $0.3/输出 $1.2 每百万 | - |
+| **deepseek-v4-pro** | 同等峰谷计价（具体以官网定价页为准） | - |
 
 **渠道参数**：协议 `openai`，端点 `https://api.deepseek.com/v1`。
 
@@ -462,7 +456,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 - `payg`：按量付费，`tier: "paid"`，无免费额度（活动性赠送除外）
 - 与注册表一致：无 Token Plan / Agent Plan 等套餐
 
-**适用场景**：代码生成、长文本处理、多模odal 对话等。
+**适用场景**：代码生成、长文本处理、多模态对话等。
 
 **⚠️ 备注**：注册表无需修改，与官网保持一致。
 
@@ -486,9 +480,9 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 | **预付费资源包** | 如 1 万点 100 元 | - |
 | **TokenHub Token Plan 包月** | Hy Token Plan 28/78/238/468 元/月；通用 Token Plan 39/99/299/599 元/月 | - |
 
-**渠道参数**：
-- `openai` 协议，端点 `https://ark.cn-beijing.volces.com/api/plan/v3`（TokenPlan 入口）
-- `anthropic` 协议，端点 `https://ark.cn-beijing.volces.com/api/plan`（Anthropic 协议渠道）
+**渠道参数**（与注册表一致）：
+- `agent`（Token Plan）：`openai` 协议，端点 `https://tokenhub.tencentmaas.com/plan/v3`
+- `payg`（按量付费）：`openai` 协议，端点 `https://api.hunyuan.cloud.tencent.com/v1`
 
 📷 **截图 4-14** ｜ 拍取 Token Plan 与 Agent 套餐页（打码） ｜ 存为：`hunyuan-02-plans.png`
 
@@ -569,6 +563,42 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 ---
 
+### 4.10 百度千帆
+
+**官方入口**：[https://cloud.baidu.com/product/qianfan](https://cloud.baidu.com/product/qianfan)（控制台 [console.bce.baidu.com](https://console.bce.baidu.com)）
+
+**免费**：⚠️ 新人免费额度以控制台「领取页」为准——2026-11 复核时官网未公开固定口径（注册表历史 note 中「17 个指定模型各 100 万 tokens + 实名送 ¥20 券」为宣传语，已同步软化）。
+
+**付费形态**：
+
+| 形态 | 说明 | 价格 |
+|---|---|---|
+| **按量付费（PAYG）** | IAM API Key，按实际 token 计费 | 以官网定价页为准 |
+| **Token Plan** | 订阅制，按窗口限流 | 个人版五档 Mini / Lite / Standard / Pro / Max（Mini ¥4.9 为首购限时价，Standard ¥49.9） |
+| **算力包** | 专属部署算力单元 | 4500~7500 元/月起 |
+
+**渠道参数**（与注册表一致）：
+
+| 模式 | 协议 | 端点 | tier |
+|---|---|---|---|
+| `payg` | `openai` | `https://qianfan.baidubce.com/v2`（`/v2/models` 支撑模型自动同步） | `free`（新人免费额度以领取页为准） |
+| `agent`（Token Plan） | `openai` | `https://qianfan.baidubce.com/v2/tokenplan/personal` | `paid` |
+
+📷 **截图 4-16** ｜ 拍什么：IAM API Key 列表页（Key 打码） ｜ 存为：`qianfan-01-apikey.png`
+
+**模式说明**：
+
+- `payg`：`tier: "free"`，登记 `free_quota` 100 万 tokens；实际到账额度以控制台领取页为准
+- `agent`：Token Plan 套餐，`tier: "paid"`；Key 用 Token Plan 订阅页颁发的 Key
+
+**常见模型**（Token Plan 登记）：`deepseek-v4.1-flash`、`deepseek-v4-pro-0813`、`glm-5.3`；按量端点模型以 `/v2/models` 同步结果为准。
+
+**适用场景**：需要 DeepSeek / GLM 等第三方模型的国内合规接入，或已实名的百度智能云主体。
+
+**⚠️ 备注**：`agent` 端点为 Token Plan 个人版路径（`tokenplan/personal`），订阅档位以控制台为准。
+
+---
+
 ## 五、海外按量付费厂家
 
 ### 5.1 Anthropic 直连
@@ -579,14 +609,14 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 1. 打开 [console.anthropic.com](https://console.anthropic.com) 注册（邮箱验证，部分情况要求手机验证）；
 2. **预充值**：Billing 页买 credit（最低 $5）；
-3. **一次性 $5 试用金**：完成手机验证后，Console 余额会自动发放 $5 试用金，有效期 30 天，可用于按量调用；
+3. **一次性 $5 试用金**：完成手机验证后，Console 余额会自动发放 $5 试用金（有效期以官方页面为准），可用于按量调用；
 4. **API Keys**（直链：[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)）→ **Create Key**（`sk-ant-` 开头）。
 
    📷 **截图 5-1** ｜ 拍什么：API Keys 页（Key 打码） ｜ 存为：`anthropic-01-apikeys.png`
 
 **渠道参数**：协议 `anthropic`，端点 `https://api.anthropic.com`。国内直连不通时配 `proxy`。
 
-💡 **提示**：Max/Ultra/Team 订阅后，每月会向 Console 送送额度 API credits（$100/$200/至$500），若需持续使用建议订阅对应方案。
+💡 **提示**：Max/Ultra/Team 订阅后，每月会向 Console 附赠 API credits（$100/$200/至$500），若需持续使用建议订阅对应方案。
 
 ---
 
@@ -630,6 +660,8 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 1. 打开 [z.ai](https://z.ai) 注册登录；
 2. 进入 **API Keys**（直链：[z.ai/manage-api-key/apikey-keys](https://z.ai/manage-api-key/apikey-keys)）→ 创建并复制 API Key。
 
+   📷 **截图 5-4** ｜ 拍什么：z.ai API Keys 页（Key 打码） ｜ 存为：`zai-01-apikeys.png`
+
 **渠道参数**：协议 `openai`，端点 `https://api.z.ai/api/paas/v4`。
 
 **模型套餐信息**（同一账号可同时使用）：
@@ -650,7 +682,7 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 **步骤**
 
 1. 打开 [opencode.ai](https://opencode.ai) 注册登录；
-2. **Console**（[opencode.ai/console](https://opencode.ai/console)）→ 订阅 **Go**（$10/月，另有 Plus/Teams）并绑定支付方式；
+2. **Console**（[opencode.ai/console](https://opencode.ai/console)）→ 订阅 **Go**（$10/月；另有 Go Plus $40/月、Go Teams $20/人/月）并绑定支付方式；
 3. Console 内直接**复制 API Key**。
 
    📷 **截图 6-1** ｜ 拍什么：Console 概览页显示订阅状态与 Key（打码） ｜ 存为：`opencode-01-console.png`
@@ -668,7 +700,7 @@ Facet 已接入 Go 套餐用量查询，在「套餐订阅」页和仪表板「�
 
 | 项目 | 说明 |
 |---|---|
-| 档位 | Go（$10/月）、Plus、Teams |
+| 档位 | Go（$10/月）、Go Plus（$40/月）、Go Teams（$20/人/月） |
 | 用量窗口 | **滚动 5 小时窗口**（rolling）、**周窗口**（weekly）、**月窗口**（monthly） |
 | 余量口径 | 百分比（已用百分比） |
 | 重置时间 | ISO-8601 时间戳（厂家返回 `resetsAt`，Facet 自动转 epoch 秒） |
@@ -696,11 +728,42 @@ Facet 已接入 Go 套餐用量查询，在「套餐订阅」页和仪表板「�
 
 **模式说明**：
 
-- `payg`：按量付费，`free_quota` 中默认包含 **3 免费模型**：glyph-cluster:free（1000 requests/天）、crouton-alpha（1000 requests/天）、inkling-2-small:free（200 requests/天），无需额外配置即可使用
-- `agent`：套餐订阅，Provider $15/月 + $1.01 手续费，含 $15 永不过期额度，按量扣
+- `agent`：套餐订阅（注册表登记的唯一模式，`tier: "free"`），Provider $15/月 + $1.01 手续费，含 $15 永不过期额度，按量扣；免费模型随套餐 `models` 清单下发（如 glyph-cluster:free 1000 requests/天、crouton-alpha 1000 requests/天、inkling-2-small:free 200 requests/天），无需额外配置即可使用
 - `coding` / `coding_plan`：可选，视用户需求
 
-**⚠️ 备注**：CommandCode 已在 providers.json 中补全 `payg` mode + 免费模型 `free_limits` note（见前文更新记录）。
+**⚠️ 备注**：注册表仅登记 `agent` 模式（免费模型在 agent 的 models 清单中），无独立 `payg` mode。
+
+---
+
+### 6.3 LLM7
+
+**官方入口**：[https://docs.llm7.io](https://docs.llm7.io)（控制台 [dash.llm7.io](https://dash.llm7.io)）
+
+**免费层**（注册表 `payg` 模式，label「免费匿名」，`tier: "free"`）：
+
+| 限额 | 值 |
+|---|---|
+| 请求频率 | 60 次/分（turbo 模型约 1 次/秒） |
+| 每小时 | 250 次/时 |
+| 24 小时 | 10 万 tokens/24h |
+
+**付费**：Pro $12/月——25 次/秒、1500 次/分、15000 次/时，解锁 pro + turbo 模型；超出部分按账户余额扣费。
+
+**步骤**
+
+1. 打开 [dash.llm7.io](https://dash.llm7.io) 注册登录；
+2. 控制台创建 API Key 并复制；
+3. 填入 Facet：协议 `openai`，端点 `https://api.llm7.io/v1`，模式选「按量付费（免费匿名）」。
+
+   📷 **截图 6-4** ｜ 拍什么：LLM7 控制台 Key 页（打码） ｜ 存为：`llm7-01-keys.png`
+
+**渠道参数**（与注册表一致）：协议 `openai`，端点 `https://api.llm7.io/v1`（`/v1/models` 支撑模型自动同步）。
+
+**常见模型**：`DeepSeek-V4-Flash-0731`、`deepseek-v4-pro`、`glm-5.3`、`kimi-k3.1-pro`、`claude-sonnet-5`、`grok-4.7` 等聚合清单，以 `/v1/models` 同步结果为准。
+
+**适用场景**：零成本起步、聚合多厂家模型试跑、给免费档当兜底渠道。
+
+**⚠️ 备注**：注册表仅登记 `payg` 模式（免费匿名层）；官网 Pro $12/月 订阅未在注册表登记，需要更高限流时按官网 Pro 档自建渠道（同一端点 + Pro Key）。
 
 ---
 
@@ -738,7 +801,7 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 
 - 魔搭 ModelScope（每日 200 魔粒）
 - 火山引擎方舟（剩余免费 tokens）
-- 百度千帆（剩余 17 模型免费额度）
+- 百度千帆（新人免费额度，以领取页为准）
 - 智谱 GLM（Flash 系列免费）
 - 以及其他已标注 free_quota/free_limits 的厂家
 
@@ -780,10 +843,9 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 
 | 日期 | 修订人 | 说明 |
 |---|---|---|
-| 2026-11-13 | - | 初版发布，基于 20 家厂家官网核实 |
+| 2026-11-13 | - | 初版发布，基于 19 家厂家官网核实 |
 | 2026-11-13 | - | 更新魔粒每日领取数：250 → 200 |
-| 2026-11-13 | - | 更新 OVHcloud 免费层表述：匿名试用（2 RPM 限速） |
-| 2026-11-13 | - | 新增 LLM7 Pro $12/月 订阅说明 |
+| 2026-11-13 | - | 计划新增 LLM7 Pro $12/月 订阅说明（当时未写入正文，2026-11-16 补入 6.3 章节并订正本行） |
 | 2026-11-13 | - | 新增 CommandCode 免费模型 note |
 | 2026-11-13 | - | 新增 Z.AI Coding Plan 订阅信息 |
 | 2026-11-13 | - | 新增 Anthropic $5 试用金说明 |
@@ -791,3 +853,5 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-14 | - | 新增 4.9 MiniMax 章节（按量 + Token Plan，双 Key 体系，用量查询已接入） |
 | 2026-11-14 | - | 4.6 Kimi 补「套餐使用说明」：余额接口已接入，端点对齐注册表 api.moonshot.cn/v1 |
 | 2026-11-14 | - | 新增「八、常见问题」：窗口用尽的精确冷却与自动恢复、显式模型全量用尽的两层兜底、显式模型的计费优先顺序 |
+| 2026-11-15 | - | 修正 NVIDIA NIM 口径：免费层是速率限制（多数模型约 40 RPM）而非 credits；10,000 请求/日非官方承诺；端点对齐注册表 integrate.api.nvidia.com/v1 |
+| 2026-11-16 | - | 全文口径核对：修正混元/智谱/百炼端点（混元此前误写火山方舟域名）；DeepSeek 峰谷价互换与在售模型、火山 doubao-seed-1.6 输入价与新用户特惠（已暂停）、魔搭免费口径（魔粒计费、完善邮箱即可，无需阿里云实名）、千帆 Token Plan 五档与免费额度软化、OpenCode 三档价、Anthropic 试用金有效期；CommandCode 模式说明与注册表对齐（仅 agent 模式）；新增 4.10 百度千帆、6.3 LLM7 章节；订正 2026-11-13 LLM7 修订记录（原文声称已新增说明但当时未落文）；3.1 NVIDIA、3.2 OpenRouter 截图占位替换为真实截图（各 4 张），5.4 Z.AI 补截图占位 |
