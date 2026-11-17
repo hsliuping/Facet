@@ -308,7 +308,7 @@ Facet 已接入火山套餐用量查询，在「套餐订阅」页和仪表板�
 #### 套餐使用说明
 
 - **按量付费（payg）**：Facet 已接入账户余额查询，渠道配置页渠道卡「厂家用量」行显示「余额 / 充值 / 累计消费」（接口 `GET /api/biz/account/query-customer-account-report`，用渠道 key 直查）。
-- **GLM Coding Plan（积分制）**：待接入套餐用量查询。控制台「Coding Plan → 用量统计」页可直接人工查看套餐消耗（见上方 zhipu-05 截图）；需调研项：Coding Plan 的积分消耗窗口（日/周/月）、积分余额接口、可用模型清单（待官网核实）。
+- **GLM Coding Plan（积分制）**：已接入套餐用量查询，订阅行（Coding Plan 渠道）展示积分用量窗口，复用渠道已配置的 `sk-` Key（`GET /api/biz/coding-plan/query-usage`）。控制台「Coding Plan → 用量统计」页仍可人工核对；接口响应结构按官网接口模式推断，首次以真实 Key 跑通如有差异以实测为准。
 
 ---
 
@@ -382,8 +382,8 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 #### 套餐使用说明
 
 - **免费额度使用量查询（已接入）**：RAM 子用户 AK/SK 完成上述 RAM 授权 + 业务空间成员双重授权后，Facet 经 `bl usage free` 每日定时对齐各模型剩余免费额度，额度用尽的模型自动移出免费渠道并向用户告警。
-- **Token Plan（个人/团队版）**：待接入套餐用量查询。需调研项：Token Plan 的额度窗口（日/月）、用量查询接口、各档位可用模型清单（待官网核实）。
-- **按量付费**：余额/欠费查询待接入（需确认百炼是否提供 API key 可查的余额接口）。
+- **Token Plan（个人/团队版）（已接入）**：套餐用量走本机 **bl CLI** 的控制台会话（`bl usage token-plan`），**无需额外密钥**——先 `npm i -g bailian-cli` 安装，再执行 `bl auth login --console` 登录并保持会话有效（过期会提示重新登录）。订阅行（Token Plan 渠道）展示 5 小时 / 日 / 周 / 月窗口的剩余百分比与重置时间；未开通套餐显示「该账号未开通 Token Plan 套餐」。
+- **按量付费余额（已接入）**：用 RAM 子用户 AK/SK 经阿里云费用与成本 BSS `QueryAccountBalance` 查询，需 RAM 用户另挂 **AliyunBSSReadOnlyAccess**（或自定义策略含 `bss:QueryAccountBalance`）；渠道卡「厂家用量」行显示可用余额 / 现金余额 / 信用额度（快照缓存 5 分钟）。
 
 ---
 
@@ -636,8 +636,8 @@ Token Plan 个人版四档价格、月 Credits 与可并发 Agent 数（首购 5
 
 #### 套餐使用说明
 
-- **Token Plan（Hy Token Plan / 通用 Token Plan）**：待接入套餐用量查询。需调研项：套餐额度窗口、用量查询接口、各档位可用模型清单（待官网核实）。
-- **按量付费**：开通送 100 万 tokens（1 年有效），余量查询待接入。
+- **Token Plan（Hy Token Plan / 通用 Token Plan）（已接入）**：套餐余量经 TokenHub 管理面 `DescribeTokenPlanPersonalPackage` 查询，用渠道凭据区的 **SecretId / SecretKey**（即上文「实时清单」的 CAM 密钥，环境变量 `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY`）签名调用，无需套餐专属 Key。订阅行展示套餐档位（Lite / Standard / Pro / Max）、总积分已用 / 总量、本周期积分、周期进度（第 X/Y 周期、剩 N 周期）与到期时间；未购买套餐显示「未购买」。
+- **按量付费余额（已接入）**：同一对 SecretId / SecretKey 经计费 `DescribeAccountBalance` 查询，需挂只读策略 `QcloudBillingReadOnlyAccess`；渠道卡「厂家用量」行显示余额 / 代金券 / 欠费 / 冻结（快照缓存 5 分钟）。
 
 **⚠️ 备注**：注册表已补全 token_plan mode + payg 免费额度 100万 tokens/1年（见前文更新记录）。
 
@@ -760,12 +760,16 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 
 **步骤**
 
-1. 打开 [console.anthropic.com](https://console.anthropic.com) 注册（邮箱验证，部分情况要求手机验证）；
-2. **预充值**：Billing 页买 credit（最低 $5）；
+1. 打开 [claude.ai](https://claude.ai) 注册并登录（邮箱验证，部分情况要求手机验证）；个人账号默认 Free 套餐；
+   ![Claude 网页版首页：「您来啦！」对话输入框、Sonnet 5.5 模型选择与左下 Free 套餐](images/api-key-guide/anthropic-01.png)
+2. **选套餐（可选）**：免费账号也能用（见第 3 步 $5 试用金）；Pro $20/月、Max 和 Ultra $100 起/月，Max 及以上订阅每月向 Console 附赠 API credits；
+   ![Claude 个人套餐页：Free $0 / Pro $20/月 / Max 和 Ultra $100 起/月 三档对比](images/api-key-guide/anthropic-02.png)
 3. **一次性 $5 试用金**：完成手机验证后，Console 余额会自动发放 $5 试用金（有效期以官方页面为准），可用于按量调用；
-4. **API Keys**（直链：[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)）→ **Create Key**（`sk-ant-` 开头）。
-
-   📷 **截图 5-1** ｜ 拍什么：API Keys 页（Key 打码） ｜ 存为：`anthropic-01-apikeys.png`
+4. 进入 [Console 仪表板](https://console.anthropic.com)：组织额度、本月支出与 Token 用量概览，右上「充值」购买 credit（最低 $5）；
+   ![Claude Console 仪表板：组织额度、本月支出、Token 用量与模型卡片，右上充值入口](images/api-key-guide/anthropic-03.png)
+5. **API Keys**（直链：[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)）→ **创建密钥**（`sk-ant-` 开头，仅显示一次，立即复制）；
+   ![Claude Console「API 密钥」列表页：右上「创建密钥」按钮与密钥列表（Key 已打码）](images/api-key-guide/anthropic-04.png)
+6. 把 Key 填进 Facet 渠道保存。
 
 **渠道参数**：协议 `anthropic`，端点 `https://api.anthropic.com`。国内直连不通时配 `proxy`。
 
@@ -1033,3 +1037,4 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 | 2026-11-16 | - | 删除 6.2 Command Code「桥启动终端 + 控制台测试通过」截图占位：Facet 已原生支持 Provider 的 OpenAI 端点，正文无桥接步骤，该占位为早期遗留 |
 | 2026-11-16 | - | 6.3 LLM7 口径订正：按官网 docs.llm7.io/limits 复核（2026-09-30 更新），label「免费匿名」改为「免费注册」（需在 dash.llm7.io 领 free token / 建 Key），补免费额度可无通知缩减提醒；账号抽象兼容性矩阵将 LLM7 由「匿名或免费」移到「单账号单 Key」 |
 | 2026-11-16 | - | 6.3 LLM7 截图补全并重写步骤：新增 3 张（控制台首页 Free 套餐与每日 10 万 tokens 额度、API Keys 创建页、Models 按量定价页），步骤按「登录看额度 → 建 Key → 查模型价 → 填渠道」重写，删除 6-4 占位 |
+| 2026-11-17 | - | 5.1 Anthropic 章节接入真实截图（4 张：网页版首页、个人套餐页、Console 仪表板、API 密钥页），步骤按「注册 → 选套餐（可选）→ $5 试用金 → Console 充值 → 建 Key → 填渠道」重写，删除截图 5-1 占位 |
