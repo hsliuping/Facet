@@ -118,9 +118,13 @@ def prepare_runtime() -> None:
 def install_project() -> None:
     """Just the local wheel: code + static assets, no third-party deps."""
     SITE.mkdir(parents=True, exist_ok=True)
+    # --no-deps 保证 venv 里没有第三方依赖（产品只用标准库）。不能加
+    # --no-build-isolation：那会让 pip 用宿主 Python 自带的 setuptools，
+    # 旧版读不了 PEP 639 的 license = "MIT" 字符串，元数据生成会失败；
+    # 隔离环境才会按 build-system.requires 装 setuptools>=77。
     run([sys.executable, "-m", "pip", "install", "--upgrade",
          "--no-warn-script-location", "--target", str(SITE),
-         "--no-deps", "--no-build-isolation", str(ROOT)])
+         "--no-deps", str(ROOT)])
 
 
 def install_packages() -> None:
