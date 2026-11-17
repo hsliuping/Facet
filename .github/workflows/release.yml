@@ -1,5 +1,11 @@
 name: release
 
+# 打 tag v* 自动出包并发布到 GitHub Releases：
+#   1. 校验 tag 与 pyproject 版本一致，构建 sdist/wheel + 跑测试
+#   2. windows-latest 构建 Facet-Setup-<version>.exe（含嵌入式 CPython + Chromium headless shell）
+#   3. 创建/更新 GitHub Release 并挂上 exe + wheel + sdist
+#   4. 配置了 PYPI_API_TOKEN 时顺带发 PyPI
+# release 步骤幂等（--clobber），重跑同 tag 只覆盖资产。
 on:
   push:
     tags: ["v*"]
@@ -15,6 +21,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: 校验 tag 与 pyproject 版本一致
+        run: |
+          py="$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
+          PY
+          )"
+          echo "tag=${GITHUB_REF_NAME#v} pyproject=$py"
+          [ "${GITHUB_REF_NAME#v}" = "$py" ] || { echo "tag 与 pyproject.toml 版本不一致（应为 v$py）"; exit 1; }
       - name: install build tool
         run: python -m pip install build
       - name: quality gate
@@ -27,6 +42,66 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  windows:
+    name: windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: build-time deps（playwright / 托盘 / 图标）
+        run: python -m pip install playwright pystray pillow
+      - name: playwright chromium（headless shell 随包分发）
+        run: python -m playwright install chromium
+      - name: build installer
+        run: python tools/build_windows.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: dist/windows/*.exe
+
+  release:
+    needs: [build, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: dist/windows/
+      - name: create-or-update GitHub Release
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Facet 一键安装，免配 Python。
+
+          | 文件 | 说明 |
+          |---|---|
+          | `Facet-Setup-*.exe` | Windows 安装包：内置 Python 3.11 与 Chromium headless shell，双击即用 |
+          | `facet_models-*.whl` / `*.tar.gz` | pip 安装（Python ≥3.10，零运行时依赖） |
+
+          macOS / Linux 从源码安装：克隆仓库后执行 `tools/macos/install.sh` 或
+          `tools/linux/install.sh`，脚本会自动装 Python 并注册常驻服务。
+
+          - 管理控制台首次启动生成随机密钥，只在日志打印一次（`journalctl -u facet` /
+            macOS 见 `~/.facet/logs/gateway.log`），登录后可在「管理密钥」中修改。
+          - Windows 安装包未代码签名：SmartScreen 提示「未知发布者」时点
+            「更多信息 → 仍要运行」。
+          - 旧版本：https://github.com/hsliuping/Facet/releases
+          EOF
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "Facet ${tag#v}" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release upload "$tag" dist/*.whl dist/*.tar.gz dist/windows/*.exe --clobber
 
   publish:
     needs: build
