@@ -30,6 +30,13 @@ Usage
     # or sign in by hand once; the persistent profile keeps the session
     python tools/computer_use_agent.py --login https://www.modelscope.cn
 
+    # sign in by hand and also save the session cookie chain into the
+    # credential file, so scheduled headless runs can restore it
+    python tools/computer_use_agent.py --capture-cookie https://www.modelscope.cn
+
+    # claim the daily ModelScope magicube grant (plain HTTP, no browser)
+    python tools/computer_use_agent.py --checkin
+
     # let the agent do something (it can call login() itself when a stored
     # credential is needed; the password never reaches the model)
     python tools/computer_use_agent.py --task "打开 https://www.modelscope.cn/mcp 列出页面上前三个 MCP 服务的名字"
@@ -59,6 +66,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -344,6 +352,12 @@ ACCOUNT_SEL = ("input[name*=account i], input[name*=user i], "
                "input[placeholder*='账号'], input[placeholder*='邮箱'], "
                "input[placeholder*='手机'], input[type=email], "
                "input[type=text]:not([type=password])")
+
+# Cookie names that suggest an authenticated session (used by --capture-cookie
+# to tell a real sign-in apart from the anonymous analytics cookies every page
+# sets right away).
+SESSION_COOKIE_HINT = re.compile(
+    r"(session|token|sid|auth|login|user|passport)", re.IGNORECASE)
 
 
 def login_frame(page, entry: dict):
@@ -659,19 +673,31 @@ def parse_cookie(text: str) -> tuple[str, str]:
     return name.strip(), value.strip()
 
 
-def add_session_cookie(context, url: str, cookie: str, days: int = 30) -> bool:
-    """Store a pasted session cookie for `url`'s host in this context.
+def parse_cookies(text: str) -> list[tuple[str, str]]:
+    """Split a 'NAME=VALUE; NAME=VALUE' chain into pairs (one pair is fine)."""
+    out = []
+    for part in str(text).split(";"):
+        name, sep, value = part.partition("=")
+        if sep and name.strip():
+            out.append((name.strip(), value.strip()))
+    return out
 
-    A cookie without `expires` is a session cookie: Chromium keeps it in
-    memory and drops it when the context closes, so the next run would be
-    logged out again. The 30-day lifetime makes it persist in the profile.
+
+def add_session_cookie(context, url: str, cookie: str, days: int = 30) -> bool:
+    """Store pasted session cookie(s) for `url`'s host in this context.
+
+    Accepts a single 'NAME=VALUE' or the full 'NAME=VALUE; NAME=VALUE' chain
+    written by --capture-cookie. A cookie without `expires` is a session
+    cookie: Chromium keeps it in memory and drops it when the context closes,
+    so the next run would be logged out again. The 30-day lifetime makes it
+    persist in the profile.
     """
-    name, value = parse_cookie(cookie)
-    if not name:
+    cookies = [{"name": n, "value": v, "domain": host_of(url), "path": "/",
+                "expires": time.time() + days * 86400}
+               for n, v in parse_cookies(cookie)]
+    if not cookies:
         return False
-    context.add_cookies([{"name": name, "value": value,
-                          "domain": host_of(url), "path": "/",
-                          "expires": time.time() + days * 86400}])
+    context.add_cookies(cookies)
     return True
 
 
@@ -724,6 +750,135 @@ def mode_seed_cookie(url: str, cookie: str, headed: bool, profile: Path,
         print(obs_text)
         print(f"\n[seed] {name.strip()} written for {host} in {profile}")
         print(f"[screenshot] {out}")
+    finally:
+        context.close()
+        playwright.stop()
+    return 0
+
+
+def mode_capture_cookie(url: str, profile: Path, channel: str,
+                        seconds: int = 600) -> int:
+    """Headed helper: sign in by hand, then save the site's cookie chain.
+
+    Saves every cookie the site set for this host ('NAME=VALUE; NAME=VALUE')
+    into the credential file, so scheduled headless runs restore the session
+    until the site expires it. Whatever username/password the user typed is
+    kept too, letting --autologin renew the session without a human.
+
+    Detection never reloads the page (that would wipe a half-typed form): it
+    watches for the session-ish cookies to appear/change while no password
+    box is on screen. Pressing Enter in the terminal saves immediately.
+    """
+    host = host_of(url)
+    playwright, context = launch(True, profile, channel)
+    page = context.new_page()
+    typed = {"account": "", "password": ""}
+
+    def pick_jar():
+        # Cookies for this host or any of its parents (.modelscope.cn), not
+        # the unrelated domains the page also set.
+        out = []
+        for c in context.cookies():
+            dom = str(c.get("domain") or "").lstrip(".").lower()
+            if dom and (host == dom or host.endswith("." + dom)):
+                out.append(c)
+        return out
+
+    def hinted(jar):
+        # Anonymous cookies exist on a logged-out page too (analytics, and the
+        # csrf_* pair which even matches "session"/"token" in the hint), so
+        # only session-ish names that are not anti-CSRF tokens count as a
+        # sign-in signal.
+        return {c["name"]: c["value"] for c in jar
+                if SESSION_COOKIE_HINT.search(str(c["name"]))
+                and not str(c["name"]).lower().startswith(("csrf", "xsrf"))}
+
+    def has_password_box():
+        for frame in page.frames:
+            try:
+                if frame.evaluate(
+                        "() => !!document.querySelector('input[type=password]')"):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def grab_typed():
+        # Remember the form values before the login popup disappears on submit.
+        for frame in page.frames:
+            try:
+                vals = frame.evaluate(
+                    "() => { const a = document.querySelector(" + repr(ACCOUNT_SEL)
+                    + "); const p = document.querySelector('input[type=password]');"
+                    + " return [a ? a.value : '', p ? p.value : '']; }")
+            except Exception:
+                continue
+            if vals:
+                if vals[0] and not typed["account"]:
+                    typed["account"] = str(vals[0]).strip()
+                if vals[1]:
+                    typed["password"] = str(vals[1])
+
+    forced = threading.Event()
+
+    def wait_enter():
+        try:
+            if not sys.stdin or not sys.stdin.isatty():
+                return   # no terminal (cron, piped): rely on cookie detection
+            input()      # blocks until a human presses Enter
+        except EOFError:
+            return       # the terminal handed us EOF at once (no human there —
+                         # some shells expose an isatty that is already closed)
+        except Exception:
+            return
+        forced.set()
+
+    threading.Thread(target=wait_enter, daemon=True).start()
+
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        settle(page)
+        # Baseline AFTER the first load settles: the load itself sets the
+        # anonymous jar (csrf_session, analytics …), and taking the baseline
+        # before goto made that jar look "changed" on the very first poll —
+        # every run then saved a logged-out chain instantly.
+        before = hinted(pick_jar())
+        print(f"[capture] sign in to {host} in the opened window (captcha/SMS "
+              "welcome). If the page already shows you as signed in, just "
+              "press Enter here.", flush=True)
+        print(f"[capture] the cookie chain is saved automatically once the "
+              f"session cookie changes; waiting up to {seconds}s…", flush=True)
+        deadline = time.time() + seconds
+        while not forced.is_set():
+            grab_typed()
+            if not has_password_box() and hinted(pick_jar()) != before:
+                break
+            if time.time() >= deadline:
+                print("[capture] no sign-in detected before the timeout; "
+                      "nothing saved", file=sys.stderr)
+                return 3
+            time.sleep(2)
+        jar = pick_jar()
+        chain = "; ".join(f"{c['name']}={c['value']}" for c in jar)
+        if not chain:
+            print(f"[capture] {host} has no cookies to save", file=sys.stderr)
+            return 2
+        path = save_cred(host, username=typed["account"],
+                         password=typed["password"], cookie=chain)
+        print(f"[capture] saved {len(jar)} cookie(s) for {host} -> {path}",
+              flush=True)
+        print("[capture] cookies: " + ", ".join(c["name"] for c in jar),
+              flush=True)
+        if not hinted(jar):
+            print("[capture] warning: none of them looks like a session "
+                  "cookie, so the sign-in probably did not complete — verify "
+                  "with --ensure-login", file=sys.stderr, flush=True)
+        if typed["account"]:
+            print("[capture] typed username/password also stored, so "
+                  "--autologin can renew this session later", flush=True)
+            print("[credential] the file holds a plaintext password; keep it "
+                  "out of backups and never commit it (data/ is gitignored).",
+                  flush=True)
     finally:
         context.close()
         playwright.stop()
@@ -816,17 +971,69 @@ def mode_list_credentials() -> int:
     return 0
 
 
+def mode_checkin() -> int:
+    """Claim today's ModelScope magicube grant over plain HTTP (no browser).
+
+    The credential is the ModelScope channel's api_key from router.json: the
+    SDK token doubles as the web session cookie, so one signed-in request
+    (login/info) makes the daily grant land. Idempotent per Beijing day.
+    Exit 0 when the grant is in place (already or just claimed), 2 otherwise.
+    """
+    try:
+        from facet.gateway.modelscope_quota import checkin
+    except ModuleNotFoundError:
+        # Dev checkout: the facet package is not installed; import from src.
+        sys.path.insert(0, str(REPO / "src"))
+        from facet.gateway.modelscope_quota import checkin
+    try:
+        cfg = json.loads((DATA_DIR / "router.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[checkin] cannot read router.json: {exc}", file=sys.stderr)
+        return 1
+    channels = [c for c in cfg.get("channels") or []
+                if isinstance(c, dict) and c.get("provider") == "modelscope"]
+    if not channels:
+        print("[checkin] no ModelScope channel in router.json", file=sys.stderr)
+        return 1
+    words = {"done": "already claimed today", "claimed": "claimed",
+             "inactive": "no grant appeared"}
+    rc = 0
+    for channel in channels:
+        name = channel.get("name") or "modelscope"
+        try:
+            result = checkin(channel.get("api_key") or "")
+        except Exception as exc:
+            print(f"[checkin] {name}: FAILED — {exc}", file=sys.stderr)
+            rc = 2
+            continue
+        word = words.get(result.get("outcome"), str(result.get("outcome")))
+        balance = result.get("balance")
+        tail = f", balance {balance:g}" if isinstance(balance, (int, float)) else ""
+        print(f"[checkin] {name}: {word} — {result.get('detail')}{tail}",
+              flush=True)
+        if result.get("outcome") not in ("done", "claimed"):
+            rc = 2
+    return rc
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--task", help="what the agent should do")
     ap.add_argument("--url", default="about:blank", help="starting page")
     ap.add_argument("--login", metavar="URL", help="open a window for manual login, then exit")
+    ap.add_argument("--capture-cookie", metavar="URL",
+                    help="open a window for manual login, then save the "
+                         "site's session cookie into the credential file "
+                         "(no LLM call)")
     ap.add_argument("--autologin", metavar="URL",
                     help="sign in from the stored credential, no LLM call")
     ap.add_argument("--add-credential", metavar="HOST",
                     help="store the username/password for this host")
     ap.add_argument("--credentials", action="store_true",
                     help="list stored hosts and usernames (passwords are never shown)")
+    ap.add_argument("--checkin", action="store_true",
+                    help="claim today's ModelScope magicube grant over plain "
+                         "HTTP (no browser, no LLM call)")
     ap.add_argument("--username", default=os.environ.get("CU_USERNAME", ""),
                     help="with --add-credential; prefer the prompt over a CLI value")
     ap.add_argument("--password", default=os.environ.get("CU_PASSWORD", ""),
@@ -856,10 +1063,15 @@ def main() -> int:
     profile.mkdir(parents=True, exist_ok=True)
     if args.credentials:
         return mode_list_credentials()
+    if args.checkin:
+        return mode_checkin()
     if args.add_credential:
         return mode_add_credential(args.add_credential, args.username, args.password)
     if args.login:
         return mode_login(args.login, args.headed, profile, args.channel)
+    if args.capture_cookie:
+        return mode_capture_cookie(args.capture_cookie, profile, args.channel,
+                                   max(args.manual_seconds, 600))
     if args.autologin:
         return mode_autologin(args.autologin, args.headed, profile, args.channel,
                               args.manual_seconds)
@@ -872,8 +1084,9 @@ def main() -> int:
         return mode_ensure_login(args.ensure_login, args.headed, profile,
                                  args.channel, args.manual_seconds)
     if not args.task:
-        ap.error("--task is required (or use --login / --autologin / "
-                 "--ensure-login / --add-credential / --credentials / --observe)")
+        ap.error("--task is required (or use --login / --capture-cookie / "
+                 "--autologin / --ensure-login / --add-credential / "
+                 "--credentials / --checkin / --observe)")
 
     key = gateway_key()
     if not key:
