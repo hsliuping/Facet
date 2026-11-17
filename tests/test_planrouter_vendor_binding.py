@@ -163,17 +163,25 @@ class SeedBindingTests(unittest.TestCase):
             "docker_entrypoint", REPO_ROOT / "docker" / "entrypoint.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        seed = module.preset_config()
-        self.assertEqual(seed["listen"]["host"], "0.0.0.0")
-        self.assertEqual(seed["listen"]["port"], 8787)
-        self.assertEqual(seed["listen"]["api_key"], "env:ROUTER_API_KEY")
-        self.assertEqual(seed["listen"]["admin_key"], "env:ROUTER_ADMIN_KEY")
-        # The containerized listen is non-loopback with env: references, so
-        # the variables must exist for parse_config to accept the seed.
+        # An explicitly supplied key keeps the env reference, which the gateway
+        # resolves from the environment.
         with mock.patch.dict(os.environ,
                              {"ROUTER_API_KEY": "k", "ROUTER_ADMIN_KEY": "k"}):
+            seed = module.preset_config()
+            self.assertEqual(seed["listen"]["admin_key"], "env:ROUTER_ADMIN_KEY")
+            self.assertEqual(seed["listen"]["host"], "0.0.0.0")
+            self.assertEqual(seed["listen"]["port"], 8787)
+            self.assertEqual(seed["listen"]["api_key"], "env:ROUTER_API_KEY")
+            # The containerized listen is non-loopback with env: references, so
+            # the variables must exist for parse_config to accept the seed.
             app = self._strict_app(seed)
             app._check_vendor_binding(app.config)
+        # Without one the entrypoint seeds a random management key: the gateway
+        # has no default password, so a dangling env reference would lock the
+        # console on first start.
+        with mock.patch.dict(os.environ, {"ROUTER_API_KEY": "k"}, clear=True):
+            seed = module.preset_config()
+        self.assertRegex(seed["listen"]["admin_key"], r"^sk-admin-[0-9a-f]{32}$")
 
 
 def volc_config() -> dict:

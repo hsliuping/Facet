@@ -205,7 +205,12 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         return False
 
     if not app._authorized_admin(h):
-        _json(h, 401, {"error": {"message": "invalid admin key"}})
+        if app.config.listen.admin_key:
+            msg = "invalid admin key"
+        else:
+            msg = ("management API locked: listen.admin_key is not set while "
+                   "listen.api_key is — set admin_key in router.json and reload")
+        _json(h, 401, {"error": {"message": msg}})
         return True
 
     if method == "POST" and not _same_site(h):
@@ -441,6 +446,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
                 raise ValueError("body must be an object")
             action = str(body.get("action") or "rotate")
             admin = str(body.get("admin_key") or "")
+            had_admin = bool(app.config.listen.admin_key)
             if action == "pause":
                 app.set_master_key_enabled(False, admin)
             elif action == "enable":
@@ -452,8 +458,14 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         except (ValueError, OSError) as exc:
             _json(h, 400, {"error": {"message": str(exc)}})
         else:
-            _json(h, 200, {"api_key": app.config.listen.api_key,
-                           "enabled": bool(app.config.listen.api_key_enabled)})
+            resp = {"api_key": app.config.listen.api_key,
+                    "enabled": bool(app.config.listen.api_key_enabled)}
+            if not had_admin:
+                # Keyless console leaving keyless mode: rotate_master_key just
+                # seeded an admin_key so the management API is not locked out —
+                # hand it back to this browser for the next request.
+                resp["admin_key"] = app.config.listen.admin_key
+            _json(h, 200, resp)
         return True
 
     if path == "/api/keys" and method == "POST":

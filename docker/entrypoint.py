@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import socket
 import sys
@@ -67,9 +68,28 @@ def publish_dsh_web() -> None:
     os.environ.setdefault("DSH_WEB_PUBLIC_URL", f"http://127.0.0.1:{port}/")
 
 
+def _seed_admin_key(config: dict) -> dict:
+    """Replace the dangling env admin key with a generated one when unset.
+
+    The gateway has no default management password, so a config that points
+    admin_key at an unset environment variable would lock the console. Generate
+    a random key and print it once — the same first-run flow as a bare
+    `facet serve`.
+    """
+    if os.environ.get("ROUTER_ADMIN_KEY", "").strip():
+        return config
+    value = "sk-admin-" + secrets.token_hex(16)
+    config.setdefault("listen", {})["admin_key"] = value
+    print(f"[entrypoint] 管理控制台密钥（listen.admin_key，仅此处打印一次）：{value}",
+          flush=True)
+    print("[entrypoint] 打开管理控制台时填入上述密钥；建议登录后在「管理密钥」中换成自己的值",
+          flush=True)
+    return config
+
+
 def example_config() -> dict:
     """Read the shipped smoke-test template (mock upstreams, env keys)."""
-    return json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    return _seed_admin_key(json.loads(TEMPLATE.read_text(encoding="utf-8")))
 
 
 def preset_config() -> dict:
@@ -88,7 +108,7 @@ def preset_config() -> dict:
     listen["port"] = 8787
     listen["api_key"] = "env:ROUTER_API_KEY"
     listen["admin_key"] = "env:ROUTER_ADMIN_KEY"
-    return config
+    return _seed_admin_key(config)
 
 
 def main() -> None:

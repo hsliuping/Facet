@@ -48,7 +48,9 @@
 
 - `listen.host = "0.0.0.0"`（容器外可达）、`port = 8787`
 - `api_key = "env:ROUTER_API_KEY"`、`admin_key = "env:ROUTER_ADMIN_KEY"`
-  （core 拒绝无密钥的非回环监听，与 example 模板语义一致）
+  （core 拒绝无密钥的非回环监听，与 example 模板语义一致）；环境变量缺失时
+  entrypoint 把 `admin_key` 改为随机生成值并打印一次——网关没有默认管理密码，
+  悬空的 `env:` 引用会锁死管理面
 
 保留 `ROUTER_SEED=example` 环境变量开关：设为 `example` 时维持旧行为（拷贝
 `router.example.json`），供 compose 冒烟栈（mock 上游）开箱使用。

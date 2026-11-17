@@ -15,10 +15,12 @@ from facet.gateway.core import load_config
 from facet.gateway.server import App, Handler
 
 
-def base_config(gateway_key: str | None = None) -> dict:
+def base_config(gateway_key: str | None = None, admin_key: str | None = None) -> dict:
     listen = {"host": "127.0.0.1", "port": 0}
     if gateway_key:
         listen["api_key"] = gateway_key
+    if admin_key:
+        listen["admin_key"] = admin_key
     return {
         "_readme": "test config",
         "listen": listen,
@@ -110,15 +112,29 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(config["_readme"], "test config")
 
     def test_api_requires_admin_key_but_page_does_not(self):
+        # Gateway key without an admin_key locks the management API: there is
+        # no built-in default password to fall back to.
         base = self.start(base_config(gateway_key="gw-secret"))
         status, _, _ = self.call(base, "GET", "/api/config")
         self.assertEqual(status, 401)
         status, _, _ = self.call(base, "GET", "/api/config", key="gw-secret")
         self.assertEqual(status, 401)
-        status, _, _ = self.call(base, "GET", "/api/config", key="admin")
-        self.assertEqual(status, 200)
+        for guess in ("admin", "gw-secret", ""):
+            status, _, _ = self.call(base, "GET", "/api/config", admin=guess)
+            self.assertEqual(status, 401)
         status, _, _ = self.call(base, "GET", "/")
         self.assertEqual(status, 200)
+
+    def test_api_accepts_only_the_configured_admin_key(self):
+        base = self.start(base_config(gateway_key="gw-secret", admin_key="mine"))
+        status, _, _ = self.call(base, "GET", "/api/config", admin="mine")
+        self.assertEqual(status, 200)
+        status, _, _ = self.call(base, "GET", "/api/config", admin="admin")
+        self.assertEqual(status, 401)
+        status, _, _ = self.call(base, "GET", "/api/config", admin="wrong")
+        self.assertEqual(status, 401)
+        status, _, _ = self.call(base, "GET", "/api/config")
+        self.assertEqual(status, 401)
 
     def test_save_hot_reloads_and_preserves_secrets_and_state(self):
         base = self.start()
@@ -246,9 +262,18 @@ class ConsoleTests(unittest.TestCase):
         # Gateway key alone is not an admin credential.
         status, _, _ = self.call(base, "GET", "/api/recommend", key="gw-secret")
         self.assertEqual(status, 401)
-        # Default admin key works.
+        # No admin_key is configured and there is no built-in default password,
+        # so the management API stays locked instead of accepting "admin".
         status, _, _ = self.call(base, "GET", "/api/recommend?purpose=agent", admin="admin")
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 401)
+
+    def test_recommend_accepts_only_the_configured_admin_key(self):
+        base = self.start(base_config(gateway_key="gw-secret", admin_key="adm-secret"))
+        status, _, _ = self.call(base, "GET", "/api/recommend?purpose=agent", admin="admin")
+        self.assertEqual(status, 401)
+        status, _, body = self.call(base, "GET", "/api/recommend?purpose=agent",
+                                    admin="adm-secret")
+        self.assertEqual(status, 200, body)
 
     def test_recommend_agent_prefers_tool_call_then_free(self):
         base = self.start()

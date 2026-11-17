@@ -22,7 +22,7 @@
 | --- | --- |
 | 运行单元 | compose 两服务栈（[compose.yaml](../compose.yaml)）：`router`（网关）+ `mock`（假上游，冒烟联调用，真实使用可忽略） |
 | 端口 | 宿主 `${ROUTER_PORT:-8787}` → 容器 8787 |
-| 密钥 | `ROUTER_API_KEY` / `ROUTER_ADMIN_KEY` 经 compose 旁 `.env` 文件（gitignored）注入，不进镜像、不进配置文件；配置里用 `env:` 引用；无 `.env` 时回落 compose 默认 test key（冒烟栈用） |
+| 密钥 | `ROUTER_API_KEY` / `ROUTER_ADMIN_KEY` 经 compose 旁 `.env` 文件（gitignored）注入，不进镜像、不进配置文件；配置里用 `env:` 引用；无 `.env` 时网关 key 回落 compose 默认 test key（冒烟栈用），管理密钥由 entrypoint 随机生成并在首启日志打印一次（网关没有默认管理密码） |
 | 状态 | `./data` bind mount 到 `/data`：router.json 配置、用量、审计日志、订阅、维护日志全部持久化，容器可随时重建 |
 | 重启策略 | `restart: unless-stopped`，宿主重启后自动恢复服务 |
 | 健康检查 | 打容器内控制台 `/`（免认证）做纯 liveness；**不打 `/health`**——全渠道冷却时 `/health` 返回 503，会把健康进程误杀重启 |

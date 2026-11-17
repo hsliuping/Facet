@@ -86,8 +86,12 @@ def main(argv: list[str] | None = None) -> int:
         if not config.listen.api_key:
             print("  WARNING: listen.api_key is unset; any local process can call /v1 and /api")
         if not config.listen.admin_key:
-            print('  WARNING: listen.admin_key is unset; management API uses the default "admin" —'
-                  ' rotate it in the console once deployed')
+            if config.listen.api_key:
+                print('  WARNING: listen.admin_key is unset while listen.api_key is set —'
+                      ' the management API is locked; set admin_key in router.json')
+            else:
+                print('  WARNING: listen.admin_key is unset and no gateway key is configured;'
+                      ' the management console is open to local processes')
         known_routes = {name.split(":", 1)[1] for name in config.routes}
         for name, hint in config.models.branded.items():
             if hint not in known_routes:

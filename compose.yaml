@@ -43,9 +43,10 @@ services:
       # instead of inheriting the image's UTC default.
       TZ: "Asia/Shanghai"
       ROUTER_API_KEY: "${ROUTER_API_KEY:-test-router-key}"
-      # Simple first-run credential. The console's "管理密钥" dialog rotates it
-      # (custom value or random) and persists the literal key to ./data/router.json.
-      ROUTER_ADMIN_KEY: "${ROUTER_ADMIN_KEY:-admin}"
+      # Management console key. The gateway has no default password: when this
+      # is unset, the entrypoint generates a random admin_key and prints it
+      # once on first start. Set it here (or in a .env file) to pin your own.
+      ROUTER_ADMIN_KEY: "${ROUTER_ADMIN_KEY:-}"
       # Seed the mock smoke-test config on first run so this compose stack (with
       # its fake upstream) works out of the box. For real use: stop the stack,
       # delete ./data/router.json and remove this line — the next start seeds

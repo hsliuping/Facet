@@ -82,10 +82,12 @@ const WIZARD_STEPS = [
         if (storedOk === null) text = '无法连接服务端，请稍后重试';
         else if (storedOk) text = '已设置（本机已保存，可直接更换）';
         else {
-          const adminOk = await probe('admin');
-          if (adminOk === null) text = '无法连接服务端，请稍后重试';
-          else if (adminOk) text = '服务端仍在用默认密码 admin，建议立即更换';
-          else text = '服务端已设置管理密码，本机未保存';
+          // 无凭据的回环控制台保持开放（探测带空管理密钥即可 200）；
+          // 其余 401 一律视为服务端已设密钥或管理面已锁定，没有默认密码。
+          const openOk = await probe('');
+          if (openOk === null) text = '无法连接服务端，请稍后重试';
+          else if (openOk) text = '管理控制台未设密钥（本机开放），建议现在设置';
+          else text = '服务端需要管理密钥（已设置或管理面已锁定），本机未保存';
         }
         el.textContent = text;
       }
@@ -102,7 +104,7 @@ const WIZARD_STEPS = [
         try {
           await api('/api/admin/key', {
             method: 'POST',
-            body: { key: value, old_key: readStoredKey('admin') || 'admin' },
+            body: { key: value, old_key: readStoredKey('admin') || '' },
           });
           state.adminKey = value;
           storeKey('admin', value, true);
@@ -683,11 +685,13 @@ async function initWizard() {
     if (done === 'true' || dismissed === 'true') return;
   } catch (_) { /* ignore */ }
   if (readStoredKey('admin')) return; // 已登录过管理界面，视为非全新
-  // 裸 fetch 试探（默认 admin）：走 api() 时 401 会先弹「管理密钥」框，
-  // 把全新用户挡在向导之外，故这里绝不触发那个弹框。
+  // 裸 fetch 试探（不带任何鉴权头）：走 api() 时 401 会先弹「管理密钥」框，
+  // 把全新用户挡在向导之外，故这里绝不触发那个弹框。只有「控制台完全未设
+  // 密钥」（无 api_key 且无 admin_key，仅限本机裸跑）才进入向导；首启随机
+  // 管理密钥的场景返回 401，等用户按日志提示解锁控制台后再手动进入向导。
   try {
-    const r = await fetch('/api/keys', { headers: { 'X-Admin-Key': 'admin' } });
-    if (!r.ok) return; // 密码已改过：不打扰，等用户先解锁控制台
+    const r = await fetch('/api/keys');
+    if (!r.ok) return; // 已设置管理密钥：不打扰，等用户先解锁控制台
     const payload = await r.json();
     if (payload && (payload.master || (payload.keys && payload.keys.length))) return;
   } catch (_) {

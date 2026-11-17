@@ -28,8 +28,9 @@ from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import facts as facts_mod
 from . import watch as watch_mod
-from . import (ark_quota, deepseek_quota, minimax_quota, moonshot_quota,
-               opencode_quota, openrouter_quota, zhipu_quota)
+from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
+               minimax_quota, moonshot_quota, opencode_quota,
+               openrouter_quota, zhipu_quota)
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -56,9 +57,11 @@ from .usage import UsageRecorder
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
 UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
-# First-run management credential: simple to type, replaced by the console's
-# rotate action (or by listen.admin_key) as soon as the deployment is set up.
-DEFAULT_ADMIN_KEY = "admin"
+# The management console authenticates with listen.admin_key only — there is
+# no built-in default password. A first start seeds a random key (seed.py);
+# a config with no credentials at all keeps the console open (loopback by
+# default), and a gateway api_key without an admin_key keeps the management
+# API locked instead of falling back to a shared, publicly known password.
 # Sliding window (seconds) behind a member key's `rpm` cap; timestamps of
 # accepted inference calls are kept in memory only, so a restart resets it.
 MEMBER_RPM_WINDOW = 60.0
@@ -176,6 +179,16 @@ CHANNEL_USAGE_FETCHERS = {
     "zhipu": zhipu_quota.fetch_account_report,
     "minimax": minimax_quota.fetch_usage,
     "moonshot": moonshot_quota.fetch_balance,
+}
+# Management-plane wallets: these authenticate with the account's AK/SK pair
+# from the credential chain (resolve_creds), not with the data-plane key the
+# channel sends upstream, so they travel through their own registry —
+# provider -> (fetcher(ak, sk), ak env, sk env).
+MGMT_WALLET_FETCHERS = {
+    "bailian": (bailian_quota.fetch_balance,
+                bailian_quota.AK_ENV, bailian_quota.SK_ENV),
+    "hunyuan": (hunyuan_quota.fetch_balance,
+                hunyuan_quota.ID_ENV, hunyuan_quota.KEY_ENV),
 }
 
 
@@ -1336,9 +1349,12 @@ class App:
         (its provider plus business line / billing mode), never from free text
         on the subscription: a subscription has no vendor of its own.
 
-        Plan endpoints exist for Volcengine (IAM-signed management plane)
-        and OpenCode Go (inference gateway, same oc_sk_ key as chat), so a
-        Bailian/OpenRouter row must not get decorated with (or fail on) a
+        Plan endpoints exist for Volcengine (IAM-signed management plane),
+        OpenCode Go (inference gateway, same oc_sk_ key as chat), Zhipu
+        Coding Plan (same key as chat), Bailian Token Plan (host-level
+        ``bl`` CLI console session, so no key is required) and Hunyuan
+        Token Plan (TokenHub management plane, CAM SecretId/Key). Rows of
+        the pay-as-you-go modes must not get decorated with (or fail on) a
         plan call.
 
         If the record has an explicit `account_id`, we look up the account
@@ -1357,6 +1373,41 @@ class App:
             creds: dict = resolve_creds(oc, self.config)
             key = str(creds.get("api_key") or oc.api_key or "")
             return "opencode", key, ""
+        hy = next((c for c in linked if c.provider == "hunyuan"), None)
+        if hy:
+            # Only the Token Plan (agent) subscription has a package; the
+            # pay-as-you-go endpoint reports no plan window.
+            line = (hy.business_line or hy.mode or "").strip().lower()
+            if line != "agent":
+                return "", "", ""
+            from .accounts import resolve_creds
+            creds: dict = resolve_creds(hy, self.config)
+            ak = str(creds.get(hunyuan_quota.ID_ENV) or "")
+            sk = str(creds.get(hunyuan_quota.KEY_ENV) or "")
+            return "hunyuan", ak, sk
+        zp = next((c for c in linked if c.provider == "zhipu"), None)
+        if zp:
+            # The Coding Plan reports usage to the same key the channel
+            # sends upstream; the pay-as-you-go key has no coding window.
+            line = (zp.business_line or zp.mode or "").strip().lower()
+            if line != "coding":
+                return "", "", ""
+            from .accounts import resolve_creds
+            creds: dict = resolve_creds(zp, self.config)
+            key = str(creds.get("api_key") or zp.api_key or "")
+            return "zhipu", key, ""
+        bl = next((c for c in linked if c.provider == "bailian"), None)
+        if bl:
+            # The Token Plan usage comes from the host-level bl CLI console
+            # session, so a RAM key is optional; when present it only names
+            # the cache slot ("console" otherwise).
+            line = (bl.business_line or bl.mode or "").strip().lower()
+            if line != "agent":
+                return "", "", ""
+            from .accounts import resolve_creds
+            creds: dict = resolve_creds(bl, self.config)
+            ak = str(creds.get(bailian_quota.AK_ENV) or "") or "console"
+            return "bailian", ak, ""
         volc = next((c for c in linked if c.provider == "volcengine"), None)
         if not volc:
             return "", "", ""
@@ -1468,17 +1519,24 @@ class App:
     def plan_for(self, record: dict) -> dict | None:
         """Vendor plan usage for one subscription row, TTL-cached per creds.
 
-        Returns None when the row has no usable credentials (OpenCode Go
-        rows only need the channel key; Volcengine rows need AK and SK); a
-        fetch failure returns ``{"error": ...}`` (plus the last good
-        snapshot marked stale when one exists). Snapshots persist through
-        vendorquota.json.
+        Returns None when the row has no usable credentials: OpenCode Go and
+        Zhipu Coding Plan rows only need the channel key, Bailian Token Plan
+        runs on the host ``bl`` CLI console session (no key at all), while
+        Volcengine and Hunyuan rows need AK and SK; a fetch failure returns
+        ``{"error": ...}`` (plus the last good snapshot marked stale when
+        one exists). Snapshots persist through vendorquota.json.
         """
         kind, ak, sk = self._plan_creds_for(record)
-        if not ak or (kind != "opencode" and not sk):
+        if not ak or (kind not in ("opencode", "zhipu", "bailian") and not sk):
             return None
         if kind == "opencode":
             fetch = lambda: opencode_quota.fetch_go_plan(ak)
+        elif kind == "zhipu":
+            fetch = lambda: zhipu_quota.fetch_coding_plan(ak)
+        elif kind == "bailian":
+            fetch = bailian_quota.fetch_token_plan
+        elif kind == "hunyuan":
+            fetch = lambda: hunyuan_quota.fetch_token_plan(ak, sk)
         else:
             ark_fetch = (ark_quota.fetch_agent_plan if kind == "agent"
                          else ark_quota.fetch_coding_plan)
@@ -1493,12 +1551,25 @@ class App:
         vendor's usage endpoint, so the existing credential chain is enough;
         None means there is nothing to show (no fetcher for the vendor, or
         no key configured), which the channel card renders as no row.
+        Management-plane wallets (百炼/腾讯云) instead take the AK/SK pair
+        from the same chain, because the wallet is account-wide and the
+        data-plane key cannot sign it.
         """
+        from .accounts import resolve_creds
+        creds: dict = resolve_creds(channel, self.config)
+        mgmt = MGMT_WALLET_FETCHERS.get(channel.provider)
+        if mgmt is not None:
+            fetch, ak_env, sk_env = mgmt
+            ak = str(creds.get(ak_env) or "")
+            sk = str(creds.get(sk_env) or "")
+            if not ak or not sk:
+                return None
+            cache_key = (f"wallet:{channel.provider}:"
+                         + hashlib.sha1(f"{ak}:{sk}".encode()).hexdigest()[:12])
+            return self._cached_vendor(cache_key, lambda: fetch(ak, sk))
         fetch = CHANNEL_USAGE_FETCHERS.get(channel.provider)
         if fetch is None:
             return None
-        from .accounts import resolve_creds
-        creds: dict = resolve_creds(channel, self.config)
         key = str(creds.get("api_key") or channel.api_key or "")
         if not key:
             return None
@@ -2270,10 +2341,12 @@ class App:
 
     def _verify_admin(self, provided: str) -> bool:
         """True when `provided` is the current management password."""
-        expected = (self.config.listen.admin_key
-                    or (DEFAULT_ADMIN_KEY if self.config.listen.api_key else ""))
+        expected = self.config.listen.admin_key
         if not expected:
-            return True
+            # Keyless console (no api_key either) stays open; a gateway
+            # api_key without an admin_key is a locked management API —
+            # there is no shared default password to match against.
+            return not self.config.listen.api_key
         return hmac.compare_digest(
             expected.encode("utf-8"), (provided or "").strip().encode("utf-8"))
 
@@ -2303,7 +2376,13 @@ class App:
         return bool(enabled)
 
     def rotate_master_key(self, key: str = "", admin_key: str = "") -> str:
-        """Replace the master gateway key after confirming the password."""
+        """Replace the master gateway key after confirming the password.
+
+        A keyless console (no api_key, no admin_key yet) may rotate the
+        master key without a password; leaving keyless mode then also seeds
+        an admin_key, otherwise the management API would lock itself out
+        (there is no shared default password).
+        """
         if not self._verify_admin(admin_key):
             raise ValueError("管理密码不正确")
         value = (key or "").strip() or "sk-router-" + secrets.token_hex(20)
@@ -2313,6 +2392,8 @@ class App:
         listen = dict(raw.get("listen") or {})
         listen["api_key"] = value
         listen["api_key_enabled"] = True
+        if not listen.get("admin_key"):
+            listen["admin_key"] = "sk-admin-" + secrets.token_hex(16)
         raw["listen"] = listen
         self.apply_config(raw)
         return value
@@ -4004,23 +4085,24 @@ class App:
         return hmac.compare_digest(provided, expected)
 
     def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
-        """Management endpoints use admin_key, which starts out as "admin".
+        """Management endpoints use listen.admin_key and nothing else.
 
         A config with no credentials at all keeps the console open (same rule
-        as the gateway); once any key is configured, "admin" must be rotated
-        through the console's 管理密钥 dialog.
+        as the gateway); a gateway api_key without an admin_key locks the
+        management API until the operator sets one in router.json. There is
+        no built-in fallback password.
         """
-        if self.config.listen.admin_key:
-            expected = self.config.listen.admin_key
-        elif not self.config.listen.api_key:
-            return True
-        else:
-            expected = DEFAULT_ADMIN_KEY
+        expected = self.config.listen.admin_key
+        if not expected:
+            return not self.config.listen.api_key
         provided = h.headers.get("X-Admin-Key")
         if not provided:
             auth = h.headers.get("Authorization") or ""
             provided = auth[7:] if auth.lower().startswith("bearer ") else ""
-        return hmac.compare_digest(provided, expected)
+        if not provided:
+            return False
+        return hmac.compare_digest(
+            expected.encode("utf-8"), provided.strip().encode("utf-8"))
 
     # -------------------------------------------------------- member quotas
     def _member_limited(self, member: str, record: dict | None) -> tuple[int, str] | None:

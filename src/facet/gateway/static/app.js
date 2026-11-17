@@ -141,7 +141,7 @@ function promptForAuth(isApi) {
     authPrompts[kind] = askText({
       title: isApi ? '需要管理密钥' : '需要 API Key',
       message: isApi
-        ? '管理接口返回 401。首次登录默认填 admin；登录后可在「管理密钥」页验证旧密钥后替换。'
+        ? '管理接口返回 401。请填入 listen.admin_key（首次启动日志会打印随机生成的密钥）；登录后可在「管理密钥」页验证旧密钥后替换。'
         : '网关接口返回 401。填写 listen.api_key（API Key），也可在「API Keys」页复制或生成。',
       password: true,
       remember: true,
@@ -3964,9 +3964,12 @@ $('btn-toggle-master').onclick = async () => {
   if (enabled && !(await askConfirm('暂停主密钥',
     '暂停后，用主密钥发起的调用会立即返回 401；已签发的成员 API Key 不受影响。确定暂停？'))) return;
   try {
-    await api('/api/master-key', {
+    const res = await api('/api/master-key', {
       method: 'POST', body: { action: enabled ? 'pause' : 'enable', admin_key: pass },
     });
+    // Keyless console leaving keyless mode: the server seeds an admin_key so
+    // the management API does not lock out — take it over in this browser.
+    if (res.admin_key) { state.adminKey = res.admin_key; storeKey('admin', res.admin_key, true); }
     $('master-admin-pass').value = '';
     toast(enabled ? '主密钥已暂停' : '主密钥已启用');
     await loadApiKeys();
@@ -3994,6 +3997,9 @@ $('btn-rotate-master').onclick = async () => {
       state.key = res.api_key;
       storeKey('gateway', state.key, true);
     }
+    // Keyless console leaving keyless mode: the server seeds an admin_key so
+    // the management API does not lock out — take it over in this browser.
+    if (res.admin_key) { state.adminKey = res.admin_key; storeKey('admin', res.admin_key, true); }
     $('master-admin-pass').value = '';
     $('master-new-key').value = '';
     toast('主密钥已更换');
@@ -4176,7 +4182,7 @@ async function runProbe(button, channels, model) {
     toast(data.ok ? '测试通过' : '测试未通过，查看详情', data.ok ? 'ok' : 'bad');
   } catch (err) {
     const hint = /未授权|401/.test(err.message)
-      ? '请点右上角「管理密钥」填入 listen.admin_key（首次登录默认 admin）后重试'
+      ? '请点右上角「管理密钥」填入 listen.admin_key（首次启动日志会打印随机生成的密钥）后重试'
       : '';
     showTestResult([{ ok: false, name: '请求失败', error: err.message, hint }], null);
     toast(err.message, 'bad');

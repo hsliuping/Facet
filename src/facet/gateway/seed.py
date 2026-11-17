@@ -11,13 +11,18 @@ path does not exist yet.
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 
 
 def build_seed() -> dict:
     """The seed config dict; must pass planrouter.core.parse_config."""
     return {
-        "listen": {"host": "127.0.0.1", "port": 8787},
+        # The management console has no default password: the first start
+        # seeds a random admin_key and print_seed_banner shows it once, so
+        # the operator can sign in and rotate it to their own value.
+        "listen": {"host": "127.0.0.1", "port": 8787,
+                   "admin_key": "sk-admin-" + secrets.token_hex(16)},
         "defaults": {"maintenance_model": "auto"},
         "channels": [
             {
@@ -89,6 +94,14 @@ def write_seed(path: str | Path) -> Path:
 def print_seed_banner(path: str | Path) -> None:
     """First-run guidance, printed right after the listening banner."""
     print(f"  首启引导：已生成种子配置 {path}", flush=True)
+    try:
+        admin_key = (json.loads(Path(path).read_text(encoding="utf-8"))
+                     .get("listen", {}).get("admin_key")) or ""
+    except (OSError, ValueError):
+        admin_key = ""
+    if admin_key:
+        print(f"  管理控制台密钥（listen.admin_key，仅此处打印一次）：{admin_key}", flush=True)
+        print("  打开管理控制台时填入上述密钥；建议登录后在「管理密钥」中换成自己的值", flush=True)
     print("  匿名上游已退役（限速/延迟不实用）：请注册免费 key 并在控制台启用模板渠道，", flush=True)
     print("  或运行「快速开始」向导；免费层模板支持 NVIDIA NIM / Google AI Studio / Z.AI，", flush=True)
     print("        对应环境变量 NVIDIA_API_KEY / GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY", flush=True)
