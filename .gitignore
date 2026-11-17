@@ -10,6 +10,7 @@ dist/
 .coverage
 reports/
 .trae/
+.trae-html-share-packages/
 
 # Facet local runtime data (contains account/pricing details)
 subscriptions.json
