@@ -113,7 +113,7 @@ install_standalone_python() {
   for url in \
     "https://registry.npmmirror.com/-/binary/python-build-standalone/$PY_TAG/$file" \
     "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_TAG/$file"; do
-    log "下载独立 CPython $PY_VER：$url"
+    log "下载独立 CPython ${PY_VER}：$url"
     if download "$url" "$tarball" 2>/dev/null; then
       rm -rf "$FACET_HOME/python"
       mkdir -p "$FACET_HOME"
@@ -138,10 +138,12 @@ if [ -z "$PYTHON" ]; then
   install_standalone_python
   PYTHON="$FACET_HOME/python/bin/python3"
 fi
-log "使用 Python：$PYTHON（$("$PYTHON" --version 2>&1)）"
+# 变量名一律用 ${VAR} 包起来：bash 3.2（macOS 自带）会把紧跟的全角字符
+# 并进变量名（$PYTHON（ → 变量 "PYTHON（" 不存在），set -u 下直接报错。
+log "使用 Python：${PYTHON}（$("$PYTHON" --version 2>&1)）"
 
 # 2. venv + 安装（Facet 零第三方依赖，venv 只有标准库 + 本项目）
-log "安装 Facet 到 $VENV（来源：$SRC）"
+log "安装 Facet 到 ${VENV}（来源：${SRC}）"
 mkdir -p "$FACET_HOME/data"
 if [ ! -x "$VENV/bin/pip" ]; then
   rm -rf "$VENV"   # 清掉上次失败留下的半成品目录
@@ -163,11 +165,11 @@ fi
 # （重装场景服务自己在跑，跳过预检）。
 if ! systemctl is-active --quiet facet 2>/dev/null \
    && probe "http://$FACET_HOST:$FACET_PORT/health"; then
-  err "端口 $FACET_PORT 已被其他程序占用（http://$FACET_HOST:$FACET_PORT 有响应）。请先停掉占用者（ss -ltnp | grep :$FACET_PORT），或换端口重装：FACET_PORT=9000 tools/linux/install.sh"
+  err "端口 $FACET_PORT 已被其他程序占用（http://$FACET_HOST:${FACET_PORT} 有响应）。请先停掉占用者（ss -ltnp | grep :${FACET_PORT}），或换端口重装：FACET_PORT=9000 tools/linux/install.sh"
 fi
 
 # 渲染并注册 systemd 服务（重装覆盖旧服务并重启生效）
-log "注册 systemd 服务 facet（$FACET_HOST:$FACET_PORT，开机自启 + 崩溃自动重启）"
+log "注册 systemd 服务 facet（$FACET_HOST:${FACET_PORT}，开机自启 + 崩溃自动重启）"
 tmp_unit="$(mktemp)"
 sed -e "s|__FACET_USER__|$FACET_USER|g" \
     -e "s|__FACET_HOME__|$FACET_HOME|g" \
@@ -181,17 +183,19 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable facet >/dev/null 2>&1
 $SUDO systemctl restart facet
 
-# 4. 健康检查：服务真正 running 且端口有响应才算装好
-log "等待服务启动（http://$FACET_HOST:$FACET_PORT）…"
+# 4. 健康检查：服务真正 running 且端口有响应才算装好。零密钥首启没有任何
+# 启用的渠道，/health 按设计返回 503 all_channels_cooling；probe 不带 -f，
+# 任何 HTTP 响应（含 503）都算服务在跑，不能改成 curl -f。
+log "等待服务启动（http://$FACET_HOST:${FACET_PORT}）…"
 for _ in $(seq 1 30); do
   sub="$(systemctl show -p SubState --value facet 2>/dev/null || true)"
   if [ "$sub" = "running" ] && probe "http://$FACET_HOST:$FACET_PORT/health"; then
     log "Facet 已运行：http://$FACET_HOST:$FACET_PORT/"
-    echo "  控制台管理密码默认 admin，首次登录请更换；数据在 $FACET_HOME/data"
+    echo "  首启管理密钥只打印一次（journalctl -u facet 搜「管理控制台密钥」），可在控制台「管理密钥」中修改；数据在 $FACET_HOME/data"
     echo "  日志：journalctl -u facet -f"
     echo "  停止：sudo systemctl disable --now facet；卸载：tools/linux/uninstall.sh"
     exit 0
   fi
   sleep 1
 done
-err "30 秒内服务未就绪（当前状态：${sub:-未知}）。端口被占用时先查 ss -ltnp | grep :$FACET_PORT，否则查看：journalctl -u facet -xe"
+err "30 秒内服务未就绪（当前状态：${sub:-未知}）。端口被占用时先查 ss -ltnp | grep :${FACET_PORT}，否则查看：journalctl -u facet -xe"

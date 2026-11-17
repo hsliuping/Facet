@@ -84,7 +84,7 @@ install_standalone_python() {
   for url in \
     "https://registry.npmmirror.com/-/binary/python-build-standalone/$PY_TAG/$file" \
     "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_TAG/$file"; do
-    log "下载独立 CPython $PY_VER：$url"
+    log "下载独立 CPython ${PY_VER}：$url"
     if download "$url" "$tarball" 2>/dev/null; then
       rm -rf "$FACET_HOME/python"
       mkdir -p "$FACET_HOME"
@@ -108,10 +108,12 @@ if [ -z "$PYTHON" ]; then
   install_standalone_python
   PYTHON="$FACET_HOME/python/bin/python3"
 fi
-log "使用 Python：$PYTHON（$("$PYTHON" --version 2>&1)）"
+# 变量名一律用 ${VAR} 包起来：macOS 自带 bash 3.2 会把紧跟的全角字符
+# 并进变量名（$PYTHON（ → 变量 "PYTHON（" 不存在），set -u 下直接报错。
+log "使用 Python：${PYTHON}（$("$PYTHON" --version 2>&1)）"
 
 # 2. venv + 安装（Facet 零第三方依赖，venv 只有标准库+本项目）
-log "安装 Facet 到 $VENV（来源：$SRC）"
+log "安装 Facet 到 ${VENV}（来源：${SRC}）"
 mkdir -p "$FACET_HOME/data" "$FACET_HOME/logs"
 if [ ! -x "$VENV/bin/pip" ]; then
   rm -rf "$VENV"   # 清掉上次失败留下的半成品目录
@@ -123,7 +125,7 @@ fi
 "$VENV/bin/facet" --help >/dev/null 2>&1 || err "facet 命令不可用，安装失败"
 
 # 3. 渲染并装载 launchd（重装先卸旧）
-log "注册 launchd 服务 $LABEL（端口 $FACET_PORT，开机自启 + 崩溃重启）"
+log "注册 launchd 服务 ${LABEL}（端口 ${FACET_PORT}，开机自启 + 崩溃重启）"
 mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|__FACET_HOME__|$FACET_HOME|g" \
     -e "s|__FACET_VENV__|$VENV|g" \
@@ -133,12 +135,14 @@ sed -e "s|__FACET_HOME__|$FACET_HOME|g" \
 launchctl bootout "gui/$UID_N" "$PLIST_DST" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_N" "$PLIST_DST" || launchctl load -w "$PLIST_DST"
 
-# 4. 健康检查
-log "等待服务启动（http://$FACET_HOST:$FACET_PORT）…"
+# 4. 健康检查：零密钥首启没有任何启用的渠道，/health 按设计返回 503
+# all_channels_cooling；这里只要端口有 HTTP 响应（退出码 0）就算服务在跑，
+# 不能加 -f，否则 503 会被当成失败。
+log "等待服务启动（http://$FACET_HOST:${FACET_PORT}）…"
 for _ in $(seq 1 30); do
-  if curl -fsS "http://$FACET_HOST:$FACET_PORT/health" >/dev/null 2>&1; then
+  if curl -sS "http://$FACET_HOST:$FACET_PORT/health" >/dev/null 2>&1; then
     log "Facet 已运行：http://$FACET_HOST:$FACET_PORT/"
-    echo "  控制台管理密码默认 admin，首次登录请更换；数据在 $FACET_HOME/data"
+    echo "  首启管理密钥只打印一次（见 $FACET_HOME/logs/gateway.log），可在控制台「管理密钥」中修改；数据在 $FACET_HOME/data"
     echo "  日志：tail -f $FACET_HOME/logs/gateway.err.log"
     echo "  停止/卸载：tools/macos/uninstall.sh"
     exit 0

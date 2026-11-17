@@ -17,5 +17,5 @@ if [ "${1:-}" = "--purge" ]; then
   rm -rf "$FACET_HOME"
   echo "Facet 已完全移除（$FACET_HOME 已删除）"
 else
-  echo "服务已停止并卸载。配置与日志保留在 $FACET_HOME（传 --purge 一并删除）"
+  echo "服务已停止并卸载。配置与日志保留在 ${FACET_HOME}（传 --purge 一并删除）"
 fi
