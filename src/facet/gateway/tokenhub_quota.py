@@ -74,29 +74,32 @@ GEN_TAG_MARKS = ("图像生成", "图片生成", "视频生成", "生图", "生�
 
 
 def sign_request(secret_id: str, secret_key: str, action: str, body: str,
-                 timestamp: int) -> str:
+                 timestamp: int, host: str = HOST,
+                 service: str = SERVICE) -> str:
     """Authorization header for one request, per Tencent TC3-HMAC-SHA256.
 
     ``timestamp`` is the unix-seconds stamp sent as ``X-TC-Timestamp``; the
     credential scope derives its UTC date. Only the headers we actually send
     (content-type, host, x-tc-action) are signed, and the action value is
-    lowercased in the canonical form per the signature spec.
+    lowercased in the canonical form per the signature spec. ``host`` /
+    ``service`` default to the TokenHub plane; sibling planes (e.g. the
+    billing wallet in hunyuan_quota) sign with their own.
     """
     utc_date = time.strftime("%Y-%m-%d", time.gmtime(timestamp))
     canonical_headers = (
         f"content-type:{CONTENT_TYPE}\n"
-        f"host:{HOST}\n"
+        f"host:{host}\n"
         f"x-tc-action:{action.lower()}\n")
     hashed_body = hashlib.sha256(body.encode("utf-8")).hexdigest()
     canonical_request = "\n".join([
         "POST", "/", "", canonical_headers, SIGNED_HEADERS, hashed_body])
-    scope = f"{utc_date}/{SERVICE}/tc3_request"
+    scope = f"{utc_date}/{service}/tc3_request"
     string_to_sign = "\n".join([
         "TC3-HMAC-SHA256", str(timestamp), scope,
         hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()])
     key = hmac.new(("TC3" + secret_key).encode("utf-8"),
                    utc_date.encode("utf-8"), hashlib.sha256).digest()
-    for part in (SERVICE, "tc3_request"):
+    for part in (service, "tc3_request"):
         key = hmac.new(key, part.encode("utf-8"), hashlib.sha256).digest()
     signature = hmac.new(key, string_to_sign.encode("utf-8"),
                          hashlib.sha256).hexdigest()
@@ -105,22 +108,26 @@ def sign_request(secret_id: str, secret_key: str, action: str, body: str,
 
 
 def _post(secret_id: str, secret_key: str, action: str, body_obj: dict,
-          region: str, timeout: float = 30.0, _urlopen=None) -> dict:
+          region: str, timeout: float = 30.0, _urlopen=None, *,
+          host: str = HOST, service: str = SERVICE,
+          version: str = VERSION) -> dict:
     """One signed management-plane call; raises RuntimeError on any failure."""
     body = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False)
     timestamp = int(time.time())
     headers = {
-        "Host": HOST,
+        "Host": host,
         "Content-Type": CONTENT_TYPE,
         "X-TC-Action": action,
-        "X-TC-Version": VERSION,
-        "X-TC-Region": region,
+        "X-TC-Version": version,
         "X-TC-Timestamp": str(timestamp),
         "Authorization": sign_request(secret_id, secret_key, action, body,
-                                      timestamp),
+                                      timestamp, host, service),
     }
+    if region:
+        headers["X-TC-Region"] = region
     req = urllib.request.Request(
-        ENDPOINT, data=body.encode("utf-8"), headers=headers, method="POST")
+        f"https://{host}", data=body.encode("utf-8"), headers=headers,
+        method="POST")
     try:
         opener = _urlopen or urllib.request.urlopen
         with opener(req, timeout=timeout) as resp:
