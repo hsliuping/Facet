@@ -34,3 +34,6 @@ router.example.json
 data/
 # Compose secrets: real gateway/admin keys (see compose.yaml)
 .env
+
+# Software-copyright application material: private paperwork, kept on disk only
+docs/software-copyright/
