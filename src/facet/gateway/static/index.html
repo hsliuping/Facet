@@ -641,17 +641,20 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
-                <h3>定时保活</h3>
-                <p class="sub-note">把下面这条命令加到任务计划程序（Windows 安装版）或 crontab（容器版）定时执行，可在凭据失效前自动登录并刷新 Cookie。</p>
+                <h3>定时保活 / 排程</h3>
+                <p class="sub-note">把下面的命令加到任务计划程序（Windows 安装版）或 crontab（容器版）定时执行：--ensure-login 在凭据失效前自动登录并刷新 Cookie；--checkin 领取每日魔粒（纯 HTTP，无需浏览器）。</p>
               </div>
             </div>
             <div class="guide-body">
               <pre>rem Windows 安装版
 "%LOCALAPPDATA%\Programs\Facet\agent.cmd" --ensure-login https://www.modelscope.cn/my/overview
+"%LOCALAPPDATA%\Programs\Facet\agent.cmd" --checkin
 
 rem 容器版
-docker run --rm --network host -v ./data:/data facet-combined:latest agent --ensure-login https://www.modelscope.cn/my/overview</pre>
-              <p class="sub-note">退出码 0 表示已登录并已自动恢复；3 表示需要人工更新 cookie 或密码。</p>
+docker run --rm --network host -v ./data:/data facet-combined:latest agent --ensure-login https://www.modelscope.cn/my/overview
+docker run --rm --network host -v ./data:/data facet-combined:latest agent --checkin</pre>
+              <p class="sub-note">退出码 0 表示已登录并已自动恢复（--checkin 则为今日已领或领取成功）；--ensure-login 退出码 3 表示需要人工更新 cookie 或密码。</p>
+              <p class="sub-note">网关自带「魔搭魔粒领取」定时任务（每天 08:30-10:00 随机执行一次，任务表可见；modelscope_checkin_hours=0 可关闭），默认已自动领取，无需另行排程 --checkin。</p>
             </div>
           </div>
         </section>
@@ -1065,7 +1068,7 @@ docker run --rm --network host -v ./data:/data facet-combined:latest agent --ens
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261116-1"></script>
+  <script src="/static/app.js?v=20261117-1"></script>
   <script src="/static/setup.js?v=20261114-1"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 import secrets
 import shutil
@@ -18,7 +19,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from . import subscriptions as subs
 from . import ui
@@ -29,8 +30,8 @@ from . import providers as providers_mod
 from . import facts as facts_mod
 from . import watch as watch_mod
 from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
-               minimax_quota, moonshot_quota, opencode_quota,
-               openrouter_quota, zhipu_quota)
+               minimax_quota, modelscope_quota, moonshot_quota,
+               opencode_quota, openrouter_quota, zhipu_quota)
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -179,6 +180,7 @@ CHANNEL_USAGE_FETCHERS = {
     "zhipu": zhipu_quota.fetch_account_report,
     "minimax": minimax_quota.fetch_usage,
     "moonshot": moonshot_quota.fetch_balance,
+    "modelscope": modelscope_quota.fetch_balance,
 }
 # Management-plane wallets: these authenticate with the account's AK/SK pair
 # from the credential chain (resolve_creds), not with the data-plane key the
@@ -846,6 +848,68 @@ class WatchRunner(ScheduledTask):
         return report.get("summary") or "监视完成"
 
 
+class ModelScopeCheckinRunner(ScheduledTask):
+    """Scheduled ModelScope magicube claim (modelscope_quota).
+
+    ModelScope has no check-in API: the daily grant lands with the day's
+    first website sign-in, and one signed-in request to login/info is
+    enough to make that happen. Every ModelScope channel's api_key doubles
+    as its web session token, so the sweep claims the grant over plain
+    HTTP — no browser. Idempotent per Beijing day: a second run on the
+    same day sees the grant already in the ledger and does nothing. The
+    sweep runs once per Beijing morning inside the 08:30-10:00 window
+    (random minute per day), not on a plain interval; the hours value is
+    an enable switch (0 disables) and a status hint.
+    """
+
+    key = "modelscope_checkin"
+    label = "魔搭魔粒领取"
+    description = "以一次登录请求触发魔搭每日魔粒发放并核对流水（每天 08:30-10:00 随机执行）"
+    hours_key = "modelscope_checkin_hours"
+    FIRST_DELAY = 240.0
+    _OUTCOMES = {"done": "今日已领", "claimed": "领取成功",
+                 "inactive": "登录成功但未见发放"}
+
+    def run_once(self) -> str:
+        channels = [c for c in self.app.config.channels
+                    if getattr(c, "provider", "") == "modelscope"
+                    and getattr(c, "enabled", True)]
+        if not channels:
+            return "没有启用的魔搭渠道"
+        parts = []
+        for channel in channels:
+            try:
+                result = modelscope_quota.checkin(channel.api_key)
+            except Exception as exc:
+                parts.append(f"{channel.name} 失败：{exc}")
+                continue
+            word = self._OUTCOMES.get(result.get("outcome"),
+                                      str(result.get("outcome")))
+            balance = result.get("balance")
+            tail = f"，余额 {balance:g}" if isinstance(balance, (int, float)) else ""
+            parts.append(f"{channel.name} {word}{tail}")
+        return "；".join(parts)
+
+    def next_delay(self) -> float:
+        """Seconds until the next 08:30-10:00 window slot (Beijing time).
+
+        The minute is seeded by the Beijing date, so every calculation of
+        "next run" for the same day agrees — the console display and the
+        loop timer never diverge.
+        """
+        now = datetime.now(timezone(timedelta(hours=8)))
+        day = now
+        for _ in range(2):
+            seed = random.Random(day.strftime("%Y%m%d"))
+            minute = seed.randrange(0, 91)  # 08:30 .. 10:00
+            target = (day.replace(hour=8, minute=30, second=0, microsecond=0)
+                      + timedelta(minutes=minute))
+            if target > now:
+                return max(60.0, (target - now).total_seconds())
+            day = day + timedelta(days=1)
+        return 3600.0
+
+
 class HealthProber:
     """Background liveness probes for channels sitting in a short cooldown.
 
@@ -1091,6 +1155,7 @@ class App:
         self.free_align_runner: "FreeAlignRunner | None" = None
         self.free_verify_runner: "FreeVerifyRunner | None" = None
         self.watch_runner: "WatchRunner | None" = None
+        self.modelscope_checkin_runner: "ModelScopeCheckinRunner | None" = None
         self.maintenance_reports: list[dict] = self._load_report_history("maintenance.jsonl")
         self.free_align_reports: list[dict] = self._load_report_history("freealign.jsonl")
         self.maintenance_lock = threading.Lock()
@@ -1138,6 +1203,7 @@ class App:
         self.free_align_runner = FreeAlignRunner(self)
         self.free_verify_runner = FreeVerifyRunner(self)
         self.watch_runner = WatchRunner(self)
+        self.modelscope_checkin_runner = ModelScopeCheckinRunner(self)
         if self.config.defaults.catalog_refresh_hours:
             self.catalog_refresher.start()
         if self.config.defaults.maintenance_hours:
@@ -1148,6 +1214,8 @@ class App:
             self.free_verify_runner.start()
         if self.config.defaults.watch_hours:
             self.watch_runner.start()
+        if self.config.defaults.modelscope_checkin_hours:
+            self.modelscope_checkin_runner.start()
         # Created even when switched off, so the console can list the sweep;
         # the thread only runs with a positive probe_interval_seconds.
         self.health_prober = HealthProber(self, self.config.defaults.probe_interval_seconds)
@@ -1163,6 +1231,8 @@ class App:
             self.free_verify_runner.stop()
         if self.watch_runner:
             self.watch_runner.stop()
+        if self.modelscope_checkin_runner:
+            self.modelscope_checkin_runner.stop()
         if self.catalog_refresher:
             self.catalog_refresher.stop()
         if self.health_prober:
@@ -3490,7 +3560,7 @@ class App:
         """The console's task list: cycle, latest outcome and next run."""
         runners = (self.catalog_refresher, self.maintenance_runner,
                    self.free_align_runner, self.free_verify_runner,
-                   self.watch_runner)
+                   self.watch_runner, self.modelscope_checkin_runner)
         tasks = [runner.status() for runner in runners if runner]
         if self.notifier:
             tasks.append(self._notifier_task())

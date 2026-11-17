@@ -516,6 +516,11 @@ class Defaults:
     # and their model-set changes recorded as console change events. The
     # watch only observes — it never edits config or registry data.
     watch_hours: int = 12
+    # 0 disables the daily ModelScope magicube check-in (modelscope_quota):
+    # a signed-in login/info request claims the day's grant. The value is an
+    # enable switch and a status hint — the sweep itself runs once per Beijing
+    # morning (random minute in 08:30-10:00), not on a plain interval.
+    modelscope_checkin_hours: int = 24
     # Usage buckets (days/users) older than this are pruned on the day
     # switch, keeping usage.json and the model_usage scans bounded.
     # 0 keeps everything forever.
@@ -815,6 +820,7 @@ def parse_config(raw: dict) -> Config:
         free_align_hours=float(d.get("free_align_hours", 0.5)),
         free_verify_hours=int(d.get("free_verify_hours", 6)),
         watch_hours=int(d.get("watch_hours", 12)),
+        modelscope_checkin_hours=int(d.get("modelscope_checkin_hours", 24)),
         usage_retention_days=int(d.get("usage_retention_days", 180)),
         disk_min_free_mb=int(d.get("disk_min_free_mb", 512)),
         not_found_cooldown_hours=int(d.get("not_found_cooldown_hours", 24)),
