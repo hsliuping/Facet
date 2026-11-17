@@ -283,6 +283,15 @@ function keyText(key) {
   return '已保存（不显示）';
 }
 
+// Short key thumbnail for compact UIs (dashboard): enough prefix/suffix to
+// recognise the key, never the whole value — copy hands over the full one.
+function maskKey(key) {
+  const s = String(key || '');
+  if (!s) return '';
+  return s.length <= 14 ? s.slice(0, 2) + '…' + s.slice(-2)
+    : s.slice(0, 8) + '…' + s.slice(-4);
+}
+
 function serializeModels(models) {
   return Object.entries(models || {}).map(([k, v]) => k + '=' + v).join('\n');
 }
@@ -885,7 +894,7 @@ document.addEventListener('click', (e) => {
 // maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
 // the trend chart, free-quota alignment and backup counts. No backend logic.
 async function loadDashboard() {
-  const [snap, usage, maint, backups, dsh, subsData] = await Promise.all([
+  const [snap, usage, maint, backups, dsh, subsData, keys] = await Promise.all([
     api('/api/state'),
     api('/api/usage/7').catch(() => null),
     api('/api/maintenance').catch(() => null),
@@ -894,6 +903,9 @@ async function loadDashboard() {
     // Per-account plan windows live on /api/subscriptions; the vendor calls
     // behind it are TTL-cached server-side, so polling this is cheap.
     api('/api/subscriptions').catch(() => null),
+    // The dashboard auth row shows a masked master key plus a copy button,
+    // so it needs the same payload the access page uses.
+    api('/api/keys').catch(() => null),
   ]);
   state.snapshot = snap;
   if (usage) state.dashUsage = usage;
@@ -904,12 +916,69 @@ async function loadDashboard() {
     state.subs = subsData;
     renderSubscriptions();
   }
+  if (keys) accessState.keys = keys;
   renderDashboard();
 }
 
 function dashRow(label, html) {
   return `<div class="dash-kv-row"><span class="k">${label}</span><span class="v">${html}</span></div>`;
 }
+
+// Dashboard access card: the auth row shows a masked master key with a
+// one-click copy (the full value never enters the DOM), the model row lists
+// branded names with a "more" expander once the list outgrows a few chips.
+let dashModelsExpanded = false;
+
+function renderDashAccess(s) {
+  const brandedNames = Object.keys(((state.config || {}).models || {}).branded || {});
+  const exactCount = (s.model_states || []).length;
+  const keysLoaded = accessState.keys !== null;
+  const master = keysLoaded ? (accessState.keys.master || '') : '';
+
+  let auth;
+  if (!keysLoaded) auth = '—';
+  else if (master) {
+    auth = `<code>Bearer ${esc(maskKey(master))}</code> `
+      + '<button class="btn small ghost" data-copy-master>复制</button>';
+  } else {
+    auth = '未设置（网关不校验密钥）';
+  }
+
+  let models;
+  if (!brandedNames.length) {
+    models = `${exactCount} 个精确名 · 内部调度始终可用`;
+  } else if (dashModelsExpanded) {
+    models = brandedNames.map((n) => `<code>${esc(n)}</code>`).join(' ')
+      + ` <span class="sub-note">· ${exactCount} 个精确名</span> `
+      + '<button class="btn small ghost" data-dash-models-toggle>收起</button>';
+  } else {
+    const shown = brandedNames.slice(0, 3);
+    const rest = brandedNames.length - shown.length;
+    models = shown.map((n) => `<code>${esc(n)}</code>`).join(' ');
+    models += rest > 0
+      ? ` <button class="btn small ghost" data-dash-models-toggle>更多 ${rest} 个</button>`
+      : ` <span class="sub-note">· ${exactCount} 个精确名</span>`;
+  }
+
+  $('dash-access').innerHTML = [
+    dashRow('接入地址', `<code>${esc(location.origin)}/v1</code>`),
+    dashRow('鉴权', auth),
+    dashRow('模型名', models),
+  ].join('');
+}
+
+$('dash-access').addEventListener('click', (e) => {
+  if (e.target.closest('[data-copy-master]')) {
+    const master = (accessState.keys || {}).master;
+    if (master) copyText(master);
+    else toast('当前没有配置主密钥', 'warn');
+    return;
+  }
+  if (e.target.closest('[data-dash-models-toggle]')) {
+    dashModelsExpanded = !dashModelsExpanded;
+    renderDashAccess(state.snapshot || {});
+  }
+});
 
 function renderDashboard() {
   const s = state.snapshot;
@@ -960,16 +1029,7 @@ function renderDashboard() {
   ].join('');
 
   // 接入信息速览：下游接入三要素（地址 / 鉴权 / 模型名）的实时摘要。
-  const brandedNames = Object.keys(((state.config || {}).models || {}).branded || {});
-  const exactCount = (s.model_states || []).length;
-  $('dash-access').innerHTML = [
-    dashRow('接入地址', `<code>${esc(location.origin)}/v1</code>`),
-    dashRow('鉴权', '<code>Authorization: Bearer &lt;Key&gt;</code>'),
-    dashRow('模型名', brandedNames.length
-      ? `${brandedNames.length} 个自有名 · ${exactCount} 个精确名`
-      : `${exactCount} 个精确名 · 内部调度始终可用`),
-    dashRow('完整配置', '<button class="btn small ghost" data-goto-tab="access">打开接入信息页</button>'),
-  ].join('');
+  renderDashAccess(s);
 
   // 运行健康（稳定）：failover 面板。
   $('dash-health').innerHTML = [
