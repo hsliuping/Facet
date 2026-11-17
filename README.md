@@ -107,8 +107,8 @@ facet serve                  # 默认监听 127.0.0.1:8787
 ```
 
 - **首启引导**：没有 `router.json` 时自动生成种子配置（仅含禁用的免费层模板渠道：NVIDIA NIM / Google AI Studio / Z.AI），需注册 Key 后在控制台启用。
-- 浏览器打开 `http://127.0.0.1:8787/` 进入控制台；管理员密钥默认 `admin`，
-  首次登录后在「管理密钥」里换掉。
+- 浏览器打开 `http://127.0.0.1:8787/` 进入控制台；管理密钥首次启动随机生成，
+  只在启动日志里打印一次（打开控制台时填入，之后可在「管理密钥」页换成自己的值）。
 - 全新环境会自动弹出「新手配置向导」（右上角「快速开始」可随时重开）：
   设置管理密码 → 选厂家填 Key（自动测试连通，火山/百炼可一并填 AK/SK 供免费额度对齐）
   → 生成调用密钥，一路走完即可路由。
@@ -143,7 +143,9 @@ docker compose up -d         # 控制台 http://localhost:8787（ROUTER_PORT 可
   种子化厂家预置渠道，随后删掉 compose 里的 `mock` 服务即可。
 - 配置、状态、日志都落在宿主机 `./data/`（bind mount）。改了
   `./data/router.json` 后 `POST /api/reload` 热加载，或直接在控制台编辑。
-- 密钥经环境变量注入：`ROUTER_API_KEY`、`ROUTER_ADMIN_KEY`；火山引擎 IAM
+- 密钥经环境变量注入：`ROUTER_API_KEY`、`ROUTER_ADMIN_KEY`；未设置
+  `ROUTER_ADMIN_KEY` 时，entrypoint 会在首启生成随机管理密钥并打印在容器日志
+  （`docker compose logs router`）。火山引擎 IAM
   AK/SK 用 `VOLC_ACCESSKEY` / `VOLC_SECRETKEY`（也可在控制台渠道编辑器里填，
   UI 配置优先）。
 
@@ -168,8 +170,56 @@ docker compose up -d         # 控制台 http://localhost:8787（ROUTER_PORT 可
 - **`listen.api_key`**——调用 `/v1/*` 与 `/api/*` 的成员密钥；支持
   `env:VAR` 写法从环境变量读取，明文不落配置。控制台「API Keys」可为每个
   成员签发独立 key。
-- **`listen.admin_key`**——管理面密钥；未设置时默认 `admin`（`--check`
-  会警告），部署后务必在控制台「管理密钥」里轮换。
+- **`listen.admin_key`**——管理面密钥；没有内置默认密码：首次启动会随机生成
+  并在日志里打印一次。已配置 `api_key` 但未设置 `admin_key` 时管理接口直接
+  拒绝（401），`--check` 会提醒；登录控制台后可在「管理密钥」里换成自己的值。
+
+### 升级：管理密钥改为随机生成
+
+本版本移除了内置默认管理密码 `admin`（硬编码凭据，CWE-798）。管理接口的
+行为按凭据状态分三种：
+
+| 配置状态 | 管理接口行为 |
+|---|---|
+| `listen.admin_key` 已设置 | 只认这个密钥 |
+| `api_key`、`admin_key` 都未设置 | 控制台开放（默认仅监听 `127.0.0.1`） |
+| `api_key` 已设置、`admin_key` 未设置 | **锁定**，管理接口一律返回 401 |
+
+全新安装不受影响：首启自动随机生成密钥。**旧版本升级、且原来一直用默认
+`admin` 登录的部署**，按下面步骤补齐密钥（旧配置不会被静默改写）：
+
+1. 先检查状态：
+
+   ```bash
+   facet serve --check
+   ```
+
+   出现 `WARNING: listen.admin_key is unset while listen.api_key is set`
+   即说明管理接口已锁定。
+2. 在 `router.json` 的 `listen` 块里显式写入 `admin_key`（想让密钥只走环境
+   变量、不落盘，就写 `"admin_key": "env:ROUTER_ADMIN_KEY"`）：
+
+   ```json
+   { "listen": { "api_key": "…", "admin_key": "你的管理密钥" } }
+   ```
+
+3. 重启 `facet serve` 生效。注意管理接口处于锁定状态时无法调用
+   `POST /api/reload` 热加载（它也要鉴权），所以此处只能重启。
+4. 重新打开控制台，右上角「管理密钥」会要求填入刚设置的密钥，填入即可正常
+   管理；之后可在「管理密钥」页面里再验证旧值、换成自己的值。
+
+Docker 部署同理：
+
+- 已有 `./data/router.json`：停掉容器，在 `compose.yaml` 旁的 `.env` 里设置
+  `ROUTER_ADMIN_KEY=<你的密钥>` 再 `docker compose up -d`。此前依赖 compose
+  默认值 `admin` 的部署必须补这一步，否则管理接口会锁定（配置文件里是
+  `env:` 引用，entrypoint 不会改写已存在的配置）；也可以直接改
+  `./data/router.json` 里的 `listen.admin_key`。
+- 全新部署（还没有 `./data/router.json`）：不设置 `ROUTER_ADMIN_KEY` 时，
+  entrypoint 会生成随机密钥并打印在首启日志里。
+
+以上各场景可直接复制的完整配置片段（明文 / `env:` 引用 / `.env` 文件 /
+验证命令）见 [docs/upgrade-keys-examples.md](docs/upgrade-keys-examples.md)。
 
 下游 agent 的完整接入指南（端点、模型命名、错误码、SDK 示例）：
 [docs/agent-integration.md](docs/agent-integration.md)（控制台「数据 → 接入文档」页面可直接阅读）。
