@@ -34,6 +34,70 @@ BASE_URL_LINE = re.compile(r"^\s*baseURL:\s*(\S+)\s*$", re.MULTILINE)
 MODELS_LINE = re.compile(r"^\s*models:\s*$")
 LOG_LINES = 80
 START_TIMEOUT = 90.0
+DEFAULT_BASE_URL = "http://127.0.0.1:8787"
+
+# 与 docker/dsh-profile 同款：provider "facet" 指向本机网关，
+# apiKeyEnv 复用启动时透传的 ROUTER_API_KEY，无需用户把密钥复制进 profile。
+_PROFILE_PACKAGE = {
+    "name": "dsh-profile-facet-web",
+    "private": True,
+    "dependencies": {},
+    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base",
+                                    "@deepseek-ai/dsh-web-app"]}},
+}
+
+_PROFILE_PATCH = (
+    "# DSH profile seeded by the Facet gateway on first launch.\n"
+    "# provider \"facet\" points at this gateway's loopback address;\n"
+    "# apiKeyEnv reuses ROUTER_API_KEY handed over at launch.\n"
+    "- id: agent-default-model\n"
+    "  config:\n"
+    "    provider: facet\n"
+    "    model: facet-auto\n"
+    "- id: llm-pi-ai\n"
+    "  config:\n"
+    "    providers:\n"
+    "      facet:\n"
+    "        apiKeyEnv: ROUTER_API_KEY\n"
+    "        api: openai-completions\n"
+    "        baseURL: {base_url}/v1\n"
+    "        compat:\n"
+    "          supportsDeveloperRole: false\n"
+    "          maxTokensField: max_tokens\n"
+    "        models:\n"
+    "          - id: \"facet-auto\"\n"
+    "            name: \"自动 · 默认链\"\n"
+    "          - id: \"facet-cheap\"\n"
+    "            name: \"自动 · 省钱链\"\n"
+    "- id: ui-settings-general\n"
+    "  name: \"@deepseek-ai/dsh-client-ui-settings-general\"\n"
+    "  config:\n"
+    "    welcomeNoticeVersion: 2026-09-28.1\n"
+)
+
+
+def ensure_profile(profile: str = WEB_PROFILE,
+                   base_url: str = DEFAULT_BASE_URL) -> None:
+    """Create the facet-web profile on first launch, wired to this gateway.
+
+    Mirrors docker/dsh-profile (seeded by the container entrypoint) so a
+    Windows install works without a manual ``dsh --profile facet-web`` step.
+    An existing profile is never overwritten.
+    """
+    directory = profile_dir(profile)
+    patch = directory / "cordis.patch.yml"
+    manifest = directory / "package.json"
+    if patch.is_file():
+        # The operator (or dsh itself) already created this profile; never
+        # overwrite a hand-edited patch layer with the generated wiring.
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    patch.write_text(_PROFILE_PATCH.format(base_url=base_url.rstrip("/")),
+                     encoding="utf-8")
+    if not manifest.is_file():
+        manifest.write_text(json.dumps(_PROFILE_PACKAGE, indent=2) + "\n",
+                            encoding="utf-8")
+
 
 # Friendly labels for the ids the router itself owns; a bare `auto:<route>`
 # or `facet:<route>` falls back to the generic form below.
@@ -298,8 +362,8 @@ def status(profile: str = WEB_PROFILE) -> dict:
         state["note"] = ("未找到 dsh 命令：管理界面需与 dsh 装在同一台宿主机；"
                          "容器里没有该客户端。")
     elif not state["profile_exists"]:
-        state["note"] = (f"缺少 dsh profile {profile}；先在终端运行一次 "
-                         f"dsh --profile {profile} 生成。")
+        state["note"] = (f"缺少 dsh profile {profile}：点「启动 DSH」会自动生成并指向"
+                         f"本网关（也可在终端运行 dsh --profile {profile} 生成）。")
     elif entry is not None and not state["running"]:
         state["note"] = entry.get("error") or "上次启动的 dsh 已退出。"
     elif state["running"] and not state["url"]:
@@ -308,21 +372,23 @@ def status(profile: str = WEB_PROFILE) -> dict:
 
 
 def start_web(api_key: str | None = None, profile: str = WEB_PROFILE,
-              port: int | None = None) -> dict:
+              port: int | None = None, base_url: str | None = None) -> dict:
     """Spawn the DSH web profile and return the tokenised URL.
 
     The profile prints the URL after its loader settles, so the caller waits
     for it instead of guessing the port. A previously spawned process is
     reused; nothing is opened in a browser here, the console decides that.
+    A missing profile is seeded on the spot (ensure_profile), so a fresh
+    Windows install can launch DSH without a manual profile step.
     """
     with _start_lock:
         cli = find_cli()
         if not cli["path"]:
             raise DshError("未找到 dsh 命令：管理界面需与 dsh 装在同一台宿主机")
-        directory = profile_dir(profile)
-        if not (directory / "package.json").is_file():
-            raise DshError(f"缺少 dsh profile {profile}；先运行一次 "
-                           f"dsh --profile {profile} 生成")
+        try:
+            ensure_profile(profile, base_url or DEFAULT_BASE_URL)
+        except OSError as exc:
+            raise DshError(f"无法创建 dsh profile {profile}：{exc}") from exc
         with _lock:
             existing = _runs.get(profile)
             already = existing is not None and _alive(existing["proc"])

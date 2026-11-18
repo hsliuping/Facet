@@ -61,7 +61,8 @@ class DshProfileTest(unittest.TestCase):
             state = dsh.status()
         self.assertTrue(state["installed"])
         self.assertFalse(state["profile_exists"])
-        self.assertIn("dsh --profile facet-web", state["note"])
+        self.assertIn("facet-web", state["note"])
+        self.assertIn("自动生成", state["note"])
 
     def test_start_web_refuses_without_the_client(self):
         with mock.patch.object(dsh, "find_cli", return_value={
@@ -69,11 +70,27 @@ class DshProfileTest(unittest.TestCase):
             with self.assertRaises(dsh.DshError):
                 dsh.start_web()
 
-    def test_start_web_refuses_without_the_profile(self):
-        with mock.patch.object(dsh, "find_cli", return_value={
-                "path": "C:/npm/dsh.cmd", "bin": "", "version": ""}):
-            with self.assertRaises(dsh.DshError):
-                dsh.start_web()
+    def test_start_web_seeds_a_missing_profile(self):
+        # A fresh install has no profile: start_web must create it pointing at
+        # the gateway instead of refusing with "run dsh --profile facet-web".
+        cli = {"path": "C:/npm/dsh.cmd",
+               "bin": "C:/npm/lib/node_modules/@deepseek-ai/dsh/lib/bin.js",
+               "version": "0.2.2-rc.1"}
+        fake_proc = mock.Mock()
+        # Exit immediately with no URL: start_web must still have seeded the
+        # profile files; the runtime failure is out of scope here.
+        fake_proc.poll.return_value = 1
+        fake_proc.returncode = 1
+        fake_proc.stdout = iter([])
+        with mock.patch.object(dsh, "find_cli", return_value=cli), \
+                mock.patch.object(dsh, "_node", return_value="C:/node/node.exe"), \
+                mock.patch.object(dsh.subprocess, "Popen", return_value=fake_proc):
+            dsh.start_web()
+        directory = self.home / "profiles" / "facet-web"
+        self.assertTrue((directory / "package.json").is_file())
+        patch = (directory / "cordis.patch.yml").read_text(encoding="utf-8")
+        self.assertIn("baseURL: http://127.0.0.1:8787/v1", patch)
+        self.assertIn("apiKeyEnv: ROUTER_API_KEY", patch)
 
 
 class DshModelsTest(unittest.TestCase):

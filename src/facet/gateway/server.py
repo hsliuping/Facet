@@ -3390,12 +3390,19 @@ class App:
 
         The gateway key is handed over as ROUTER_API_KEY, which the profile's
         patch layer reads, so the spawned client can authenticate without the
-        operator copying a secret into its config. The profile's model list is
-        refreshed first: auto modes and real backend models stay selectable
+        operator copying a secret into its config. A fresh install ships no
+        profile, so it is seeded pointed at this gateway before the model
+        list is refreshed: auto modes and real backend models stay selectable
         together, and channels enabled since the last launch show up.
         """
+        host = (self.config.listen.host or "").strip()
+        if host in ("", "0.0.0.0", "::"):
+            host = "127.0.0.1"
+        base_url = f"http://{host}:{self.config.listen.port}"
+        dsh_mod.ensure_profile(base_url=base_url)
         dsh_mod.sync_models(self.dsh_models())
-        return dsh_mod.start_web(api_key=self.config.listen.api_key, port=port)
+        return dsh_mod.start_web(api_key=self.config.listen.api_key, port=port,
+                                 base_url=base_url)
 
     def _backup_config(self, tag: str) -> None:
         if not self.config_path or not self.config_path.is_file():
