@@ -76,6 +76,9 @@
 | 16 | NVIDIA NIM | ✅ 免费层=速率限制（约 40 RPM，控制台右上角显示） | ❌ 无按量付费通道；提额需付费部署/自托管 | 免费层是速率限制非 credits；10,000 请求/日为页面嵌入值、非官方承诺 |
 | 17 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
 | 18 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
+| 19 | 硅基流动 SiliconFlow | ✅ 3 个永久免费模型（真 0 元计费）+ 注册实名赠 ¥16 | payg（含永久免费模型） | **已接入**：`facet-siliconflow-quota` 免费清单对齐 + `/v1/user/info` 余额用量卡；Qwen3-8B 已转付费故剔除 |
+| 20 | 中国电信（teleAI / TokenHub / 息壤） | ✅ 一次性试用包：TokenHub 50 万/模型/14 天、息壤 DeepSeek 2500 万/模型、teleAI Xing4.0-29B 1 亿 | payg（一次性额度包） | **已接入**：无剩余额度 API，用渠道编辑器「一次性额度包」按模型登记面额与到期日，用完/到期自动停该模型（见 4.12） |
+| 21 | 国家超算互联网 SCNet | ✅ 注册实名赠 1000 万 tokens（核心节点 +1000 万、反馈最高 +5000 万，均可叠加） | payg（一次性额度包） | **已接入**：OpenAI + Anthropic 双协议；无剩余额度 API（仅现金余额），同样走一次性额度包账本（见 4.13） |
 
 ---
 
@@ -751,6 +754,135 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 **适用场景**：需要 DeepSeek / GLM 等第三方模型的国内合规接入，或已实名的百度智能云主体。
 
 **⚠️ 备注**：`agent` 端点为 Token Plan 个人版路径（`tokenplan/personal`），订阅档位以控制台为准。
+
+---
+
+### 4.11 硅基流动 SiliconFlow
+
+**官方入口**：[https://cloud.siliconflow.cn](https://cloud.siliconflow.cn)（控制台 API 密钥页 [cloud.siliconflow.cn/account/ak](https://cloud.siliconflow.cn/account/ak)）；国内站注册需 +86 手机号 + 实名认证，实名后才能使用全部免费模型（国际站不面向大陆用户）。
+
+**免费额度**：
+
+- **新用户注册实名赠 ¥16 体验金**（无有效期）；**永久免费模型消耗不扣赠金**。
+- **永久免费模型**（真 0 元计费，不扣赠金、不扣充值，官方定价页 2026-11-17 核实）：
+  - `XingChenAGI/Xing4.0-29B`（256K 上下文、原生工具调用）
+  - `THUDM/GLM-Z1-9B-0414`
+  - `tencent/Hunyuan-MT-7B`
+- `PaddlePaddle/PaddleOCR-VL-1.5` 为 OCR 专用、Embedding（BAAI/bge-*）与语音模型不服务 chat completions，均不纳入免费清单。
+- **已剔除**：原第三方快照中的 `Qwen/Qwen3-8B` 在官方定价页已转为付费（Qwen3.5-9B ¥0.5/¥4.0），不再列入。
+- 官方定价页是 HTML，无 JSON 免费清单 API；免费清单由 `facet-siliconflow-quota` CLI 内置维护。
+
+**步骤**
+
+1. 打开[硅基流动官网](https://cloud.siliconflow.cn)，用 +86 手机号注册并完成实名认证（实名后免费模型才全部可用）；
+2. 登录后进入控制台「API 密钥」页（[cloud.siliconflow.cn/account/ak](https://cloud.siliconflow.cn/account/ak)），点「新建 API 密钥」，填名称（如 `facet`）；
+3. 创建后**立即复制** `sk-` 开头的 Key（只显示一次）；
+4. 把 Key 填进 Facet 渠道「API Key」（也可用环境变量 `SILICONFLOW_API_KEY`）。
+
+**渠道参数**（在 Facet 中配置时）：
+
+| 字段 | 值 |
+|---|---|
+| 协议 | `openai` |
+| 端点 | `https://api.siliconflow.cn/v1` |
+| 模式 | `payg`（按量付费，含永久免费模型） |
+| tier | `free` |
+| free_limits | `note: 免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）` |
+| free_quota_cmd | `facet-siliconflow-quota --output json`（已接入 0.5h 额度对齐管线） |
+
+**模式说明**：
+
+- `payg`：`tier: "free"`，`free_models` 为 `XingChenAGI/Xing4.0-29B`、`THUDM/GLM-Z1-9B-0414`、`tencent/Hunyuan-MT-7B`（顺序即 `$free` 偏好，`auto` 指向首个）；
+- 免费清单是策略级（所有账号相同），因此 `free_quota_cmd` **不需要任何管理面凭证**，`credential_envs` 为空数组；数据面 API Key 仍用于推理与用量卡；
+- 免费模型按 0 元计费（不扣赠金），因此额度对齐使用大哨兵值，UI 显示「充足」，不会误告警。
+
+**套餐使用说明**
+
+- **余额 / 用量（已接入）**：经同一 Bearer Key 调 `GET https://api.siliconflow.cn/v1/user/info`，渠道卡展示「赠金 ¥x · 充值 ¥y · 合计 ¥z」（`balance` / `chargeBalance` / `totalBalance`，元）；
+- **免费额度对齐（已接入）**：`facet-siliconflow-quota` 每日参与 `$free` 对齐，免费模型消耗不扣赠金；免费清单变动随 CLI 版本更新；
+- **ToS 提示**：官方禁止转售及「使平台服务惠及自身以外的第三方」——个人自用与魔搭/百炼风险等级一致；若将来做代理商变现需重新评估。
+
+**常见模型**：`XingChenAGI/Xing4.0-29B`、`THUDM/GLM-Z1-9B-0414`、`tencent/Hunyuan-MT-7B`。
+
+**适用场景**：个人开发试用、快速原型验证、零成本的日常对话与翻译（Hunyuan-MT-7B）、需要工具调用的 Agent 实验（Xing4.0-29B）。
+
+---
+
+### 4.12 中国电信（teleAI / TokenHub / 息壤）
+
+**官方入口**：天翼云 AI 开放网关 [https://ai.ctaigw.cn](https://ai.ctaigw.cn)；teleAI 产品页 [https://www.teleai.com.cn](https://www.teleai.com.cn)；接口文档 [天翼云 OpenAI 兼容接口](https://www.ctyun.cn/document/11061839/11097250)（服务组 / APP Key 说明见 [11094224/11094241](https://www.ctyun.cn/document/11094224/11094241)）。
+
+**免费额度（均一次性，用完即止，不循环）**：
+
+| 子平台 | 额度 | 有效期 |
+|---|---|---|
+| TokenHub | 所有试用模型各赠 50 万 tokens | 14 天，同模型限领一次 |
+| 息壤 | DeepSeek 系每模型 2500 万 tokens；Qwen 部分模型 100 万 | 约 2 周 |
+| teleAI | `Xing4.0-29B` 免费 1 亿 tokens（5 QPS、512K 上下文、支持工具调用） | 试用期内 |
+
+**额度查询**：无公开 API，仅控制台「用量查询」网页——这是第一个走**固定额度包账本**的厂家：领取后在渠道编辑器「一次性额度包」按模型登记面额（tokens）与到期日，网关按响应 `usage` 逐次扣减，用完或到期自动停该模型（同渠道兄弟模型不受影响）。
+
+**步骤**
+
+1. 注册天翼云 / teleAI 账号并完成实名；
+2. 在对应子平台（TokenHub / 息壤 / teleAI）领取试用额度，并在控制台「服务组」生成 APP Key（Bearer 调用）；
+3. **立即记录**每个模型的面额与到期日（以领取页/控制台展示为准）；
+4. 在 Facet 渠道里登记：API Key 填 APP Key（或环境变量 `CTYUN_APP_KEY`），模型映射填实际可用的模型 id，然后在「一次性额度包」为每个模型登记面额与到期日。
+
+**渠道参数**（seed 模板 `teleai-xing`，默认不启用）：
+
+| 字段 | 值 |
+|---|---|
+| 协议 | `openai` |
+| 端点 | `https://ai.ctaigw.cn/v1` |
+| 模式 | `payg`（一次性试用额度包，账本模式） |
+| tier | `free` |
+| 模型映射 | `auto → Xing4.0-29B`（以控制台实际可用为准） |
+| model_quota | `{"Xing4.0-29B": {"tokens": 100000000}}`（面额与到期日按领取记录修改） |
+
+**注意事项**：
+
+- TokenHub / 息壤 / teleAI 额度相互独立：按子平台分别建渠道，或一个厂家多个 channel；
+- 各子平台的试用模型 id 不完全一致，启用前先在控制台确认模型清单（也可先在 Facet 里点「测试」探活）；
+- 到期日填 `YYYY-MM-DD` 即可（含当天）；不填表示长期有效。
+
+---
+
+### 4.13 国家超算互联网 SCNet
+
+**官方入口**：[https://www.scnet.cn](https://www.scnet.cn)；控制台 API Key 页 [控制台 → 模型服务 → API Key](https://www.scnet.cn/ui/console/index.html#/llm/apikeys)；快速开始文档 [quickstart](https://www.scnet.cn/help/docs/mainsite/mass/tutorial/quickstart.html)。
+
+**免费额度（一次性，可叠加）**：
+
+- 新用户注册 + 实名（身份证 + 人脸，免费；个人可注册、无需单位挂靠）赠 **1000 万 tokens** + 200 卡时 + 500G 存储；
+- 核心节点体验再领 1000 万；反馈问题最高再送 5000 万；另有阶段性活动（如 OpenClaw 1000 万 / 2 周）；
+- 付费 Token Plan 每月重置、订户有「夜间免费模型」——属付费权益，暂不作为接入目标。
+
+**额度查询**：无剩余额度 API。公开 OpenAPI「用户资源」返回的 `accountBalance` 是**现金余额**（元），不是 token——token 余量同样走 Facet 的一次性额度包账本（登记面额 + 到期日，逐次扣减）。
+
+**步骤**
+
+1. 打开 [scnet.cn](https://www.scnet.cn) 注册并完成实名认证，领取新用户体验额度；
+2. 进入控制台「模型服务 → API Key」，创建 API Key 并**立即复制**；
+3. 在「模型广场」确认要用的模型 id；
+4. 在 Facet 渠道里登记：API Key（或环境变量 `SCNET_API_KEY`）、模型映射，并在「一次性额度包」登记面额（默认 1000 万，叠加活动后手动改大）与到期日。
+
+**渠道参数**（seed 模板 `scnet`，默认不启用）：
+
+| 字段 | 值 |
+|---|---|
+| 协议 | `openai`（也支持 `anthropic`） |
+| 端点 | `https://api.scnet.cn/api/llm/v1`；Anthropic 兼容 `https://api.scnet.cn/api/llm/anthropic` |
+| 模式 | `payg`（一次性试用额度包，账本模式） |
+| tier | `free` |
+| 模型映射 | `auto → DeepSeek-R1-Distill-Qwen-7B`（官网 quickstart 示例模型，以模型广场为准） |
+| model_quota | `{"DeepSeek-R1-Distill-Qwen-7B": {"tokens": 10000000}}`（叠加活动后手动改） |
+
+**注意事项**：
+
+- Anthropic 兼容端点意味着可以把协议改成 `anthropic` 直接接入编码工具（Cursor / OpenClaw 等），base_url 换成 `…/api/llm/anthropic`；
+- 模型池较大（千问、DeepSeek-V4、Kimi、GLM-5、MiniMax 等），但面额是账户级的：多个模型共用同一笔赠金时，给每个模型都登记额度包会重复计数——只给实际路由的模型登记即可；
+- tool calling 支持与限流官网未明确，接入时先实测。
 
 ---
 

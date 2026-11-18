@@ -23,7 +23,7 @@ class BuiltinRegistryTests(unittest.TestCase):
         ids = [p["id"] for p in self.providers]
         self.assertEqual(len(ids), len(set(ids)))
         for expected in ("volcengine", "zhipu", "deepseek", "moonshot",
-                         "anthropic", "openai"):
+                         "anthropic", "openai", "siliconflow"):
             self.assertIn(expected, ids)
 
     def test_every_mode_is_well_formed(self):
@@ -59,6 +59,21 @@ class BuiltinRegistryTests(unittest.TestCase):
             self.assertTrue(mode.get("free_quota_cmd"), pid)
             got = tuple(e["env"] for e in mode.get("credential_envs") or [])
             self.assertEqual(got, envs, pid)
+
+    def test_siliconflow_free_cli_needs_no_credentials(self):
+        """SiliconFlow's free list is policy-level — the CLI runs keyless.
+
+        facet-siliconflow-quota emits the curated free-chat catalog without
+        any account credential (free models bill ¥0 for every account), so
+        no credential_envs are declared; the data-plane key stays on the
+        channel for inference and the usage card.
+        """
+        mode = provider_by_id(self.providers, "siliconflow")["modes"]["payg"]
+        self.assertEqual(mode.get("free_quota_cmd"),
+                         ["facet-siliconflow-quota", "--output", "json"])
+        self.assertFalse(mode.get("credential_envs"))
+        self.assertEqual(mode.get("tier"), "free")
+        self.assertTrue(mode.get("free_models"))
 
     def test_credential_help_declared_and_expanded(self):
         """AK/SK acquisition walkthrough ships for the two hard vendors.

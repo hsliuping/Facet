@@ -1604,6 +1604,8 @@ def free_models_payload(app) -> dict:
                 elif quota and quota.get("stale"):
                     skip = ("厂家额度超过一个同步周期未更新，整渠道临时冻结"
                             "（等待下次同步，防欠费）")
+                elif quota and quota.get("expired"):
+                    skip = "一次性额度包已过期，已停止路由"
                 elif quota and quota.get("exhausted"):
                     skip = "免费额度已用完，已停止路由（避免按量计费）"
                 elif state.get("cooling"):
@@ -1631,6 +1633,7 @@ def free_models_payload(app) -> dict:
             "rate": {"rpm": channel.rate.rpm, "rpd": channel.rate.rpd,
                      "tpm": channel.rate.tpm, "tpd": channel.rate.tpd},
             "free_limits": mode_meta.get("free_limits") or None,
+            "one_time_quota": bool(channel.model_quota),
             "enabled": channel.enabled,
             "cooling": bool(state.get("cooling")),
             "cooldown_reason": str(state.get("reason") or ""),

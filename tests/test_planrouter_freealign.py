@@ -736,6 +736,19 @@ class FreeQuotaParseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "free_quota must be an object"):
             parse_free_quota([1])
 
+    def test_parser_reads_one_time_pack_expiry(self):
+        self.assertIsNone(parse_free_quota({"tokens": 1}).expires)
+        self.assertIsNone(parse_free_quota({"tokens": 1, "expires": ""}).expires)
+        # A bare date is inclusive: valid through that day's last second.
+        day = parse_free_quota({"tokens": 1, "expires": "2026-12-01"})
+        self.assertEqual(day.expires, datetime(2026, 12, 1, 23, 59, 59))
+        exact = parse_free_quota(
+            {"tokens": 1, "expires": "2026-12-01T08:30:00"})
+        self.assertEqual(exact.expires, datetime(2026, 12, 1, 8, 30))
+        for bad in ("2026-13-01", "tomorrow", 20261201, True):
+            with self.assertRaisesRegex(ValueError, "expires"):
+                parse_free_quota({"tokens": 1, "expires": bad})
+
     def test_channel_config_carries_free_quota(self):
         raw = align_config()
         raw["channels"][0]["free_quota"] = {"tokens": 1000, "requests": 10}
@@ -744,6 +757,32 @@ class FreeQuotaParseTests(unittest.TestCase):
         self.assertEqual(channel.free_quota.requests, 10)
         raw["channels"][0]["free_quota"] = {"tokens": 1000, "period": "year"}
         with self.assertRaisesRegex(ValueError, "百炼免费"):
+            parse_config(raw)
+
+    def test_channel_config_carries_model_quota(self):
+        raw = align_config()
+        raw["channels"][0]["model_quota"] = {
+            WIRE: {"tokens": 25000000, "expires": "2026-12-01"},
+            "qwen3.8-flash": {"tokens": 1000000, "requests": 5},
+            "dropped": None,
+        }
+        channel = parse_config(raw).channel("百炼免费")
+        self.assertEqual(channel.model_quota[WIRE].tokens, 25000000)
+        self.assertEqual(channel.model_quota[WIRE].expires,
+                         datetime(2026, 12, 1, 23, 59, 59))
+        self.assertEqual(
+            (channel.model_quota["qwen3.8-flash"].tokens,
+             channel.model_quota["qwen3.8-flash"].requests), (1000000, 5))
+        # A null value removes a pack, so "dropped" never becomes a key.
+        self.assertNotIn("dropped", channel.model_quota)
+        # An empty object means no packs at all, not an empty ledger.
+        raw["channels"][0]["model_quota"] = {}
+        self.assertIsNone(parse_config(raw).channel("百炼免费").model_quota)
+        raw["channels"][0]["model_quota"] = {WIRE: {"tokens": -1}}
+        with self.assertRaisesRegex(ValueError, "model_quota"):
+            parse_config(raw)
+        raw["channels"][0]["model_quota"] = []
+        with self.assertRaisesRegex(ValueError, "model_quota must be an object"):
             parse_config(raw)
 
     def test_builtin_baselines_per_vendor_model(self):
@@ -821,6 +860,93 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         self.assertFalse(status["exhausted"])  # tokens are uncapped here
         app.usage.record("火山免费", True, tokens=1, model=WIRE)
         self.assertTrue(app.free_quota_exhausted(channel, WIRE))
+
+    def test_model_quota_overrides_shared_quota_per_model(self):
+        # One-time pack style: each wire model carries its own amount, so a
+        # pack drained on one model cools that model while the sibling keeps
+        # the channel-wide cap.
+        raw = volc_config()
+        raw["channels"][0]["free_quota"] = {"tokens": 500000}
+        raw["channels"][0]["model_quota"] = {WIRE: {"tokens": 1000}}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        status = app.free_quota_status(channel, WIRE)
+        self.assertEqual(status["source"], "model")
+        self.assertEqual(status["limit_tokens"], 1000)
+        sibling = app.free_quota_status(channel, "old-doubao")
+        self.assertEqual(sibling["source"], "channel")
+        self.assertEqual(sibling["limit_tokens"], 500000)
+        app.usage.record("火山免费", True, tokens=1000, model=WIRE)
+        self.assertTrue(app.free_quota_exhausted(channel, WIRE))
+        self.assertFalse(app.free_quota_exhausted(channel, "old-doubao"))
+
+    def test_model_quota_key_prefers_exposed_name(self):
+        raw = volc_config()
+        raw["channels"][0]["models"] = {"auto": "", "friendly": WIRE}
+        raw["channels"][0]["model_quota"] = {"friendly": {"tokens": 2000}}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        status = app.free_quota_status(channel, WIRE, "friendly")
+        self.assertEqual(status["source"], "model")
+        self.assertEqual(status["limit_tokens"], 2000)
+
+    def test_expired_pack_stops_routing_despite_headroom(self):
+        # A one-time grant dies by calendar: the ledger still shows 450 of
+        # 500 tokens left, yet the pack lapsed yesterday and must stop
+        # routing exactly like a drained one — otherwise paid billing starts
+        # silently.
+        raw = volc_config()
+        raw["channels"][0]["models"] = {"auto": "", WIRE: WIRE}
+        raw["channels"][0]["model_quota"] = {WIRE: {"tokens": 500,
+                                                   "expires": PAST}}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        app.usage.record("火山免费", True, tokens=50, model=WIRE)
+        status = app.free_quota_status(channel, WIRE)
+        self.assertTrue(status["expired"])
+        self.assertTrue(status["exhausted"])
+        self.assertFalse(status["warning"])
+        self.assertEqual(status["expires"], f"{PAST} 23:59")
+        self.assertEqual(status["remaining_tokens"], 450)
+        self.assertTrue(app.free_quota_exhausted(channel, WIRE))
+        kept, skipped = app._apply_free_quota_filter(
+            [(channel, WIRE)], mock.Mock(exposed=""))
+        self.assertEqual(kept, [])
+        self.assertEqual(skipped[0]["reason"], "free_quota_exhausted")
+        payload = maint.free_models_payload(app)
+        entry = next(m for m in payload["channels"][0]["models"]
+                     if m["model"] == WIRE)
+        self.assertFalse(entry["routable"])
+        self.assertIn("一次性额度包已过期", entry["skip_reason"])
+        self.assertTrue(entry["quota"]["expired"])
+        self.assertTrue(payload["channels"][0]["one_time_quota"])
+
+    def test_future_expiry_keeps_pack_routable(self):
+        raw = volc_config()
+        raw["channels"][0]["models"] = {"auto": "", WIRE: WIRE}
+        raw["channels"][0]["model_quota"] = {WIRE: {"tokens": 500,
+                                                   "expires": FUTURE}}
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        channel = app.config.channel("火山免费")
+        status = app.free_quota_status(channel, WIRE)
+        self.assertFalse(status["expired"])
+        self.assertFalse(status["exhausted"])
+        self.assertEqual(status["expires"], f"{FUTURE} 23:59")
+        # Expiry only gates the pack's own model; the unrelated mapping keeps
+        # following the shared channel cap.
+        kept, skipped = app._apply_free_quota_filter(
+            [(channel, WIRE), (channel, "old-doubao")], mock.Mock(exposed=""))
+        self.assertEqual([wire for _ch, wire in kept], [WIRE, "old-doubao"])
+        self.assertEqual(skipped, [])
+        # Spending the pack dry still stops it before the date arrives.
+        app.usage.record("火山免费", True, tokens=500, model=WIRE)
+        status = app.free_quota_status(channel, WIRE)
+        self.assertFalse(status["expired"])
+        self.assertTrue(status["exhausted"])
 
     def test_paid_channels_share_no_free_cap(self):
         raw = volc_config()

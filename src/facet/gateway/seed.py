@@ -1,10 +1,11 @@
 """First start: generate a seed config when none exists.
 
 ``facet serve`` with no router.json writes a seed config with a set of
-disabled free-tier templates (NVIDIA NIM / Google AI Studio / Z.AI) plus
-an anthropic placeholder, so the gateway starts immediately. Traffic is
-served only after the user registers a free key and enables a template
-channel (anonymous upstreams were retired — too slow and rate-limited).
+disabled free-tier templates (NVIDIA NIM / Google AI Studio / Z.AI /
+SiliconFlow) plus an anthropic placeholder, so the gateway starts
+immediately. Traffic is served only after the user registers a free key
+and enables a template channel (anonymous upstreams were retired — too
+slow and rate-limited).
 The seed is a normal, user-editable config file; it is only written when the
 path does not exist yet.
 """
@@ -59,6 +60,48 @@ def build_seed() -> dict:
                 "models": {"auto": "glm-4.7-flash"},
             },
             {
+                "name": "siliconflow",
+                "protocol": "openai",
+                "provider": "siliconflow",
+                "mode": "payg",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "api_key": "env:SILICONFLOW_API_KEY",
+                "enabled": False,
+                "tier": "free",
+                "models": {"auto": "XingChenAGI/Xing4.0-29B"},
+            },
+            # One-time allowance packs: vendors with no remaining-quota API
+            # (中国电信 teleAI / 国家超算互联网). The ledger's opening balance
+            # is what the operator registered after claiming the grant on the
+            # vendor console; expiry, when the vendor states one, goes into
+            # each pack. Before enabling, re-check the trial model ids and
+            # the granted amounts on the vendor console.
+            {
+                "name": "teleai-xing",
+                "protocol": "openai",
+                "provider": "teleai",
+                "mode": "payg",
+                "base_url": "https://ai.ctaigw.cn/v1",
+                "api_key": "env:CTYUN_APP_KEY",
+                "enabled": False,
+                "tier": "free",
+                "models": {"auto": "Xing4.0-29B"},
+                "model_quota": {"Xing4.0-29B": {"tokens": 100000000}},
+            },
+            {
+                "name": "scnet",
+                "protocol": "openai",
+                "provider": "scnet",
+                "mode": "payg",
+                "base_url": "https://api.scnet.cn/api/llm/v1",
+                "api_key": "env:SCNET_API_KEY",
+                "enabled": False,
+                "tier": "free",
+                "models": {"auto": "DeepSeek-R1-Distill-Qwen-7B"},
+                "model_quota": {"DeepSeek-R1-Distill-Qwen-7B":
+                                {"tokens": 10000000}},
+            },
+            {
                 "name": "anthropic-template",
                 "protocol": "anthropic",
                 "provider": "anthropic",
@@ -70,7 +113,8 @@ def build_seed() -> dict:
             },
         ],
         "routes": [
-            {"name": "default", "protocol": "openai", "channels": ["nvidia-nim"]},
+            {"name": "default", "protocol": "openai",
+             "channels": ["nvidia-nim", "siliconflow"]},
             {"name": "default", "protocol": "anthropic",
              "channels": ["anthropic-template"]},
         ],
@@ -103,6 +147,6 @@ def print_seed_banner(path: str | Path) -> None:
         print(f"  管理控制台密钥（listen.admin_key，仅此处打印一次）：{admin_key}", flush=True)
         print("  打开管理控制台时填入上述密钥；建议登录后在「管理密钥」中换成自己的值", flush=True)
     print("  匿名上游已退役（限速/延迟不实用）：请注册免费 key 并在控制台启用模板渠道，", flush=True)
-    print("  或运行「快速开始」向导；免费层模板支持 NVIDIA NIM / Google AI Studio / Z.AI，", flush=True)
-    print("        对应环境变量 NVIDIA_API_KEY / GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY", flush=True)
+    print("  或运行「快速开始」向导；免费层模板支持 NVIDIA NIM / Google AI Studio / Z.AI / 硅基流动，", flush=True)
+    print("        对应环境变量 NVIDIA_API_KEY / GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY / SILICONFLOW_API_KEY", flush=True)
     print("  anthropic 协议客户端暂无可用渠道（协议不转换）：添加 anthropic 渠道后即可使用", flush=True)

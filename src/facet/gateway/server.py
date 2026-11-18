@@ -31,7 +31,8 @@ from . import facts as facts_mod
 from . import watch as watch_mod
 from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
                minimax_quota, modelscope_quota, moonshot_quota,
-               opencode_quota, openrouter_quota, zhipu_quota)
+               opencode_quota, openrouter_quota, siliconflow_quota,
+               zhipu_quota)
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -181,6 +182,7 @@ CHANNEL_USAGE_FETCHERS = {
     "minimax": minimax_quota.fetch_usage,
     "moonshot": moonshot_quota.fetch_balance,
     "modelscope": modelscope_quota.fetch_balance,
+    "siliconflow": siliconflow_quota.fetch_balance,
 }
 # Management-plane wallets: these authenticate with the account's AK/SK pair
 # from the credential chain (resolve_creds), not with the data-plane key the
@@ -1696,11 +1698,26 @@ class App:
             return 0.0, ""
         return min(best, PLAN_RESET_CAP_HOURS * 3600.0), f"plan_{level}_exhausted"
 
+    def _model_quota_for(self, channel, wire: str, exposed: str = ""):
+        """This wire's per-model one-time pack, or None.
+
+        The exposed name wins over the upstream wire id (same resolution
+        order as `tiers`), so an operator renaming an exposed model keeps the
+        pack bound to the friendly name they configured.
+        """
+        packs = channel.model_quota or {}
+        for key in (exposed, wire):
+            if key and key in packs:
+                return packs[key]
+        return None
+
     def free_quota_spec(self, channel, wire: str = "", exposed: str = ""):
         """Resolved free-tier allowance for one model on this channel.
 
         Only models that actually count as free are capped: a paid channel
         sharing the same vendor must never be throttled by the free baseline.
+        Priority: the channel's per-model one-time pack (`model_quota`), then
+        the channel-wide `free_quota`, then the vendor registry baseline.
         """
         tiers = channel.tiers or {}
         explicit = tiers.get(exposed) if exposed else None
@@ -1713,6 +1730,9 @@ class App:
             eligible = channel.tier == "free"
         if not eligible:
             return None
+        pack = self._model_quota_for(channel, wire, exposed)
+        if pack is not None:
+            return pack
         if channel.free_quota is not None:
             return channel.free_quota
         raw = self.provider_mode(channel.provider, channel.mode).get("free_quota")
@@ -1836,6 +1856,11 @@ class App:
             or (spec is not None and spec.requests is not None
                 and requests_used >= spec.requests)
         )
+        # One-time packs die by calendar, not by spend: a grant that lapsed
+        # yesterday must stop routing exactly like a drained one, even while
+        # the ledger still shows headroom.
+        expired = bool(spec is not None and spec.expires is not None
+                       and datetime.now() >= spec.expires)
         # Freshness order: budget > vendor snapshot > local spec counter. The
         # snapshot beats the counter because the gateway sums raw prompt
         # tokens (cache hits included) and routinely reads higher than what
@@ -1872,6 +1897,9 @@ class App:
             + STALE_FREEZE_GRACE)
         if stale:
             exhausted = True
+        # Expired one-time packs also count as exhausted regardless of tokens.
+        if expired:
+            exhausted = True
         ratios = []
         if spec is not None and spec.tokens:
             ratios.append(tokens_used / spec.tokens)
@@ -1882,10 +1910,16 @@ class App:
         if budget is not None and vendor.get("total"):
             ratios.append(1 - max(0.0, budget) / vendor["total"])
         ratio = max(ratios) if ratios else 0.0
+        source = "vendor"
+        if spec is not None:
+            if self._model_quota_for(channel, wire, exposed) is not None:
+                source = "model"
+            elif channel.free_quota is not None:
+                source = "channel"
+            else:
+                source = "provider_baseline"
         return {
-            "source": ("vendor" if spec is None else
-                       "channel" if channel.free_quota is not None
-                       else "provider_baseline"),
+            "source": source,
             "period": spec.period if spec is not None else "total",
             "limit_tokens": spec.tokens if spec is not None else None,
             "limit_requests": spec.requests if spec is not None else None,
@@ -1896,6 +1930,10 @@ class App:
             "ratio": round(ratio, 4),
             "warning": bool(ratio >= 0.8 and not exhausted),
             "exhausted": exhausted,
+            "expires": (spec.expires.strftime("%Y-%m-%d %H:%M")
+                        if spec is not None and spec.expires is not None
+                        else None),
+            "expired": expired,
             "vendor_remaining": vendor.get("remaining"),
             "budget_remaining": budget,
             "reserve_tokens": reserve,

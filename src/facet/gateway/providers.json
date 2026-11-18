@@ -244,6 +244,25 @@
       }
     },
     {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "modes": {
+        "payg": {
+          "label": "按量付费（含永久免费模型）",
+          "protocol": "openai",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "docs_url": "https://docs.siliconflow.cn",
+          "keys_url": "https://cloud.siliconflow.cn/account/ak",
+          "models_url": "https://api.siliconflow.cn/v1/models",
+          "free_quota_cmd": ["facet-siliconflow-quota", "--output", "json"],
+          "free_limits": {"note": "免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）"},
+          "tier": "free",
+          "models": [],
+          "free_models": ["XingChenAGI/Xing4.0-29B", "THUDM/GLM-Z1-9B-0414", "tencent/Hunyuan-MT-7B"]
+        }
+      }
+    },
+    {
       "id": "modelscope",
       "name": "魔搭 ModelScope",
       "modes": {
@@ -255,6 +274,40 @@
           "keys_url": "https://modelscope.cn/my/myaccesstoken",
           "models_url": "https://api-inference.modelscope.cn/v1/models",
           "free_limits": {"rpd": 250, "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效"},
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "teleai",
+      "name": "中国电信（天翼 AI / 息壤 / TokenHub）",
+      "modes": {
+        "payg": {
+          "label": "一次性试用额度包（账本模式）",
+          "protocol": "openai",
+          "base_url": "https://ai.ctaigw.cn/v1",
+          "docs_url": "https://www.ctyun.cn/document/11061839/11097250",
+          "keys_url": "https://www.ctyun.cn/document/11094224/11094241",
+          "models_url": "https://ai.ctaigw.cn/v1/models",
+          "free_limits": {"note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日，用完或到期自动停该模型"},
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "scnet",
+      "name": "国家超算互联网 SCNet",
+      "modes": {
+        "payg": {
+          "label": "一次性试用额度包（账本模式）",
+          "protocol": "openai",
+          "base_url": "https://api.scnet.cn/api/llm/v1",
+          "docs_url": "https://www.scnet.cn/help/docs/mainsite/mass/tutorial/quickstart.html",
+          "keys_url": "https://www.scnet.cn/ui/console/index.html#/llm/apikeys",
+          "models_url": "https://api.scnet.cn/api/llm/v1/models",
+          "free_limits": {"note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日；Anthropic 兼容端点为 /api/llm/anthropic"},
           "tier": "free",
           "models": []
         }

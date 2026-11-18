@@ -32,6 +32,7 @@ facet = "facet.cli:main"
 planrouter = "facet.gateway._alias:main"  # deprecated transition alias of `facet serve`
 facet-ark-quota = "facet.gateway.ark_quota:main"  # Volcengine Ark free-quota rows for the free-align sweep
 facet-tokenhub-quota = "facet.gateway.tokenhub_quota:main"  # Tencent TokenHub free-trial rows for the free-align sweep
+facet-siliconflow-quota = "facet.gateway.siliconflow_quota:main"  # SiliconFlow free-model rows for the free-align sweep
 
 [tool.setuptools]
 package-dir = { "" = "src" }

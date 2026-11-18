@@ -3532,22 +3532,26 @@ function freeQuotaCell(q) {
   }
   const period = FREE_PERIOD[q.period] || q.period || '';
   const reset = FREE_RESET[q.period] || '';
-  const badge = q.exhausted ? '<span class="tag expired">已用完</span>'
+  const badge = q.expired ? '<span class="tag expired">已过期</span>'
+    : q.exhausted ? '<span class="tag expired">已用完</span>'
     : q.warning ? '<span class="tag expiring">临近上限</span>' : '';
   const source = hasVendor
     ? `厂家额度${q.vendor_at ? ` · 对齐 ${esc(q.vendor_at)}` : ' · 已对齐'}`
-    : `网关本地计数 · ${q.source === 'provider_baseline' ? '注册表基线' : '渠道配置'}`;
+    : `网关本地计数 · ${q.source === 'model' ? '每模型额度包'
+      : q.source === 'provider_baseline' ? '注册表基线' : '渠道配置'}`;
   const periodNote = local.length
     ? `${esc(period)}${reset ? ` · ${reset}` : ''} · ` : '';
+  const expires = q.expires ? ` · 有效期至 ${esc(q.expires)}` : '';
   return `<div class="free-quota"><div>${lines.join('<br>')}</div>`
     + `<div class="bar"><i class="${tone}" style="width:${(ratio * 100).toFixed(1)}%"></i></div>`
-    + `<div class="sub-note">${periodNote}${source} ${badge}</div></div>`;
+    + `<div class="sub-note">${periodNote}${source}${expires} ${badge}</div></div>`;
 }
 
 function freeRateCell(ch) {
   const vendor = freeRateCaps(ch.free_limits);
   const own = freeRateCaps(ch.rate);
-  const note = (ch.free_limits || {}).note || '';
+  const note = (ch.free_limits || {}).note
+    || (ch.one_time_quota ? '一次性额度包，用完为止' : '');
   const doc = ch.docs_url
     ? ` <a class="provider-link" href="${esc(ch.docs_url)}" target="_blank" rel="noopener">文档</a>` : '';
   return `<div title="${esc(note)}"><span class="sub-note">厂家</span> `
@@ -4463,6 +4467,60 @@ function renderModelTierRows() {
   }).join('');
 }
 
+// One-time per-model allowance packs (中国电信 / SCNet style): every row is
+// model -> {tokens, expires}. Options follow the models textarea like the tier
+// rows; a saved pack whose model left the mapping keeps its row (the stale
+// name stays selectable) so it is visible and removable instead of silently
+// dropped on the next save.
+function modelQuotaOptions(current) {
+  const names = [];
+  const seen = new Set();
+  ($('f-models').value || '').split('\n').forEach((line) => {
+    const s = line.trim();
+    const i = s.indexOf('=');
+    if (i < 1) return;
+    [s.slice(0, i).trim(), s.slice(i + 1).trim()].forEach((n) => {
+      if (!n || n === '*' || n === 'auto' || seen.has(n)) return;
+      seen.add(n);
+      names.push(n);
+    });
+  });
+  if (current && !seen.has(current)) names.unshift(current);
+  return names.map((n) =>
+    `<option value="${esc(n)}" ${n === current ? 'selected' : ''}>${esc(n)}</option>`).join('');
+}
+
+function modelQuotaRowHTML(model, pack) {
+  const q = pack || {};
+  return `<div class="mq-row">
+    <select data-mq-model>${modelQuotaOptions(model || '')}</select>
+    <input type="number" min="1" step="1" data-mq-tokens placeholder="面额 tokens"
+      value="${esc(q.tokens ?? '')}">
+    <input type="date" data-mq-expires value="${esc(String(q.expires || '').slice(0, 10))}"
+      title="到期日（含当天），留空表示长期有效">
+    <button type="button" class="btn ghost" data-mq-remove title="移除">✕</button>
+  </div>`;
+}
+
+function renderModelQuotaRows(initial) {
+  const box = $('model-quota-rows');
+  if (!box) return;
+  if (initial) {
+    box.innerHTML = Object.entries(initial)
+      .map(([model, pack]) => modelQuotaRowHTML(model, pack)).join('');
+  } else {
+    // Models textarea changed: refresh options in place so typed amounts
+    // and dates survive.
+    box.querySelectorAll('.mq-row').forEach((row) => {
+      const sel = row.querySelector('[data-mq-model]');
+      sel.innerHTML = modelQuotaOptions(sel.value);
+    });
+  }
+  if (!box.querySelector('.mq-row')) {
+    box.innerHTML = '<small class="hint">还没有登记额度包；点下方按钮添加。</small>';
+  }
+}
+
 // Test-model dropdown: the native <datalist> filters its suggestions by the
 // typed value, so with a value present the ▼ arrow looked dead. A custom
 // panel mirrors the mapping textarea's exposed names instead — the arrow
@@ -5006,6 +5064,10 @@ function openChannelEditor(index) {
           <div id="model-tier-rows" class="channel-picker"></div>
           <small class="hint">同一渠道可以既有免费额度模型也有收费模型（如百炼免费额度转收费）；未标注的模型跟随上面的默认计费，auto 与 * 不需要标注。</small>
         </div>
+        <div class="field wide"><label>一次性额度包（每模型，可选）</label>
+          <div id="model-quota-rows" class="channel-picker"></div>
+          <button type="button" class="btn ghost" id="add-model-quota">+ 添加模型额度包</button>
+          <small class="hint">每个模型独立登记面额（tokens）与到期日：用完或到期只停该模型，不冻结整个渠道；仅对标注为「免费」的模型生效。</small></div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
           <small class="hint">免费渠道按免费额度拉取，其余渠道按密钥请求上游 /models：火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名；百炼（免费）配置 AccessKey 后执行 bl usage free，只保留仍有免费额度且未过期的 Text 模型</small>
@@ -5045,7 +5107,25 @@ function openChannelEditor(index) {
   };
   $('editor-fetch-models').onclick = fetchChannelModels;
   $('editor-form').onsubmit = (e) => { e.preventDefault(); saveChannelEditor(); };
-  $('f-models').addEventListener('input', renderModelTierRows);
+  $('f-models').addEventListener('input', () => {
+    renderModelTierRows();
+    renderModelQuotaRows();
+  });
+  $('add-model-quota').onclick = () => {
+    const box = $('model-quota-rows');
+    if (!box.querySelector('.mq-row')) box.innerHTML = '';
+    box.insertAdjacentHTML('beforeend', modelQuotaRowHTML('', {}));
+    const rows = box.querySelectorAll('.mq-row');
+    const last = rows[rows.length - 1];
+    const sel = last && last.querySelector('[data-mq-model]');
+    if (sel) sel.focus();
+  };
+  $('model-quota-rows').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-mq-remove]');
+    if (!btn) return;
+    btn.closest('.mq-row').remove();
+    if (!$('model-quota-rows').querySelector('.mq-row')) renderModelQuotaRows();
+  });
   const fProvider = $('f-provider');
   const fMode = $('f-mode');
   fProvider.onchange = () => {
@@ -5063,6 +5143,7 @@ function openChannelEditor(index) {
     applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); renderRatePresets();
   };
   renderModelTierRows();
+  renderModelQuotaRows(c.model_quota || null);
   renderProviderLinks();
   renderVendorCredentials();
   renderRatePresets();
@@ -5084,6 +5165,20 @@ function saveChannelEditor() {
     const tiers = {};
     $('model-tier-rows').querySelectorAll('select').forEach((s) => {
       if (s.value) tiers[s.dataset.model] = s.value;
+    });
+    // One-time packs: model -> {tokens, period:'total', expires?}. Errors name
+    // the offending model so a half-filled row cannot silently vanish.
+    const packs = {};
+    $('model-quota-rows').querySelectorAll('.mq-row').forEach((row) => {
+      const model = (row.querySelector('[data-mq-model]').value || '').trim();
+      const rawTokens = (row.querySelector('[data-mq-tokens]').value || '').trim();
+      const expires = (row.querySelector('[data-mq-expires]').value || '').trim();
+      if (!model) throw new Error('额度包缺少模型：请选择模型或移除该行');
+      if (!rawTokens) throw new Error(`额度包 ${model} 缺少面额（tokens）`);
+      const tokens = Math.round(Number(rawTokens));
+      if (!(tokens > 0)) throw new Error(`额度包 ${model} 的面额必须是正整数`);
+      if (packs[model]) throw new Error(`额度包重复登记了模型：${model}`);
+      packs[model] = { tokens, period: 'total', ...(expires ? { expires } : {}) };
     });
     const provider = val('provider');
     if (!provider) throw new Error('必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
@@ -5113,6 +5208,7 @@ function saveChannelEditor() {
       enabled: f.elements.namedItem('enabled').checked,
       tier: val('tier'),
       tiers,
+      ...(Object.keys(packs).length ? { model_quota: packs } : {}),
       provider,
       mode: provider ? val('mode') : '',
       account: val('account'),

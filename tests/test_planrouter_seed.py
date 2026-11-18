@@ -24,14 +24,22 @@ class SeedConfigTests(unittest.TestCase):
         by_name = {c.name: c for c in config.channels}
         self.assertEqual(
             {c.name for c in config.channels},
-            {"nvidia-nim", "google-ai-studio",
-             "z-ai-glm", "anthropic-template"},
+            {"nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow",
+             "teleai-xing", "scnet", "anthropic-template"},
         )
         for name in ("nvidia-nim", "google-ai-studio",
-                     "z-ai-glm", "anthropic-template"):
+                     "z-ai-glm", "siliconflow", "teleai-xing", "scnet",
+                     "anthropic-template"):
             self.assertFalse(by_name[name].enabled, name)
+        # one-time allowance packs survive the config round-trip
+        xing = by_name["teleai-xing"].model_quota["Xing4.0-29B"]
+        self.assertEqual(xing.tokens, 100000000)
+        self.assertEqual(xing.period, "total")
+        scnet = by_name["scnet"].model_quota["DeepSeek-R1-Distill-Qwen-7B"]
+        self.assertEqual(scnet.tokens, 10000000)
+        self.assertIsNone(scnet.expires)
         self.assertEqual(config.routes["openai:default"].channels,
-                         ("nvidia-nim",))
+                         ("nvidia-nim", "siliconflow"))
         self.assertEqual(config.routes["anthropic:default"].channels,
                          ("anthropic-template",))
         self.assertEqual(config.defaults.maintenance_model, "auto")

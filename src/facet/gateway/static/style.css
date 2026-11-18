@@ -378,6 +378,11 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .tier-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
 .tier-row code { font-size: 12px; word-break: break-all; }
 .tier-row select { max-width: 130px; }
+.mq-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 0; }
+.mq-row select { max-width: 200px; flex: 0 1 auto; min-width: 0; }
+.mq-row input[type="number"] { flex: 1; min-width: 90px; }
+.mq-row input[type="date"] { width: 140px; flex: 0 0 auto; }
+.mq-row .btn.ghost { padding: 4px 9px; flex: 0 0 auto; }
 .days-left { font-weight: 650; }
 .days-left.expiring { color: var(--warn); }
 .days-left.expired { color: var(--bad); }

@@ -17,7 +17,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -369,10 +369,49 @@ class FreeQuota:
     "total" (grant lifetime), "month" or "day". Both caps are optional; the
     router stops routing the model as soon as either one is used up, so a
     free channel can never silently spill into per-call billing.
+
+    `expires` grants the model one-time usage that is valid through the given
+    date (inclusive). After that date the model is treated as exhausted. A bare
+    ``YYYY-MM-DD`` means the pack is valid through that day's last second
+    (23:59:59).
     """
     tokens: int | None = None
     requests: int | None = None
     period: str = "total"
+    expires: datetime | None = None
+
+
+def parse_expires(value) -> datetime | None:
+    """Parse a one-time pack expiry: ``YYYY-MM-DD`` or an ISO datetime.
+
+    A bare date is inclusive: the pack stays usable through that day, so the
+    stored value is that day's 23:59:59 rather than its midnight. A timezone-
+    aware datetime is converted to local time and stored naive, matching the
+    local-clock comparison the quota gate does.
+    """
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(
+            "free_quota.expires must be a date (YYYY-MM-DD) or datetime")
+    text = value.strip()
+    if len(text) == 10:
+        try:
+            day = date.fromisoformat(text)
+        except ValueError:
+            raise ValueError(
+                "free_quota.expires must be a date (YYYY-MM-DD) or datetime"
+            ) from None
+        return datetime(day.year, day.month, day.day, 23, 59, 59)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            "free_quota.expires must be a date (YYYY-MM-DD) or datetime"
+        ) from None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def parse_free_quota(raw) -> FreeQuota | None:
@@ -392,7 +431,36 @@ def parse_free_quota(raw) -> FreeQuota | None:
         raise ValueError('free_quota.period must be "total", "month" or "day"')
     if tokens is None and requests is None:
         raise ValueError("free_quota needs at least one of tokens / requests")
-    return FreeQuota(tokens=tokens, requests=requests, period=period)
+    expires = parse_expires(raw.get("expires"))
+    return FreeQuota(tokens=tokens, requests=requests, period=period,
+                     expires=expires)
+
+
+def parse_model_quota(name: str, raw) -> dict[str, FreeQuota] | None:
+    """Parse a channel's per-model one-time packs (中国电信 / SCNet style).
+
+    Keys are model names — the exposed name or the upstream wire id, resolved
+    the same way as `tiers`. Each value is a free_quota object, so every model
+    carries its own amount and expiry; a ``null`` value removes a pack.
+    """
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"channel {name}: model_quota must be an object")
+    packs: dict[str, FreeQuota] = {}
+    for model_name, spec in raw.items():
+        key = str(model_name).strip()
+        if not key:
+            raise ValueError(
+                f"channel {name}: model_quota keys must be model names")
+        try:
+            quota = parse_free_quota(spec)
+        except ValueError as exc:
+            raise ValueError(
+                f"channel {name}: model_quota.{key}: {exc}") from None
+        if quota is not None:
+            packs[key] = quota
+    return packs or None
 
 
 @dataclass(frozen=True)
@@ -428,6 +496,11 @@ class Channel:
     # Free-tier allowance per upstream model. Explicit channel config wins;
     # otherwise the vendor registry mode supplies the baseline.
     free_quota: FreeQuota | None = None
+    # Per-model one-time packs (中国电信 / SCNet style): each wire model carries
+    # its own amount and expiry, so a pack drained on one model never blocks
+    # its siblings. A matching entry wins over the channel-wide `free_quota`
+    # above; models without one fall back to it.
+    model_quota: dict[str, FreeQuota] | None = None
     # True for vendors that hand every model its own quota (百炼 / 火山引擎):
     # a model running out of allowance then cools only that model instead of
     # freezing the whole channel. Balance/billing errors still freeze the
@@ -939,6 +1012,7 @@ def parse_config(raw: dict) -> Config:
             free_quota = parse_free_quota(item.get("free_quota"))
         except ValueError as exc:
             raise ValueError(f"channel {name}: {exc}") from None
+        model_quota = parse_model_quota(name, item.get("model_quota"))
         vision_raw = item.get("vision")
         vision: bool | tuple[str, ...] | None = None
         if vision_raw is not None:
@@ -974,6 +1048,7 @@ def parse_config(raw: dict) -> Config:
             creds=creds,
             proxy=proxy,
             free_quota=free_quota,
+            model_quota=model_quota,
             per_model_quota=bool(item.get("per_model_quota", False)),
             account=str(item.get("account") or "").strip(),
             business_line=str(item.get("business_line") or "").strip(),
