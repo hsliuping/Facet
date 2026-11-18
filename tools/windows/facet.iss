@@ -62,8 +62,8 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Filename: "{app}\打开控制台.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://127.0.0.1:8787/"
 
 [Icons]
-Name: "{group}\Facet（托盘启动）"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\facet_tray.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app\facet.ico"
-Name: "{group}\打开控制台"; Filename: "{app}\打开控制台.url"; IconFilename: "{app}\app\facet.ico"
+Name: "{group}\Facet"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\facet_tray.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app\facet.ico"; Comment: "启动 Facet（系统托盘 + 本机网关）"
+Name: "{group}\Facet 控制台"; Filename: "{app}\打开控制台.url"; IconFilename: "{app}\app\facet.ico"
 Name: "{group}\数据目录"; Filename: "{app}\data"
 Name: "{group}\卸载 Facet"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Facet"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\facet_tray.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app\facet.ico"; Tasks: desktopicon

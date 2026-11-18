@@ -176,9 +176,10 @@ class SeedBindingTests(unittest.TestCase):
             # the variables must exist for parse_config to accept the seed.
             app = self._strict_app(seed)
             app._check_vendor_binding(app.config)
-        # Without one the entrypoint seeds a random management key: the gateway
-        # has no default password, so a dangling env reference would lock the
-        # console on first start.
+        # Without one the entrypoint seeds a random management key: containers
+        # listen on 0.0.0.0, so the loopback seed's passwordless listen would
+        # expose the console — and a dangling env reference would lock it on
+        # first start.
         with mock.patch.dict(os.environ, {"ROUTER_API_KEY": "k"}, clear=True):
             seed = module.preset_config()
         self.assertRegex(seed["listen"]["admin_key"], r"^sk-admin-[0-9a-f]{32}$")

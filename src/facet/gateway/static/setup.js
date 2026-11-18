@@ -1,8 +1,8 @@
 /**
  * 新手配置向导 — modal multi-step wizard for first-time setup.
  *
- * 八步线性流程：
- *   欢迎 → 设置管理密码 → 免费/付费偏好 → 选择厂家 → 填写厂家 Key → 测试并保存渠道
+ * 线性流程（「设置管理密码」这一步在已设置密码时自动跳过）：
+ *   欢迎 → [设置管理密码] → 免费/付费偏好 → 选择厂家 → 填写厂家 Key → 测试并保存渠道
  *   → 生成网关 Key → 完成
  *
  * 工程约定（此前版本的教训）：
@@ -12,8 +12,8 @@
  * - 测试连接走 /api/test/channels（真实发起最小请求），通过后自动把渠道写入配置。
  * - 完成时 wizard_done 双写：localStorage + 服务端 router.json（POST /api/setup/wizard）。
  *
- * 自动弹出条件（全部满足才弹）：localStorage 无 setup_done/setup_dismissed、
- * 浏览器未存管理密钥、/api/keys 为空且主密钥未启用。控制台「快速开始」永远可手动打开。
+ * 首启流程：seed 不带管理密码，app.js 在控制台打开时强制弹窗设置管理密码，
+ * 设置成功后调用 renderWizard('welcome') 进入本向导。控制台「快速开始」永远可手动打开。
  */
 
 'use strict';
@@ -41,7 +41,7 @@ const WIZARD_STEPS = [
       return `
         <div class="wizard-step-content">
           <p>向导会带您做三件事：</p>
-          <p>1. 设置一个管理密码，防止他人改动您的配置；</p>
+          <p>1. 管理密码已在首次登录时设置（可随时在「管理密钥」页更换）；</p>
           <p>2. 选择服务形态与厂家，填入 API Key（还没有也没关系，可以跳过）；</p>
           <p>3. 自动测试连通性，并生成一把属于您的调用密钥。</p>
           <p class="hint">随时可以点「取消」退出，之后通过右上角「快速开始」再次打开。</p>
@@ -604,15 +604,29 @@ async function finishWizard() {
   if (typeof switchPage === 'function') switchPage('dashboard');
 }
 
+// 已设置管理密码时，向导的「设置管理密码」步骤自动跳过：首次登录已强制设过
+// 密码，不再重复。服务端快照或本机保存的密钥任一为真即视为已设置。
+function wizardAdminKeySet() {
+  if (readStoredKey('admin')) return true;
+  const listen = (typeof state !== 'undefined' && state.snapshot && state.snapshot.listen) || {};
+  return listen.admin_key_set === true;
+}
+
+function wizardSteps() {
+  return WIZARD_STEPS.filter((s) => s.id !== 'admin-key' || !wizardAdminKeySet());
+}
+
 // 渲染向导弹窗。stepId 缺省 = 重绘当前步。
 async function renderWizard(stepId) {
   if (stepId) wizardState.stepId = stepId;
   closeWizard();
 
-  const idx = WIZARD_STEPS.findIndex((s) => s.id === wizardState.stepId);
-  const step = WIZARD_STEPS[idx] || WIZARD_STEPS[0];
+  const steps = wizardSteps();
+  let idx = steps.findIndex((s) => s.id === wizardState.stepId);
+  if (idx < 0) idx = 0;
+  const step = steps[idx];
   if (step.id !== wizardState.stepId) wizardState.stepId = step.id;
-  const isLast = idx === WIZARD_STEPS.length - 1;
+  const isLast = idx === steps.length - 1;
 
   const content = await step.render();
   const wrap = document.createElement('div');
@@ -622,7 +636,7 @@ async function renderWizard(stepId) {
     <div class="modal ask-modal" role="dialog" aria-modal="true" style="max-width: 640px;">
       <div class="modal-head">
         <h2>新手配置向导</h2>
-        <span class="hint">第 ${idx + 1} 步 / 共 ${WIZARD_STEPS.length} 步</span>
+        <span class="hint">第 ${idx + 1} 步 / 共 ${steps.length} 步</span>
       </div>
       <p class="hint ask-message">${esc(step.description || '')}</p>
       ${content}
@@ -646,13 +660,13 @@ async function renderWizard(stepId) {
     };
   }
   const prev = $('wizard-prev');
-  if (prev) prev.onclick = () => renderWizard(WIZARD_STEPS[idx - 1].id);
+  if (prev) prev.onclick = () => renderWizard(steps[idx - 1].id);
   const next = $('wizard-next');
   if (next) {
     next.onclick = async () => {
       try {
         if (typeof step.onNext === 'function' && !(await step.onNext())) return;
-        renderWizard(WIZARD_STEPS[idx + 1].id);
+        renderWizard(steps[idx + 1].id);
       } catch (e) {
         toast(e.message, 'bad');
       }
@@ -677,26 +691,10 @@ async function renderWizard(stepId) {
   }
 }
 
-// 全新环境自动弹出；其余场景安静等待「快速开始」手动触发。
+// 首启自动弹出已由 app.js 承担：控制台打开时先强制设置管理密码，设置成功后
+// 调用 renderWizard('welcome') 进入向导。这里不再自行探测/自动弹出，避免与
+// 强制设密码弹窗叠加。保留 window.initWizard 仅供手动触发兼容。
 async function initWizard() {
-  try {
-    const done = localStorage.getItem('setup_done');
-    const dismissed = localStorage.getItem('setup_dismissed');
-    if (done === 'true' || dismissed === 'true') return;
-  } catch (_) { /* ignore */ }
-  if (readStoredKey('admin')) return; // 已登录过管理界面，视为非全新
-  // 裸 fetch 试探（不带任何鉴权头）：走 api() 时 401 会先弹「管理密钥」框，
-  // 把全新用户挡在向导之外，故这里绝不触发那个弹框。只有「控制台完全未设
-  // 密钥」（无 api_key 且无 admin_key，仅限本机裸跑）才进入向导；首启随机
-  // 管理密钥的场景返回 401，等用户按日志提示解锁控制台后再手动进入向导。
-  try {
-    const r = await fetch('/api/keys');
-    if (!r.ok) return; // 已设置管理密钥：不打扰，等用户先解锁控制台
-    const payload = await r.json();
-    if (payload && (payload.master || (payload.keys && payload.keys.length))) return;
-  } catch (_) {
-    return; // 网络异常时不打扰
-  }
   renderWizard('welcome').catch(() => {});
 }
 
@@ -705,9 +703,4 @@ if (typeof window !== 'undefined') {
   window.renderWizard = renderWizard;
   window.initWizard = initWizard;
   window.closeWizard = closeWizard;
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => initWizard().catch(() => {}));
-  } else {
-    initWizard().catch(() => {});
-  }
 }

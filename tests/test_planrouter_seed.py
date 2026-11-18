@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from facet.gateway.cli import main
 from facet.gateway.core import load_config, parse_config
-from facet.gateway.seed import build_seed, write_seed
+from facet.gateway.seed import (build_seed, print_seed_banner, write_seed)
 
 
 class SeedConfigTests(unittest.TestCase):
@@ -119,6 +119,25 @@ class CliSeedTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("config error", err.getvalue())
             self.assertFalse(config_path.exists())  # no side effect
+
+    def test_seed_has_no_admin_password(self):
+        """build_seed() leaves listen.admin_key unset: the console asks for
+        one on first open instead of shipping a known default."""
+        self.assertFalse(build_seed()["listen"].get("admin_key"))
+
+    def test_written_seed_keeps_no_admin_password(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "router.json"
+            write_seed(path)
+            self.assertFalse(load_config(path).listen.admin_key)
+
+    def test_seed_banner_announces_the_password_setup(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            print_seed_banner("router.json")
+        text = out.getvalue()
+        self.assertIn("管理密码未设置", text)
+        self.assertIn("管理控制台", text)
 
 
 if __name__ == "__main__":

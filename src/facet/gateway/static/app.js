@@ -141,7 +141,7 @@ function promptForAuth(isApi) {
     authPrompts[kind] = askText({
       title: isApi ? '需要管理密钥' : '需要 API Key',
       message: isApi
-        ? '管理接口返回 401。请填入 listen.admin_key（首次启动日志会打印随机生成的密钥）；登录后可在「管理密钥」页验证旧密钥后替换。'
+        ? '管理接口返回 401。请填入 listen.admin_key（管理密码）。'
         : '网关接口返回 401。填写 listen.api_key（API Key），也可在「API Keys」页复制或生成。',
       password: true,
       remember: true,
@@ -632,6 +632,67 @@ function renderBanner() {
     <button class="btn small" id="banner-view">查看订阅</button>
   </div>`;
   $('banner-view').onclick = () => switchPage('subscriptions');
+}
+
+// First start: the seed config ships without a management password, so the
+// console (loopback) is reachable but must not be usable until the operator
+// sets one. Non-dismissable overlay; on success the setup wizard opens.
+async function forceSetupAdminKey() {
+  const listen = (state.snapshot && state.snapshot.listen) || {};
+  if (listen.admin_key_set !== false) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop ask-backdrop';
+  wrap.style.zIndex = '3000';
+  wrap.innerHTML = `<div class="modal ask-modal" role="dialog" aria-modal="true">
+    <div class="modal-head"><h2>设置管理密码</h2></div>
+    <p class="hint ask-message">首次使用请先设置管理密码（至少 4 个字符），用于保护控制台配置。设置完成后才能进入控制台。</p>
+    <input class="ask-input" type="password" id="first-admin-key" placeholder="管理密码" autocomplete="new-password">
+    <input class="ask-input" type="password" id="first-admin-key2" placeholder="再输入一次" autocomplete="new-password">
+    <p class="hint" id="first-admin-key-err"></p>
+    <div class="modal-foot">
+      <button type="button" class="btn primary" id="first-admin-key-save">设置并进入</button>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelector('#first-admin-key').focus();
+
+  await new Promise((resolve) => {
+    const errEl = wrap.querySelector('#first-admin-key-err');
+    const btn = wrap.querySelector('#first-admin-key-save');
+    const submit = async () => {
+      const key = wrap.querySelector('#first-admin-key').value.trim();
+      const again = wrap.querySelector('#first-admin-key2').value.trim();
+      if (key.length < 4) { errEl.textContent = '管理密码至少 4 个字符'; return; }
+      if (key !== again) { errEl.textContent = '两次输入的密码不一致'; return; }
+      btn.disabled = true;
+      btn.textContent = '正在保存…';
+      try {
+        const data = await api('/api/admin/key', { method: 'POST', body: { key, old_key: '' } });
+        state.adminKey = data.admin_key;
+        storeKey('admin', state.adminKey, true);
+        wrap.remove();
+        resolve();
+      } catch (err) {
+        errEl.textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = '设置并进入';
+      }
+    };
+    btn.onclick = submit;
+    // Enter in either input submits. No cancel/Escape: the console stays
+    // locked until a password exists.
+    wrap.querySelectorAll('input').forEach((input) => {
+      input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+    });
+  });
+
+  toast('管理密码已设置');
+  await loadState().catch(() => {});
+  // 首次设置密码后直接进入新手配置向导（若该浏览器此前已完成向导则不再打扰）。
+  let done = false;
+  try { done = localStorage.getItem('setup_done') === 'true'; } catch (_) { /* private mode */ }
+  if (!done) renderWizard('welcome').catch(() => {});
 }
 
 // The sidebar selection is mirrored in the URL hash ("#/vendors"), so a
@@ -4182,7 +4243,7 @@ async function runProbe(button, channels, model) {
     toast(data.ok ? '测试通过' : '测试未通过，查看详情', data.ok ? 'ok' : 'bad');
   } catch (err) {
     const hint = /未授权|401/.test(err.message)
-      ? '请点右上角「管理密钥」填入 listen.admin_key（首次启动日志会打印随机生成的密钥）后重试'
+      ? '请点右上角「管理密钥」填入 listen.admin_key（管理密码）后重试'
       : '';
     showTestResult([{ ok: false, name: '请求失败', error: err.message, hint }], null);
     toast(err.message, 'bad');
@@ -5800,6 +5861,9 @@ async function boot() {
     await loadConfig();
     await restoreDrafts();
     await loadState();
+    // 首启（seed 未设管理密码）：弹出不可关闭的「设置管理密码」，设置成功后
+    // 自动进入新手配置向导。不等它完成——控制台先在背后渲染。
+    forceSetupAdminKey().catch((err) => toast(err.message, 'bad'));
     // Paint the shell first: switchPage makes the dashboard fetch its own
     // data on entry, so the console renders immediately and the rest of the
     // boot payload lands in parallel behind it — a cold vendor snapshot

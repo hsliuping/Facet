@@ -71,10 +71,10 @@ def publish_dsh_web() -> None:
 def _seed_admin_key(config: dict) -> dict:
     """Replace the dangling env admin key with a generated one when unset.
 
-    The gateway has no default management password, so a config that points
-    admin_key at an unset environment variable would lock the console. Generate
-    a random key and print it once — the same first-run flow as a bare
-    `facet serve`.
+    Containers listen on 0.0.0.0, so seeding a default admin password would
+    expose a public credential in `docker logs`. Generate a random key instead
+    and print it once on first start; the browser will then prompt the operator
+    to replace it in the console.
     """
     if os.environ.get("ROUTER_ADMIN_KEY", "").strip():
         return config

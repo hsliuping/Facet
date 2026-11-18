@@ -111,9 +111,32 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(channels["plan-b"]["api_key"], "env:PLAN_B_KEY")
         self.assertEqual(config["_readme"], "test config")
 
+    def test_first_run_sets_the_management_password(self):
+        # Fresh seed: no management password yet, so the loopback console is
+        # open and reports admin_key_set=False (the browser then forces the
+        # operator to pick a password before anything can be used).
+        base = self.start(base_config())
+        status, _, body = self.call(base, "GET", "/api/state")
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)["listen"]["admin_key_set"])
+
+        # The browser posts the new password with an empty old_key.
+        status, _, body = self.call(base, "POST", "/api/admin/key",
+                                    body={"key": "my-pass", "old_key": ""})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["admin_key"], "my-pass")
+
+        # From now on the management API requires it.
+        status, _, _ = self.call(base, "GET", "/api/config")
+        self.assertEqual(status, 401)
+        status, _, _ = self.call(base, "GET", "/api/config", admin="my-pass")
+        self.assertEqual(status, 200)
+        status, _, body = self.call(base, "GET", "/api/state", admin="my-pass")
+        self.assertTrue(json.loads(body)["listen"]["admin_key_set"])
+
     def test_api_requires_admin_key_but_page_does_not(self):
         # Gateway key without an admin_key locks the management API: there is
-        # no built-in default password to fall back to.
+        # no fallback password for hand-written configs.
         base = self.start(base_config(gateway_key="gw-secret"))
         status, _, _ = self.call(base, "GET", "/api/config")
         self.assertEqual(status, 401)
@@ -262,8 +285,8 @@ class ConsoleTests(unittest.TestCase):
         # Gateway key alone is not an admin credential.
         status, _, _ = self.call(base, "GET", "/api/recommend", key="gw-secret")
         self.assertEqual(status, 401)
-        # No admin_key is configured and there is no built-in default password,
-        # so the management API stays locked instead of accepting "admin".
+        # No admin_key is configured, so the management API stays locked
+        # instead of accepting "admin" (there is no default password).
         status, _, _ = self.call(base, "GET", "/api/recommend?purpose=agent", admin="admin")
         self.assertEqual(status, 401)
 

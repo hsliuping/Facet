@@ -59,11 +59,11 @@ from .usage import UsageRecorder
 
 MAX_BODY_BYTES = 8 * 1024 * 1024
 UNSAFE_HEADER = re.compile(r"[^A-Za-z0-9._:/@+ -]")
-# The management console authenticates with listen.admin_key only — there is
-# no built-in default password. A first start seeds a random key (seed.py);
-# a config with no credentials at all keeps the console open (loopback by
-# default), and a gateway api_key without an admin_key keeps the management
-# API locked instead of falling back to a shared, publicly known password.
+# The management console authenticates with listen.admin_key only. A first
+# start seeds no password at all (seed.py): the console stays open on the
+# loopback address and the browser forces the operator to set a management
+# password before anything can be used. A gateway api_key without an admin_key
+# keeps the management API locked instead of falling back to open access.
 # Sliding window (seconds) behind a member key's `rpm` cap; timestamps of
 # accepted inference calls are kept in memory only, so a restart resets it.
 MEMBER_RPM_WINDOW = 60.0
@@ -2451,9 +2451,10 @@ class App:
         """True when `provided` is the current management password."""
         expected = self.config.listen.admin_key
         if not expected:
-            # Keyless console (no api_key either) stays open; a gateway
-            # api_key without an admin_key is a locked management API —
-            # there is no shared default password to match against.
+            # No management password yet: a keyless console (no api_key
+            # either) stays open — the browser forces the operator to set a
+            # password on first use; a gateway api_key without an admin_key
+            # is a locked management API, never a fallback to open access.
             return not self.config.listen.api_key
         return hmac.compare_digest(
             expected.encode("utf-8"), (provided or "").strip().encode("utf-8"))
@@ -2488,8 +2489,8 @@ class App:
 
         A keyless console (no api_key, no admin_key yet) may rotate the
         master key without a password; leaving keyless mode then also seeds
-        an admin_key, otherwise the management API would lock itself out
-        (there is no shared default password).
+        a random admin_key and returns it to the browser, otherwise the
+        management API would lock itself out.
         """
         if not self._verify_admin(admin_key):
             raise ValueError("管理密码不正确")
@@ -4034,7 +4035,8 @@ class App:
             "routes": {key: list(route.channels) for key, route in self.config.routes.items()},
             "model_states": self.model_states(),
             "sticky_sessions": snap["sticky_sessions"],
-            "listen": {"host": self.config.listen.host, "port": self.config.listen.port},
+            "listen": {"host": self.config.listen.host, "port": self.config.listen.port,
+                       "admin_key_set": bool(self.config.listen.admin_key)},
             "config_path": str(self.config_path) if self.config_path else None,
             "subscriptions": self.subscription_summary(),
             "subscription_settings": self.subscription_settings,
@@ -4196,9 +4198,10 @@ class App:
         """Management endpoints use listen.admin_key and nothing else.
 
         A config with no credentials at all keeps the console open (same rule
-        as the gateway); a gateway api_key without an admin_key locks the
-        management API until the operator sets one in router.json. There is
-        no built-in fallback password.
+        as the gateway; the browser then forces the operator to set a
+        management password before anything can be used); a gateway api_key
+        without an admin_key locks the management API until the operator sets
+        one in router.json.
         """
         expected = self.config.listen.admin_key
         if not expected:

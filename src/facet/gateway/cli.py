@@ -91,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
                       ' the management API is locked; set admin_key in router.json')
             else:
                 print('  WARNING: listen.admin_key is unset and no gateway key is configured;'
-                      ' the management console is open to local processes')
+                      ' the management console is open to local processes'
+                      ' until a management password is set in the console')
         known_routes = {name.split(":", 1)[1] for name in config.routes}
         for name, hint in config.models.branded.items():
             if hint not in known_routes:
