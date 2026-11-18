@@ -144,7 +144,7 @@ const WIZARD_STEPS = [
       const shapes = {}; // billing -> [厂家名]
       providers.forEach((p) => {
         Object.entries(p.modes || {}).forEach(([k, m]) => {
-          if (m.tier === 'free') freeNames.push(p.name || p.id);
+          if (wizardHasFree(m) && !freeNames.includes(p.name || p.id)) freeNames.push(p.name || p.id);
           // 免费额度的按量模式（如火山 payg）同样按形态归类，
           // 这样「按量付费」筛选也能看到带免费额度的厂家。
           shapes[wizardBilling(k, m)] = (shapes[wizardBilling(k, m)] || [])
@@ -230,7 +230,7 @@ const WIZARD_STEPS = [
       }
       const cards = entries.map(({ p, pick }) => {
         const { modeKey, mode } = pick;
-        const tierTag = mode.tier === 'free' ? '<span class="tag active">有免费额度</span>'
+        const tierTag = wizardHasFree(mode) ? '<span class="tag active">有免费额度</span>'
           : '<span class="tag">付费</span>';
         const summary = wizardFreeSummary(mode);
         const quotaLine = summary ? `<div class="wizard-quota">${esc(summary)}</div>` : '';
@@ -508,6 +508,15 @@ const WIZARD_BILLING_LABELS = {
   coding_plan: 'Coding Plan 包月',
   agent_plan: 'Agent Plan 包月',
 };
+
+// 是否带免费额度：显式 free tier，或注册表登记了免费额度数据——
+// free_quota（新人赠额）、free_limits（赠金/速率/免费模型说明）、
+// free_models（官方免费模型清单）。赠送额度型厂家（火山/百炼/千帆）
+// 渠道档位仍标 paid（额度烧完按量扣费，不进免费池），但向导目录照样列出。
+function wizardHasFree(mode) {
+  return mode.tier === 'free' || !!mode.free_quota || !!mode.free_limits
+    || !!(mode.free_models || []).length;
+}
 function wizardBilling(modeKey, mode) {
   if (mode.billing && WIZARD_BILLING_LABELS[mode.billing]) return mode.billing;
   if (modeKey === 'coding') return 'coding_plan';
@@ -523,7 +532,7 @@ function wizardPickMode(provider, tier, billing) {
   if (!keys.length) return null;
   const wanted = tier
     ? keys.filter((k) => (tier === 'free'
-      ? modes[k].tier === 'free'
+      ? wizardHasFree(modes[k])
       : !billing || wizardBilling(k, modes[k]) === billing))
     : keys;
   const ordered = [

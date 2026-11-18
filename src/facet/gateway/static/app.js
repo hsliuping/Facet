@@ -4752,8 +4752,6 @@ function applyProviderPreset() {
 // listed here fall back to the whole manual. Values must match the guide's
 // ### headings exactly (extractGuideSection compares verbatim).
 const GUIDE_SECTIONS = {
-  nvidia: '3.1 NVIDIA NIM——免费层',
-  openrouter: '3.2 OpenRouter——免费池',
   volcengine: '4.1 火山引擎方舟',
   zhipu: '4.2 智谱 GLM',
   bailian: '4.3 阿里云百炼',
@@ -4763,12 +4761,19 @@ const GUIDE_SECTIONS = {
   deepseek: '4.7 DeepSeek',
   hunyuan: '4.8 腾讯混元',
   minimax: '4.9 MiniMax',
+  qianfan: '4.10 百度千帆',
+  siliconflow: '4.11 硅基流动 SiliconFlow',
+  teleai: '4.12 中国电信（teleAI / TokenHub / 息壤）',
+  scnet: '4.13 国家超算互联网 SCNet',
+  nvidia: '3.1 NVIDIA NIM——免费层',
+  openrouter: '3.2 OpenRouter——免费池',
   anthropic: '5.1 Anthropic 直连',
   openai: '5.2 OpenAI 直连',
   xai: '5.3 xAI Grok',
   zai: '5.4 Z.AI（智谱海外）',
   opencode: '6.1 OpenCode',
   commandcode: '6.2 Command Code',
+  llm7: '6.3 LLM7',
 };
 
 let guidePayload = null;    // cached /api/guide response

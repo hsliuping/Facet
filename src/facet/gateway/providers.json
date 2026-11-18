@@ -25,8 +25,14 @@
           "tier": "paid",
           "plan_api": "coding",
           "credential_envs": [
-            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
-            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+            {
+              "env": "VOLC_ACCESSKEY",
+              "label": "IAM Access Key（AK）"
+            },
+            {
+              "env": "VOLC_SECRETKEY",
+              "label": "IAM Secret Key（SK）"
+            }
           ],
           "models": []
         },
@@ -39,8 +45,14 @@
           "tier": "paid",
           "plan_api": "agent",
           "credential_envs": [
-            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
-            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+            {
+              "env": "VOLC_ACCESSKEY",
+              "label": "IAM Access Key（AK）"
+            },
+            {
+              "env": "VOLC_SECRETKEY",
+              "label": "IAM Secret Key（SK）"
+            }
           ],
           "models": []
         },
@@ -50,12 +62,83 @@
           "base_url": "https://ark.cn-beijing.volces.com/api/v3",
           "docs_url": "https://www.volcengine.com/docs/82379",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
-          "free_quota_cmd": ["facet-ark-quota", "--output", "json"],
-          "free_quota": {"tokens": 500000, "period": "total"},
-          "credential_envs": [
-            {"env": "VOLC_ACCESSKEY", "label": "IAM Access Key（AK）"},
-            {"env": "VOLC_SECRETKEY", "label": "IAM Secret Key（SK）"}
+          "free_quota_cmd": [
+            "facet-ark-quota",
+            "--output",
+            "json"
           ],
+          "free_quota": {
+            "tokens": 500000,
+            "period": "total"
+          },
+          "credential_envs": [
+            {
+              "env": "VOLC_ACCESSKEY",
+              "label": "IAM Access Key（AK）"
+            },
+            {
+              "env": "VOLC_SECRETKEY",
+              "label": "IAM Secret Key（SK）"
+            }
+          ],
+          "tier": "paid",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "bailian",
+      "name": "阿里云百炼",
+      "credential_help": {
+        "steps": [
+          "主账号登录 RAM 访问控制 https://ram.console.aliyun.com/users，点「创建用户」：填写登录名，勾选「OpenAPI 调用访问」；创建完成后在用户列表点「创建 AccessKey」，得到 AccessKey ID 与 AccessKey Secret。",
+          "RAM 授权：在该用户的「权限管理」→「新增授权」，搜索并勾选系统策略 AliyunBailianFullAccess（百炼管理员）后确认；缺这一步查询会报 NoPermission。",
+          "加入业务空间：主账号打开百炼控制台的全局管理菜单「业务空间管理」 https://bailian.console.aliyun.com/settings/workspace，进入目标业务空间的成员管理，新增成员并输入该 RAM 用户的登录名或 UID；缺这一步会报 Team.NotAuthorised。",
+          "模型授权：默认业务空间所有模型均可调用；若用自建业务空间，需由超级管理员在空间内「模型列表」为模型开通「模型调用」权限；缺这一步会报 Workspace.NotAuthorised。",
+          "把 AccessKey ID、AccessKey Secret 分别填入本渠道凭据区并保存（保存后回显 ***）。"
+        ],
+        "permissions": "RAM 用户需挂系统策略 AliyunBailianFullAccess——免费额度查询（bl usage free）走百炼 OpenAPI，需要它；仅调用模型时挂 AliyunBailianDataFullAccess 即可。注意：RAM 策略只解决「能访问百炼」，业务空间权限还要在百炼控制台把该用户加入空间成员并授权模型。",
+        "note": "AccessKey Secret 只在创建时显示一次，立即复制保存。这里填的是 RAM 用户的 AccessKey ID/Secret，不是 DashScope 的 sk- 开头 API Key——那是数据面推理 Key，免费额度对齐用不上。"
+      },
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "docs_url": "https://help.aliyun.com/zh/model-studio/",
+          "keys_url": "https://bailian.console.aliyun.com",
+          "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
+          "free_quota_cmd": [
+            "bl",
+            "usage",
+            "free",
+            "--output",
+            "json"
+          ],
+          "free_quota": {
+            "tokens": 1000000,
+            "period": "total"
+          },
+          "credential_envs": [
+            {
+              "env": "BAILIAN_ACCESS_KEY_ID",
+              "label": "AccessKey ID（AK）"
+            },
+            {
+              "env": "BAILIAN_ACCESS_KEY_SECRET",
+              "label": "AccessKey Secret（SK）"
+            }
+          ],
+          "tier": "paid",
+          "models": []
+        },
+        "agent": {
+          "label": "Token Plan 套餐",
+          "protocol": "openai",
+          "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "docs_url": "https://help.aliyun.com/zh/model-studio/",
+          "keys_url": "https://bailian.console.aliyun.com",
+          "models_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -80,6 +163,259 @@
           "base_url": "https://open.bigmodel.cn/api/paas/v4",
           "docs_url": "https://docs.bigmodel.cn",
           "keys_url": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+          "tier": "paid",
+          "models": [],
+          "free_limits": {
+            "note": "新用户赠 2000 万 tokens 体验包；GLM Flash 系列免费调用"
+          }
+        }
+      }
+    },
+    {
+      "id": "modelscope",
+      "name": "魔搭 ModelScope",
+      "modes": {
+        "payg": {
+          "label": "免费推理（API-Inference）",
+          "protocol": "openai",
+          "base_url": "https://api-inference.modelscope.cn/v1",
+          "docs_url": "https://modelscope.cn/docs",
+          "keys_url": "https://modelscope.cn/my/myaccesstoken",
+          "models_url": "https://api-inference.modelscope.cn/v1/models",
+          "free_limits": {
+            "rpd": 250,
+            "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效"
+          },
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "modes": {
+        "payg": {
+          "label": "按量付费（含永久免费模型）",
+          "protocol": "openai",
+          "base_url": "https://api.siliconflow.cn/v1",
+          "docs_url": "https://docs.siliconflow.cn",
+          "keys_url": "https://cloud.siliconflow.cn/i/WdCgxVvL",
+          "models_url": "https://api.siliconflow.cn/v1/models",
+          "free_quota_cmd": [
+            "facet-siliconflow-quota",
+            "--output",
+            "json"
+          ],
+          "free_limits": {
+            "note": "免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）"
+          },
+          "tier": "free",
+          "models": [],
+          "free_models": [
+            "XingChenAGI/Xing4.0-29B",
+            "THUDM/GLM-Z1-9B-0414",
+            "tencent/Hunyuan-MT-7B"
+          ]
+        }
+      }
+    },
+    {
+      "id": "hunyuan",
+      "name": "腾讯元宝（混元）",
+      "credential_help": {
+        "steps": [
+          "用腾讯云主账号登录访问控制 → API 密钥管理 https://console.cloud.tencent.com/cam/capi，点「新建密钥」，得到 SecretId 与 SecretKey（保存后 SecretKey 只显示一次，立即复制保存）。",
+          "如使用子账号：请在子账号上挂只读策略 QcloudTokenHubReadOnlyAccess（或自定义策略允许 tokenhub 的 DescribeModelList），查询免费模型清单只需只读权限，不要挂写权限。",
+          "把 SecretId、SecretKey 分别填入本渠道凭据区并保存（保存后回显 ***）。"
+        ],
+        "permissions": "管理面凭据（SecretId/SecretKey）通过 TC3-HMAC-SHA256 签名调用 TokenHub 控制面 API DescribeModelList，用于拉取当前官方免费体验包覆盖的模型清单；只读即可，无需写权限。",
+        "note": "这里填的是腾讯云 API 密钥（访问控制 → API 密钥管理），不是 TokenHub 控制台创建的 Bearer API Key——后者只能调 /v1/chat/completions，无法签名管理面接口。未配置管理面凭据时，渠道拉取会回退到注册表内置的免费模型静态清单（跟随腾讯政策变化的实时清单需配置凭据）。"
+      },
+      "modes": {
+        "agent": {
+          "label": "Token Plan 套餐",
+          "billing": "token_plan",
+          "protocol": "openai",
+          "base_url": "https://tokenhub.tencentmaas.com/plan/v3",
+          "docs_url": "https://cloud.tencent.com/document/product/1823/130060",
+          "keys_url": "https://console.cloud.tencent.com/tokenhub/tokenplan/common",
+          "tier": "paid",
+          "models": [
+            "hy4-flash",
+            "hy4",
+            "hy3",
+            "hy3-preview",
+            "hy3-202608",
+            "tc-code-latest",
+            "deepseek-v4.1-flash",
+            "deepseek-v4.1-flash-1017",
+            "deepseek-v4-pro",
+            "deepseek-v4-pro-0813",
+            "deepseek/deepseek-flash",
+            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-0731",
+            "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-pro-0813",
+            "glm-5.3",
+            "glm-5.3-flash",
+            "glm-5.2",
+            "kimi-k2.7-code",
+            "kimi-k3",
+            "minimax-m3",
+            "mimo-v2.6-flash"
+          ]
+        },
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://tokenhub.tencentmaas.com/v1",
+          "docs_url": "https://cloud.tencent.com/document/product/1823/130051",
+          "keys_url": "https://console.cloud.tencent.com/tokenhub/apikey",
+          "models_url": "https://tokenhub.tencentmaas.com/v1/models",
+          "tier": "paid",
+          "free_quota_cmd": [
+            "facet-tokenhub-quota",
+            "--output",
+            "json"
+          ],
+          "free_quota": {
+            "tokens": 1000000,
+            "period": "total"
+          },
+          "credential_envs": [
+            {
+              "env": "TENCENT_SECRET_ID",
+              "label": "API 密钥 SecretId"
+            },
+            {
+              "env": "TENCENT_SECRET_KEY",
+              "label": "API 密钥 SecretKey"
+            }
+          ],
+          "models": [],
+          "free_models": [
+            "hy4-flash",
+            "hy4",
+            "hy4-preview",
+            "hy3",
+            "hy-mt2-pro",
+            "hy-mt2-plus",
+            "hy-mt2-lite",
+            "hunyuan-role-latest",
+            "hy-role",
+            "deepseek/deepseek-flash",
+            "deepseek-v4-flash-202605",
+            "deepseek/deepseek-v4-flash-0731",
+            "deepseek/deepseek-v4-flash",
+            "deepseek-v4-pro-202606",
+            "deepseek/deepseek-v4-pro-0813",
+            "deepseek/deepseek-v4-pro",
+            "deepseek/deepseek-v4-flash-vision-exp",
+            "deepseek-v4.1-flash-1017",
+            "deepseek-v4.1-flash",
+            "deepseek-v4-pro-0813",
+            "deepseek-v4-pro",
+            "glm-5.3-flash",
+            "glm-5.3-flashx",
+            "glm-5.3",
+            "glm-5.2",
+            "glm-5v-turbo",
+            "kimi-k2.7-code-highspeed",
+            "kimi-k3.1-pro-highspeed",
+            "kimi-k3.1-pro",
+            "kimi-k3",
+            "kimi-k2.8-preview",
+            "kimi-k2.7-code",
+            "kimi-k2.6",
+            "minimax-m3.1-flash",
+            "minimax-m3",
+            "minimax-m2.7",
+            "mimo-v2.6-pro",
+            "mimo-v2.6-flash",
+            "mimo-v2.5-pro",
+            "step-5-preview",
+            "youtu-vita",
+            "hy-vision-2.0-instruct",
+            "hunyuan-t1-vision-20250916",
+            "hunyuan-turbos-vision-video-20250728"
+          ]
+        }
+      }
+    },
+    {
+      "id": "qianfan",
+      "name": "百度千帆",
+      "modes": {
+        "agent": {
+          "label": "Token Plan 套餐",
+          "billing": "token_plan",
+          "protocol": "openai",
+          "base_url": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+          "docs_url": "https://cloud.baidu.com/product/codingplan.html",
+          "keys_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
+          "tier": "paid",
+          "models": []
+        },
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://qianfan.baidubce.com/v2",
+          "docs_url": "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
+          "keys_url": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
+          "models_url": "https://qianfan.baidubce.com/v2/models",
+          "tier": "paid",
+          "free_quota": {
+            "tokens": 1000000,
+            "period": "total"
+          },
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "moonshot",
+      "name": "Kimi",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.moonshot.cn/v1",
+          "docs_url": "https://platform.moonshot.cn/docs",
+          "keys_url": "https://platform.moonshot.cn/console/api-keys",
+          "models_url": "https://api.moonshot.cn/v1/models",
+          "tier": "paid",
+          "models": [],
+          "free_limits": {
+            "note": "注册赠 ¥15 代金券（无门槛，示例限 Kimi K3.1 Pro Highspeed 版，以账户提示为准）"
+          }
+        }
+      }
+    },
+    {
+      "id": "xiaomi",
+      "name": "小米 MiMo",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "docs_url": "https://platform.xiaomimimo.com/docs",
+          "keys_url": "https://platform.xiaomimimo.com",
+          "models_url": "https://api.xiaomimimo.com/v1/models",
+          "tier": "paid",
+          "models": [],
+          "free_limits": {
+            "note": "注册赠 ¥10 体验金（现金余额与赠送余额分列）"
+          }
+        },
+        "agent": {
+          "label": "Token Plan 套餐",
+          "protocol": "openai",
+          "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+          "docs_url": "https://platform.xiaomimimo.com/docs",
+          "keys_url": "https://platform.xiaomimimo.com",
+          "models_url": "https://token-plan-cn.xiaomimimo.com/v1/models",
           "tier": "paid",
           "models": []
         }
@@ -127,159 +463,6 @@
       }
     },
     {
-      "id": "moonshot",
-      "name": "Kimi",
-      "modes": {
-        "payg": {
-          "label": "按量付费",
-          "protocol": "openai",
-          "base_url": "https://api.moonshot.cn/v1",
-          "docs_url": "https://platform.moonshot.cn/docs",
-          "keys_url": "https://platform.moonshot.cn/console/api-keys",
-          "models_url": "https://api.moonshot.cn/v1/models",
-          "tier": "paid",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "xiaomi",
-      "name": "小米 MiMo",
-      "modes": {
-        "payg": {
-          "label": "按量付费",
-          "protocol": "openai",
-          "base_url": "https://api.xiaomimimo.com/v1",
-          "docs_url": "https://platform.xiaomimimo.com/docs",
-          "keys_url": "https://platform.xiaomimimo.com",
-          "models_url": "https://api.xiaomimimo.com/v1/models",
-          "tier": "paid",
-          "models": []
-        },
-        "agent": {
-          "label": "Token Plan 套餐",
-          "protocol": "openai",
-          "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
-          "docs_url": "https://platform.xiaomimimo.com/docs",
-          "keys_url": "https://platform.xiaomimimo.com",
-          "models_url": "https://token-plan-cn.xiaomimimo.com/v1/models",
-          "tier": "paid",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "anthropic",
-      "name": "Anthropic 直连",
-      "modes": {
-        "payg": {
-          "label": "按量付费",
-          "protocol": "anthropic",
-          "base_url": "https://api.anthropic.com",
-          "docs_url": "https://docs.anthropic.com",
-          "keys_url": "https://console.anthropic.com/settings/keys",
-          "models_url": "https://api.anthropic.com/v1/models",
-          "tier": "paid",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "openai",
-      "name": "OpenAI 直连",
-      "modes": {
-        "payg": {
-          "label": "按量付费",
-          "protocol": "openai",
-          "base_url": "https://api.openai.com/v1",
-          "docs_url": "https://platform.openai.com/docs",
-          "keys_url": "https://platform.openai.com/api-keys",
-          "models_url": "https://api.openai.com/v1/models",
-          "tier": "paid",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "bailian",
-      "name": "阿里云百炼",
-      "credential_help": {
-        "steps": [
-          "主账号登录 RAM 访问控制 https://ram.console.aliyun.com/users，点「创建用户」：填写登录名，勾选「OpenAPI 调用访问」；创建完成后在用户列表点「创建 AccessKey」，得到 AccessKey ID 与 AccessKey Secret。",
-          "RAM 授权：在该用户的「权限管理」→「新增授权」，搜索并勾选系统策略 AliyunBailianFullAccess（百炼管理员）后确认；缺这一步查询会报 NoPermission。",
-          "加入业务空间：主账号打开百炼控制台的全局管理菜单「业务空间管理」 https://bailian.console.aliyun.com/settings/workspace，进入目标业务空间的成员管理，新增成员并输入该 RAM 用户的登录名或 UID；缺这一步会报 Team.NotAuthorised。",
-          "模型授权：默认业务空间所有模型均可调用；若用自建业务空间，需由超级管理员在空间内「模型列表」为模型开通「模型调用」权限；缺这一步会报 Workspace.NotAuthorised。",
-          "把 AccessKey ID、AccessKey Secret 分别填入本渠道凭据区并保存（保存后回显 ***）。"
-        ],
-        "permissions": "RAM 用户需挂系统策略 AliyunBailianFullAccess——免费额度查询（bl usage free）走百炼 OpenAPI，需要它；仅调用模型时挂 AliyunBailianDataFullAccess 即可。注意：RAM 策略只解决「能访问百炼」，业务空间权限还要在百炼控制台把该用户加入空间成员并授权模型。",
-        "note": "AccessKey Secret 只在创建时显示一次，立即复制保存。这里填的是 RAM 用户的 AccessKey ID/Secret，不是 DashScope 的 sk- 开头 API Key——那是数据面推理 Key，免费额度对齐用不上。"
-      },
-      "modes": {
-        "payg": {
-          "label": "按量付费",
-          "protocol": "openai",
-          "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-          "docs_url": "https://help.aliyun.com/zh/model-studio/",
-          "keys_url": "https://bailian.console.aliyun.com",
-          "models_url": "https://dashscope.aliyuncs.com/api/v1/models",
-          "free_quota_cmd": ["bl", "usage", "free", "--output", "json"],
-          "free_quota": {"tokens": 1000000, "period": "total"},
-          "credential_envs": [
-            {"env": "BAILIAN_ACCESS_KEY_ID", "label": "AccessKey ID（AK）"},
-            {"env": "BAILIAN_ACCESS_KEY_SECRET", "label": "AccessKey Secret（SK）"}
-          ],
-          "tier": "paid",
-          "models": []
-        },
-        "agent": {
-          "label": "Token Plan 套餐",
-          "protocol": "openai",
-          "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-          "docs_url": "https://help.aliyun.com/zh/model-studio/",
-          "keys_url": "https://bailian.console.aliyun.com",
-          "models_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models",
-          "tier": "paid",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "siliconflow",
-      "name": "硅基流动 SiliconFlow",
-      "modes": {
-        "payg": {
-          "label": "按量付费（含永久免费模型）",
-          "protocol": "openai",
-          "base_url": "https://api.siliconflow.cn/v1",
-          "docs_url": "https://docs.siliconflow.cn",
-          "keys_url": "https://cloud.siliconflow.cn/account/ak",
-          "models_url": "https://api.siliconflow.cn/v1/models",
-          "free_quota_cmd": ["facet-siliconflow-quota", "--output", "json"],
-          "free_limits": {"note": "免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）"},
-          "tier": "free",
-          "models": [],
-          "free_models": ["XingChenAGI/Xing4.0-29B", "THUDM/GLM-Z1-9B-0414", "tencent/Hunyuan-MT-7B"]
-        }
-      }
-    },
-    {
-      "id": "modelscope",
-      "name": "魔搭 ModelScope",
-      "modes": {
-        "payg": {
-          "label": "免费推理（API-Inference）",
-          "protocol": "openai",
-          "base_url": "https://api-inference.modelscope.cn/v1",
-          "docs_url": "https://modelscope.cn/docs",
-          "keys_url": "https://modelscope.cn/my/myaccesstoken",
-          "models_url": "https://api-inference.modelscope.cn/v1/models",
-          "free_limits": {"rpd": 250, "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效"},
-          "tier": "free",
-          "models": []
-        }
-      }
-    },
-    {
       "id": "teleai",
       "name": "中国电信（天翼 AI / 息壤 / TokenHub）",
       "modes": {
@@ -290,7 +473,9 @@
           "docs_url": "https://www.ctyun.cn/document/11061839/11097250",
           "keys_url": "https://www.ctyun.cn/document/11094224/11094241",
           "models_url": "https://ai.ctaigw.cn/v1/models",
-          "free_limits": {"note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日，用完或到期自动停该模型"},
+          "free_limits": {
+            "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日，用完或到期自动停该模型"
+          },
           "tier": "free",
           "models": []
         }
@@ -307,125 +492,108 @@
           "docs_url": "https://www.scnet.cn/help/docs/mainsite/mass/tutorial/quickstart.html",
           "keys_url": "https://www.scnet.cn/ui/console/index.html#/llm/apikeys",
           "models_url": "https://api.scnet.cn/api/llm/v1/models",
-          "free_limits": {"note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日；Anthropic 兼容端点为 /api/llm/anthropic"},
+          "free_limits": {
+            "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日；Anthropic 兼容端点为 /api/llm/anthropic"
+          },
           "tier": "free",
           "models": []
         }
       }
     },
     {
-      "id": "hunyuan",
-      "name": "腾讯元宝（混元）",
-      "credential_help": {
-        "steps": [
-          "用腾讯云主账号登录访问控制 → API 密钥管理 https://console.cloud.tencent.com/cam/capi，点「新建密钥」，得到 SecretId 与 SecretKey（保存后 SecretKey 只显示一次，立即复制保存）。",
-          "如使用子账号：请在子账号上挂只读策略 QcloudTokenHubReadOnlyAccess（或自定义策略允许 tokenhub 的 DescribeModelList），查询免费模型清单只需只读权限，不要挂写权限。",
-          "把 SecretId、SecretKey 分别填入本渠道凭据区并保存（保存后回显 ***）。"
-        ],
-        "permissions": "管理面凭据（SecretId/SecretKey）通过 TC3-HMAC-SHA256 签名调用 TokenHub 控制面 API DescribeModelList，用于拉取当前官方免费体验包覆盖的模型清单；只读即可，无需写权限。",
-        "note": "这里填的是腾讯云 API 密钥（访问控制 → API 密钥管理），不是 TokenHub 控制台创建的 Bearer API Key——后者只能调 /v1/chat/completions，无法签名管理面接口。未配置管理面凭据时，渠道拉取会回退到注册表内置的免费模型静态清单（跟随腾讯政策变化的实时清单需配置凭据）。"
-      },
+      "id": "google",
+      "name": "Google AI Studio",
       "modes": {
-        "agent": {
-          "label": "Token Plan 套餐",
-          "billing": "token_plan",
-          "protocol": "openai",
-          "base_url": "https://tokenhub.tencentmaas.com/plan/v3",
-          "docs_url": "https://cloud.tencent.com/document/product/1823/130060",
-          "keys_url": "https://console.cloud.tencent.com/tokenhub/tokenplan/common",
-          "tier": "paid",
-          "models": [
-            "hy4-flash", "hy4", "hy3", "hy3-preview", "hy3-202608",
-            "tc-code-latest",
-            "deepseek-v4.1-flash", "deepseek-v4.1-flash-1017",
-            "deepseek-v4-pro", "deepseek-v4-pro-0813",
-            "deepseek/deepseek-flash", "deepseek/deepseek-v4-flash",
-            "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-pro",
-            "deepseek/deepseek-v4-pro-0813",
-            "glm-5.3", "glm-5.3-flash", "glm-5.2",
-            "kimi-k2.7-code", "kimi-k3",
-            "minimax-m3", "mimo-v2.6-flash"
-          ]
-        },
         "payg": {
-          "label": "按量付费",
+          "label": "免费额度",
           "protocol": "openai",
-          "base_url": "https://tokenhub.tencentmaas.com/v1",
-          "docs_url": "https://cloud.tencent.com/document/product/1823/130051",
-          "keys_url": "https://console.cloud.tencent.com/tokenhub/apikey",
-          "models_url": "https://tokenhub.tencentmaas.com/v1/models",
-          "tier": "paid",
-          "free_quota_cmd": ["facet-tokenhub-quota", "--output", "json"],
-          "free_quota": {"tokens": 1000000, "period": "total"},
-          "credential_envs": [
-            {"env": "TENCENT_SECRET_ID", "label": "API 密钥 SecretId"},
-            {"env": "TENCENT_SECRET_KEY", "label": "API 密钥 SecretKey"}
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "docs_url": "https://ai.google.dev/gemini-api/docs",
+          "keys_url": "https://aistudio.google.com/apikey",
+          "models_url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
+          "free_limits": {
+            "note": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天"
+          },
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "modes": {
+        "payg": {
+          "label": "按量付费（积分，含 :free 模型）",
+          "protocol": "openai",
+          "base_url": "https://openrouter.ai/api/v1",
+          "docs_url": "https://openrouter.ai/docs",
+          "keys_url": "https://openrouter.ai/settings/keys",
+          "models_url": "https://openrouter.ai/api/v1/models",
+          "free_limits": {
+            "rpm": 20,
+            "rpd": 50,
+            "note": "未充值 20 RPM / 50 次/天；充 $10 后 1,000 次/天"
+          },
+          "free_limit_presets": [
+            {
+              "label": "未充值（余额 < $10）",
+              "rate": {
+                "rpm": 20,
+                "rpd": 50
+              },
+              "note": ":free 模型 20 次/分、50 次/天"
+            },
+            {
+              "label": "已充值 ≥ $10",
+              "rate": {
+                "rpm": 20,
+                "rpd": 1000
+              },
+              "note": ":free 模型 20 次/分、1,000 次/天（网关按滚动 24h 计数）"
+            }
           ],
-          "models": [],
-          "free_models": [
-            "hy4-flash", "hy4", "hy4-preview", "hy3",
-            "hy-mt2-pro", "hy-mt2-plus", "hy-mt2-lite",
-            "hunyuan-role-latest", "hy-role",
-            "deepseek/deepseek-flash", "deepseek-v4-flash-202605",
-            "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-flash",
-            "deepseek-v4-pro-202606", "deepseek/deepseek-v4-pro-0813",
-            "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash-vision-exp",
-            "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash",
-            "deepseek-v4-pro-0813", "deepseek-v4-pro",
-            "glm-5.3-flash", "glm-5.3-flashx", "glm-5.3", "glm-5.2",
-            "glm-5v-turbo",
-            "kimi-k2.7-code-highspeed", "kimi-k3.1-pro-highspeed",
-            "kimi-k3.1-pro", "kimi-k3", "kimi-k2.8-preview",
-            "kimi-k2.7-code", "kimi-k2.6",
-            "minimax-m3.1-flash", "minimax-m3", "minimax-m2.7",
-            "mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5-pro",
-            "step-5-preview",
-            "youtu-vita", "hy-vision-2.0-instruct",
-            "hunyuan-t1-vision-20250916",
-            "hunyuan-turbos-vision-video-20250728"
-          ]
-        }
-      }
-    },
-    {
-      "id": "qianfan",
-      "name": "百度千帆",
-      "modes": {
-        "agent": {
-          "label": "Token Plan 套餐",
-          "billing": "token_plan",
-          "protocol": "openai",
-          "base_url": "https://qianfan.baidubce.com/v2/tokenplan/personal",
-          "docs_url": "https://cloud.baidu.com/product/codingplan.html",
-          "keys_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
           "tier": "paid",
-          "models": []
-        },
-        "payg": {
-          "label": "按量付费",
-          "protocol": "openai",
-          "base_url": "https://qianfan.baidubce.com/v2",
-          "docs_url": "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
-          "keys_url": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
-          "models_url": "https://qianfan.baidubce.com/v2/models",
-          "tier": "paid",
-          "free_quota": {"tokens": 1000000, "period": "total"},
           "models": []
         }
       }
     },
     {
-      "id": "xai",
-      "name": "Grok（xAI）",
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
       "modes": {
         "payg": {
-          "label": "按量付费",
+          "label": "免费层",
           "protocol": "openai",
-          "base_url": "https://api.x.ai/v1",
-          "docs_url": "https://docs.x.ai/docs/models",
-          "keys_url": "https://console.x.ai",
-          "models_url": "https://api.x.ai/v1/models",
-          "tier": "paid",
+          "base_url": "https://integrate.api.nvidia.com/v1",
+          "docs_url": "https://docs.api.nvidia.com/nim/",
+          "keys_url": "https://build.nvidia.com/settings/api-keys",
+          "models_url": "https://integrate.api.nvidia.com/v1/models",
+          "free_limits": {
+            "rpm": 40,
+            "note": "免费层=速率限制（个人上限约 40 RPM，控制台右上角显示），非 credits；10,000 请求/日为页面嵌入值、非官方承诺；试用无时间限制"
+          },
+          "tier": "free",
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "llm7",
+      "name": "LLM7",
+      "modes": {
+        "payg": {
+          "label": "免费注册",
+          "protocol": "openai",
+          "base_url": "https://api.llm7.io/v1",
+          "docs_url": "https://docs.llm7.io",
+          "keys_url": "https://dash.llm7.io",
+          "models_url": "https://api.llm7.io/v1/models",
+          "free_limits": {
+            "rpm": 60,
+            "note": "key 免费注册即领：60 次/分 · 250 次/时 · 10 万 tokens/24h"
+          },
+          "tier": "free",
           "models": []
         }
       }
@@ -442,7 +610,10 @@
           "keys_url": "https://opencode.ai/console",
           "models_url": "https://opencode.ai/inference/v1/models",
           "tier": "paid",
-          "models": []
+          "models": [],
+          "free_limits": {
+            "note": "Models 端点含 12+ 免费模型（以控制台清单为准）；Go 订阅另含付费模型"
+          }
         },
         "agent": {
           "label": "Go 订阅套餐",
@@ -467,79 +638,61 @@
           "docs_url": "https://docs.commandcode.ai",
           "keys_url": "https://commandcode.ai/settings/keys",
           "models_url": "https://api.commandcode.ai/provider/v1/models",
+          "tier": "free",
+          "models": [],
+          "free_limits": {
+            "note": "免费档约 1,000 请求/天，注册即用"
+          }
+        }
+      }
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI 直连",
+      "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.openai.com/v1",
+          "docs_url": "https://platform.openai.com/docs",
+          "keys_url": "https://platform.openai.com/api-keys",
+          "models_url": "https://api.openai.com/v1/models",
           "tier": "paid",
           "models": []
         }
       }
     },
     {
-      "id": "llm7",
-      "name": "LLM7",
+      "id": "anthropic",
+      "name": "Anthropic 直连",
       "modes": {
         "payg": {
-          "label": "免费注册",
-          "protocol": "openai",
-          "base_url": "https://api.llm7.io/v1",
-          "docs_url": "https://docs.llm7.io",
-          "keys_url": "https://dash.llm7.io",
-          "models_url": "https://api.llm7.io/v1/models",
-          "free_limits": {"rpm": 60, "note": "key 免费注册即领：60 次/分 · 250 次/时 · 10 万 tokens/24h"},
-          "tier": "free",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "nvidia",
-      "name": "NVIDIA NIM",
-      "modes": {
-        "payg": {
-          "label": "免费层",
-          "protocol": "openai",
-          "base_url": "https://integrate.api.nvidia.com/v1",
-          "docs_url": "https://docs.api.nvidia.com/nim/",
-          "keys_url": "https://build.nvidia.com/settings/api-keys",
-          "models_url": "https://integrate.api.nvidia.com/v1/models",
-          "free_limits": {"rpm": 40, "note": "免费层=速率限制（个人上限约 40 RPM，控制台右上角显示），非 credits；10,000 请求/日为页面嵌入值、非官方承诺；试用无时间限制"},
-          "tier": "free",
-          "models": []
-        }
-      }
-    },
-    {
-      "id": "openrouter",
-      "name": "OpenRouter",
-      "modes": {
-        "payg": {
-          "label": "按量付费（积分，含 :free 模型）",
-          "protocol": "openai",
-          "base_url": "https://openrouter.ai/api/v1",
-          "docs_url": "https://openrouter.ai/docs",
-          "keys_url": "https://openrouter.ai/settings/keys",
-          "models_url": "https://openrouter.ai/api/v1/models",
-          "free_limits": {"rpm": 20, "rpd": 50, "note": "未充值 20 RPM / 50 次/天；充 $10 后 1,000 次/天"},
-          "free_limit_presets": [
-            {"label": "未充值（余额 < $10）", "rate": {"rpm": 20, "rpd": 50}, "note": ":free 模型 20 次/分、50 次/天"},
-            {"label": "已充值 ≥ $10", "rate": {"rpm": 20, "rpd": 1000}, "note": ":free 模型 20 次/分、1,000 次/天（网关按滚动 24h 计数）"}
-          ],
+          "label": "按量付费",
+          "protocol": "anthropic",
+          "base_url": "https://api.anthropic.com",
+          "docs_url": "https://docs.anthropic.com",
+          "keys_url": "https://console.anthropic.com/settings/keys",
+          "models_url": "https://api.anthropic.com/v1/models",
           "tier": "paid",
-          "models": []
+          "models": [],
+          "free_limits": {
+            "note": "新账号一次性 $5 试用额度（15 天内用完）"
+          }
         }
       }
     },
     {
-      "id": "google",
-      "name": "Google AI Studio",
+      "id": "xai",
+      "name": "Grok（xAI）",
       "modes": {
         "payg": {
-          "label": "免费额度",
+          "label": "按量付费",
           "protocol": "openai",
-          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-          "docs_url": "https://ai.google.dev/gemini-api/docs",
-          "keys_url": "https://aistudio.google.com/apikey",
-          "models_url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
-          "free_limits": {"note": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天"},
-          "tier": "free",
+          "base_url": "https://api.x.ai/v1",
+          "docs_url": "https://docs.x.ai/docs/models",
+          "keys_url": "https://console.x.ai",
+          "models_url": "https://api.x.ai/v1/models",
+          "tier": "paid",
           "models": []
         }
       }
@@ -556,7 +709,10 @@
           "keys_url": "https://z.ai/manage-api-key/apikey-keys",
           "models_url": "https://api.z.ai/api/paas/v4/models",
           "tier": "paid",
-          "models": []
+          "models": [],
+          "free_limits": {
+            "note": "GLM-4.7-Flash / GLM-4.5-Flash / GLM-4.6V-Flash 完全免费"
+          }
         }
       }
     }
