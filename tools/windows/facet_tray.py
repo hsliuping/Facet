@@ -7,10 +7,8 @@ The bundle layout this expects (written by tools/build_windows.py):
       runtime\python.exe         embedded CPython
       app\facet_tray.py          this file
       app\run_gateway.py         gateway entry (facet.gateway.cli)
-      app\tools\computer_use_agent.py
       app\facet.ico
       data\                      router.json, keys.json, logs\
-      ms-playwright\             bundled Chromium for the browser agent
 
 Run with `runtime\pythonw.exe app\facet_tray.py` — no console window.
 Left-click the icon opens the console; the menu restarts/opens/quit.
@@ -56,7 +54,6 @@ def child_env() -> dict:
     env = dict(os.environ)
     env.update({
         "FACET_DATA_DIR": str(DATA_DIR),
-        "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / "ms-playwright"),
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
     })

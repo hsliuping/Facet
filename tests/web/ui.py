@@ -19,7 +19,6 @@ ENTRY_API = {
     "models": "/api/state",
     "status": "/api/state",
     "maintenance": "/api/maintenance",
-    "cu": "/api/cu-credentials",
     "usage": "/api/usage/",
     "requests": "/api/requests/",
     "members": "/api/usage/users/",

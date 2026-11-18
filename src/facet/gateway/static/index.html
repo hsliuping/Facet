@@ -36,7 +36,6 @@
         <div class="menu-group">运行与维护</div>
         <button class="menu-item" data-tab="status">运行状态</button>
         <button class="menu-item" data-tab="maintenance">自维护</button>
-        <button class="menu-item" data-tab="cu">浏览器代理</button>
         <button class="menu-item" data-tab="usage">用量报表</button>
         <button class="menu-item" data-tab="members">成员用量</button>
         <button class="menu-item" data-tab="requests">请求日志</button>
@@ -570,92 +569,6 @@
             </div>
             <p class="sub-note" id="maintlog-note"></p>
             <div id="maintlog-body"></div>
-          </div>
-        </section>
-
-        <section class="panel" id="panel-cu">
-          <div class="panel-head">
-            <div>
-              <h2>浏览器代理</h2>
-              <p>给本机浏览器代理（<code>tools/computer_use_agent.py</code>）保存站点登录凭据：用户名 / 密码或会话 Cookie。这些凭据只给本机浏览器代理使用，密码与 Cookie 以明文存放在 <code>data/cu-credentials.json</code>，请不要提交到仓库，也不要放进备份。</p>
-            </div>
-            <div class="actions">
-              <button class="btn ghost" id="btn-refresh-cu">刷新</button>
-            </div>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>已保存的站点</h3>
-                <p class="sub-note">浏览器代理按站点匹配这里的登录信息；密码与 Cookie 只显示是否已保存，不回显内容。</p>
-              </div>
-            </div>
-            <div class="table-wrap">
-              <table class="status-table">
-                <thead>
-                  <tr>
-                    <th>站点</th><th>用户名</th><th>密码</th><th>Cookie</th><th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="cu-body">
-                  <tr><td colspan="5" class="sub-note">加载中…</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>新增 / 更新站点凭据</h3>
-                <p class="sub-note">站点填域名即可（如 www.modelscope.cn）；密码与 Cookie 留空表示保持原值不变。</p>
-              </div>
-            </div>
-            <form id="cu-form" class="form-grid">
-              <div class="field">
-                <label for="cu-host">站点</label>
-                <input id="cu-host" name="cu-host" type="text" placeholder="www.modelscope.cn" autocomplete="off" spellcheck="false">
-              </div>
-              <div class="field">
-                <label for="cu-username">用户名</label>
-                <input id="cu-username" name="cu-username" type="text" placeholder="hsliup" autocomplete="off" spellcheck="false">
-              </div>
-              <div class="field">
-                <label for="cu-password">密码</label>
-                <input id="cu-password" name="cu-password" type="password" placeholder="留空则保持不变" autocomplete="new-password">
-              </div>
-              <div class="field">
-                <label for="cu-cookie">会话 Cookie</label>
-                <input id="cu-cookie" name="cu-cookie" type="text" placeholder="m_session_id=ms-xxx" autocomplete="off" spellcheck="false">
-                <small class="hint">浏览器 F12 → Application → Cookies 里复制</small>
-              </div>
-              <div class="field wide">
-                <div class="actions">
-                  <button class="btn primary" type="submit">保存</button>
-                </div>
-              </div>
-            </form>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>定时保活 / 排程</h3>
-                <p class="sub-note">把下面的命令加到任务计划程序（Windows 安装版）或 crontab（容器版）定时执行：--ensure-login 在凭据失效前自动登录并刷新 Cookie；--checkin 领取每日魔粒（纯 HTTP，无需浏览器）。</p>
-              </div>
-            </div>
-            <div class="guide-body">
-              <pre>rem Windows 安装版
-"%LOCALAPPDATA%\Programs\Facet\agent.cmd" --ensure-login https://www.modelscope.cn/my/overview
-"%LOCALAPPDATA%\Programs\Facet\agent.cmd" --checkin
-
-rem 容器版
-docker run --rm --network host -v ./data:/data facet-combined:latest agent --ensure-login https://www.modelscope.cn/my/overview
-docker run --rm --network host -v ./data:/data facet-combined:latest agent --checkin</pre>
-              <p class="sub-note">退出码 0 表示已登录并已自动恢复（--checkin 则为今日已领或领取成功）；--ensure-login 退出码 3 表示需要人工更新 cookie 或密码。</p>
-              <p class="sub-note">网关自带「魔搭魔粒领取」定时任务（每天 08:30-10:00 随机执行一次，任务表可见；modelscope_checkin_hours=0 可关闭），默认已自动领取，无需另行排程 --checkin。</p>
-            </div>
           </div>
         </section>
 

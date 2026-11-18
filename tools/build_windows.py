@@ -10,23 +10,19 @@ Bundle layout (what the installer lays down, per user, no admin needed):
 
     Facet/
       runtime/            embedded CPython 3.11 (stdlib only, no pip needed)
-      app/                gateway entry, tray, browser agent, icon
-      ms-playwright/      Chromium for the browser agent
-      data/               router.json / keys.json / cu-credentials.json / logs
+      app/                gateway entry, tray, icon
+      data/               router.json / keys.json / logs
 
 Why an embedded Python instead of PyInstaller: the gateway is stdlib-only
-(see pyproject `description`), so freezing buys nothing and costs a fragile
-Playwright bundle; a real CPython keeps `python.exe app\\tools\\...` behaving
-exactly like the source checkout.
+(see pyproject `description`), so freezing buys nothing; a real CPython keeps
+`python.exe app\\...` behaving exactly like the source checkout.
 
 Build dependencies on the build machine (not on the user's machine):
-    pip install playwright   (already needed to run the agent locally)
     Inno Setup 6/7           (found on PATH, in its default folder, or the
                               installer is fetched into .cache/windows/inno)
 
 Usage
     python tools/build_windows.py                 # full build + installer
-    python tools/build_windows.py --skip-chromium # faster, agent browser-less
     python tools/build_windows.py --skip-installer
 """
 from __future__ import annotations
@@ -128,47 +124,16 @@ def install_project() -> None:
 
 
 def install_packages() -> None:
-    """The gateway (stdlib only) plus what the browser agent and tray import."""
+    """The gateway (stdlib only) plus what the tray imports."""
     install_project()
     run([sys.executable, "-m", "pip", "install", "--upgrade",
          "--no-warn-script-location", "--target", str(SITE),
-         "playwright", "pystray", "pillow"])
+         "pystray", "pillow"])
     check = [str(RUNTIME / "python.exe"), "-c",
-             "import facet.gateway, facet, playwright, pystray, PIL; "
+             "import facet.gateway, facet, pystray, PIL; "
              "print('facet.gateway', facet.gateway.__file__)"]
     result = run(check, capture_output=True, env={**os.environ, "PYTHONPATH": ""})
     log("packages", result.stdout.strip())
-
-
-def playwright_browser_dirs() -> list[Path]:
-    out = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium",
-                          "--dry-run"], capture_output=True, text=True)
-    return [Path(p.strip()) for p in re.findall(r"Install location:\s+(.+)", out.stdout)]
-
-
-def copy_chromium(full: bool = False) -> None:
-    """Bundle the headless shell only: it is what the agent uses (headless),
-    and the full Chrome for Testing build adds another ~450 MB to the installer.
-    Headed runs (`--login`) fall back to the user's installed Chrome."""
-    target = APP / "ms-playwright"
-    if target.is_dir():
-        shutil.rmtree(target)
-    target.mkdir(parents=True)
-    wanted = playwright_browser_dirs()
-    copied = 0
-    for source in wanted:
-        name = source.name
-        if name.startswith("chromium-") and not full:
-            log("chromium skip", f"{name} (headless shell is bundled instead)")
-            continue
-        if not source.is_dir():
-            log("chromium missing", f"{name} (run: python -m playwright install chromium)")
-            continue
-        log("chromium copy", name)
-        shutil.copytree(source, target / name)
-        copied += 1
-    if not copied:
-        raise SystemExit("no Playwright browser found to bundle")
 
 
 def make_icon() -> Path:
@@ -190,20 +155,17 @@ def make_icon() -> Path:
 def copy_app_files(icon: Path) -> None:
     app = APP / "app"
     app.mkdir(parents=True, exist_ok=True)
-    (app / "tools").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "tools" / "windows" / "run_gateway.py", app / "run_gateway.py")
     shutil.copy2(ROOT / "tools" / "windows" / "facet_tray.py", app / "facet_tray.py")
     shutil.copy2(ROOT / "tools" / "windows" / "set_port.py", app / "set_port.py")
-    shutil.copy2(ROOT / "tools" / "computer_use_agent.py", app / "tools" / "computer_use_agent.py")
     shutil.copy2(icon, app / "facet.ico")
-    shutil.copy2(ROOT / "tools" / "windows" / "agent.cmd", APP / "agent.cmd")
     shutil.copy2(ROOT / "tools" / "windows" / "stop.cmd", APP / "stop.cmd")
     data = APP / "data"
     data.mkdir(parents=True, exist_ok=True)
     (data / ".keep").write_text(
-        "Facet keeps router.json, keys.json, cu-credentials.json and logs here.\n",
+        "Facet keeps router.json, keys.json and logs here.\n",
         encoding="utf-8")
-    log("app files", "gateway + tray + agent + data dir")
+    log("app files", "gateway + tray + data dir")
 
 
 def iscc() -> Path | None:
@@ -251,10 +213,6 @@ def build_installer(version_text: str, icon: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skip-chromium", action="store_true",
-                        help="leave Chromium out (gateway-only bundle)")
-    parser.add_argument("--with-full-chromium", action="store_true",
-                        help="also bundle Chrome for Testing (headed runs, +450 MB)")
     parser.add_argument("--skip-installer", action="store_true",
                         help="assemble dist/windows/Facet but do not compile Setup.exe")
     parser.add_argument("--clean", action="store_true", help="delete dist/windows/Facet first")
@@ -281,8 +239,6 @@ def main() -> int:
         install_project()
     icon = make_icon()
     copy_app_files(icon)
-    if not args.skip_chromium:
-        copy_chromium(full=args.with_full_chromium)
     size = sum(p.stat().st_size for p in APP.rglob("*") if p.is_file())
     log("bundle", f"{size / 1024 ** 2:.0f} MB at {APP}")
 

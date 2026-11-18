@@ -27,7 +27,7 @@ const PAGE_TITLES = {
   subscriptions: '套餐订阅', vendors: '厂家管理',
   access: '接入信息',
   apikeys: 'API Keys', adminkey: '管理密钥',
-  status: '运行状态', maintenance: '自维护', cu: '浏览器代理', usage: '用量报表', requests: '请求日志',
+  status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
   members: '成员用量',
   quickstart: '快速开始',
   integration: '接入文档',
@@ -668,7 +668,6 @@ function switchPage(name) {
     loadFreeAlignLogs().catch(() => {});
     loadBackups().catch(() => {});
   }
-  if (name === 'cu') loadCuCredentials().catch((e) => toast(e.message, 'bad'));
   if (name === 'usage') {
     loadUsage().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
@@ -2372,64 +2371,6 @@ function renderMemberUsage(usage) {
   }).join('');
 }
 
-// Browser-agent logins: GET returns hosts with masked flags only (the console
-// never receives a password or cookie back), POST upserts by host.
-async function loadCuCredentials() {
-  const data = await api('/api/cu-credentials');
-  renderCuCredentials(data);
-}
-
-function renderCuCredentials(data) {
-  const body = $('cu-body');
-  const hosts = (data && data.hosts) || [];
-  if (!hosts.length) {
-    body.innerHTML = '<tr><td colspan="5" class="sub-note">还没有保存任何站点凭据。在下方表单填入站点与凭据后点「保存」。</td></tr>';
-    return;
-  }
-  body.innerHTML = hosts.map((h) => `<tr>
-      <td><code>${esc(h.host)}</code></td>
-      <td>${esc(h.username || '—')}</td>
-      <td>${h.has_password ? '<span class="tag active">已保存</span>' : '<span class="sub-note">—</span>'}</td>
-      <td>${h.has_cookie ? '<span class="tag active">已保存</span>' : '<span class="sub-note">—</span>'}</td>
-      <td><button class="btn small ghost" data-cu-remove="${esc(h.host)}">删除</button></td>
-    </tr>`).join('');
-  body.querySelectorAll('[data-cu-remove]').forEach((el) => {
-    el.onclick = () => removeCuCredential(el.dataset.cuRemove);
-  });
-}
-
-async function removeCuCredential(host) {
-  if (!await askConfirm('删除站点凭据', `确认删除 ${host} 的浏览器代理凭据？`)) return;
-  try {
-    await api('/api/cu-credentials', { method: 'POST', body: { host, remove: true } });
-    toast(`已删除 ${host} 的凭据`);
-    await loadCuCredentials();
-  } catch (e) { toast(e.message, 'bad'); }
-}
-
-async function saveCuCredential(event) {
-  event.preventDefault();
-  const f = $('cu-form');
-  const v = (n) => String(f.elements.namedItem(n)?.value ?? '').trim();
-  const host = v('cu-host');
-  if (!host) { toast('站点不能为空', 'bad'); return; }
-  const payload = { host };
-  const username = v('cu-username');
-  const password = String(f.elements.namedItem('cu-password')?.value ?? '');
-  const cookie = v('cu-cookie');
-  // Empty fields are omitted: the backend keeps the stored value unchanged.
-  if (username) payload.username = username;
-  if (password) payload.password = password;
-  if (cookie) payload.cookie = cookie;
-  try {
-    await api('/api/cu-credentials', { method: 'POST', body: payload });
-    toast(`已保存 ${host} 的凭据`);
-    f.reset();
-    await loadCuCredentials();
-  } catch (e) { toast(e.message, 'bad'); }
-}
-
-
 function renderNotifications() {
   const data = state.notify;
   if (!data) return;
@@ -3378,12 +3319,6 @@ function maintReportRows(r, withApply) {
 }
 
 $('btn-refresh-maintenance').onclick = () => loadMaintenance().catch((e) => toast(e.message, 'bad'));
-
-$('btn-refresh-cu').onclick = () => loadCuCredentials()
-  .then(() => toast('浏览器代理凭据已刷新', 'good'))
-  .catch((e) => toast(e.message, 'bad'));
-
-$('cu-form').onsubmit = saveCuCredential;
 
 $('btn-refresh-tasks').onclick = () => loadTasks()
   .then(() => toast('定时任务状态已刷新', 'good'))
@@ -4490,24 +4425,45 @@ function modelQuotaOptions(current) {
     `<option value="${esc(n)}" ${n === current ? 'selected' : ''}>${esc(n)}</option>`).join('');
 }
 
-function modelQuotaRowHTML(model, pack) {
+// Live consumption of a registered pack, read from the maintenance snapshot —
+// the same numbers the free-models page shows. Empty when the snapshot has not
+// been loaded yet or the model carries no local limit: the row then just shows
+// its editable fields.
+function modelQuotaUsageHTML(channelName, model) {
+  const chans = ((state.maintenance || {}).free_models || {}).channels || [];
+  const ch = chans.find((c) => c.name === channelName);
+  const entry = ch && (ch.models || []).find((m) => m.model === model);
+  const q = entry && entry.quota;
+  if (!q || q.limit_tokens == null) return '';
+  const bits = [`已用 ${Number(q.used_tokens || 0).toLocaleString()} / `
+    + `${Number(q.limit_tokens).toLocaleString()} tok`];
+  if (q.remaining_tokens != null) {
+    bits.push(`剩 ${Number(q.remaining_tokens).toLocaleString()}`);
+  }
+  if (q.expired) bits.push('<span class="tag expired">已过期</span>');
+  else if (q.exhausted) bits.push('<span class="tag expired">已用完</span>');
+  else if (q.warning) bits.push('<span class="tag expiring">临近上限</span>');
+  return `<div class="sub-note mq-usage">${bits.join(' · ')}</div>`;
+}
+
+function modelQuotaRowHTML(model, pack, channelName = '') {
   const q = pack || {};
-  return `<div class="mq-row">
+  return `<div class="mq-wrap"><div class="mq-row">
     <select data-mq-model>${modelQuotaOptions(model || '')}</select>
     <input type="number" min="1" step="1" data-mq-tokens placeholder="面额 tokens"
       value="${esc(q.tokens ?? '')}">
     <input type="date" data-mq-expires value="${esc(String(q.expires || '').slice(0, 10))}"
       title="到期日（含当天），留空表示长期有效">
     <button type="button" class="btn ghost" data-mq-remove title="移除">✕</button>
-  </div>`;
+  </div>${modelQuotaUsageHTML(channelName, model || '')}</div>`;
 }
 
-function renderModelQuotaRows(initial) {
+function renderModelQuotaRows(initial, channelName = '') {
   const box = $('model-quota-rows');
   if (!box) return;
   if (initial) {
     box.innerHTML = Object.entries(initial)
-      .map(([model, pack]) => modelQuotaRowHTML(model, pack)).join('');
+      .map(([model, pack]) => modelQuotaRowHTML(model, pack, channelName)).join('');
   } else {
     // Models textarea changed: refresh options in place so typed amounts
     // and dates survive.
@@ -5067,7 +5023,8 @@ function openChannelEditor(index) {
         <div class="field wide"><label>一次性额度包（每模型，可选）</label>
           <div id="model-quota-rows" class="channel-picker"></div>
           <button type="button" class="btn ghost" id="add-model-quota">+ 添加模型额度包</button>
-          <small class="hint">每个模型独立登记面额（tokens）与到期日：用完或到期只停该模型，不冻结整个渠道；仅对标注为「免费」的模型生效。</small></div>
+          <small class="hint">每个模型独立登记面额（tokens）与到期日：用完或到期只停该模型，不冻结整个渠道；仅对标注为「免费」的模型生效。<br>
+            账本只统计经本网关的调用（控制台试玩、其他客户端直连的消耗看不到），账面剩余会偏高，面额建议登记略小一点。</small></div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
           <small class="hint">免费渠道按免费额度拉取，其余渠道按密钥请求上游 /models：火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名；百炼（免费）配置 AccessKey 后执行 bl usage free，只保留仍有免费额度且未过期的 Text 模型</small>
@@ -5123,7 +5080,7 @@ function openChannelEditor(index) {
   $('model-quota-rows').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-mq-remove]');
     if (!btn) return;
-    btn.closest('.mq-row').remove();
+    btn.closest('.mq-wrap, .mq-row').remove();
     if (!$('model-quota-rows').querySelector('.mq-row')) renderModelQuotaRows();
   });
   const fProvider = $('f-provider');
@@ -5143,7 +5100,7 @@ function openChannelEditor(index) {
     applyProviderPreset(); renderProviderLinks(); renderVendorCredentials(); renderRatePresets();
   };
   renderModelTierRows();
-  renderModelQuotaRows(c.model_quota || null);
+  renderModelQuotaRows(c.model_quota || null, c.name);
   renderProviderLinks();
   renderVendorCredentials();
   renderRatePresets();

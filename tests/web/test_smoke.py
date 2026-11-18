@@ -10,7 +10,7 @@
    ``to_contain_text``），不再断 class / 计算样式，保持稳定。
 5. 每条用例独享临时数据目录，自动清理，无状态依赖。
 
-支持的 41 个测试覆盖 11 个业务面板：
+支持的 39 个测试覆盖 10 个业务面板：
 A. 页面加载与基础结构（4 例）
 B. 侧边栏导航（6 例）
 C. 仪表板（4 例）
@@ -21,7 +21,7 @@ G. 用量报表（3 例）
 H. 请求日志（3 例）
 I. 模型接入（3 例）
 J. 订阅与厂家（3 例）
-K. 浏览器代理、成员、接入文档、管理密钥（4 例）
+K. 成员、接入文档、管理密钥（3 例）
 """
 from __future__ import annotations
 
@@ -79,7 +79,6 @@ def test_app_js_loaded(console):
     ("vendors", "#panel-vendors"),
     ("apikeys", "#panel-apikeys"),
     ("maintenance", "#panel-maintenance"),
-    ("cu", "#panel-cu"),
     ("usage", "#panel-usage"),
     ("requests", "#panel-requests"),
     ("members", "#panel-members"),
@@ -293,23 +292,6 @@ def test_vendors_panel_loads(console):
 def test_vendor_filter_input(console):
     console.nav("vendors")
     expect(console.el("#vendor-filter")).to_be_visible()
-
-
-# -----------------------------------------------------------------------
-# 浏览器代理
-# -----------------------------------------------------------------------
-
-@pytest.mark.smoke
-def test_cu_panel_loads(console):
-    console.nav("cu")
-    expect(console.el("#panel-cu")).to_be_visible()
-
-
-@pytest.mark.smoke
-def test_cu_form_elements(console):
-    console.nav("cu")
-    for sel in ("#cu-host", "#cu-username", "#cu-password"):
-        expect(console.el(sel)).to_be_visible()
 
 
 # -----------------------------------------------------------------------

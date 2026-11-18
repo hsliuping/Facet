@@ -383,6 +383,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .mq-row input[type="number"] { flex: 1; min-width: 90px; }
 .mq-row input[type="date"] { width: 140px; flex: 0 0 auto; }
 .mq-row .btn.ghost { padding: 4px 9px; flex: 0 0 auto; }
+.mq-wrap { width: 100%; }
+.mq-wrap .mq-usage { margin: -2px 0 6px 8px; }
 .days-left { font-weight: 650; }
 .days-left.expiring { color: var(--warn); }
 .days-left.expired { color: var(--bad); }

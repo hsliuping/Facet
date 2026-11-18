@@ -37,8 +37,8 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=no
-; The browser agent keeps its Chromium under {app}\ms-playwright: never let the
-; uninstaller follow the data directory it created at runtime.
+; The data directory created at runtime holds router.json, keys and logs:
+; never let the uninstaller follow it.
 UninstallDisplayName={#AppName} 网关
 
 ; Simplified Chinese is a community translation (not bundled with Inno Setup);
@@ -80,9 +80,18 @@ Filename: "{app}\stop.cmd"; Flags: runhidden; RunOnceId: "StopTray"
 
 [UninstallDelete]
 ; The console shortcut is written as an .url file (not a tracked shortcut), so
-; remove it explicitly. {app}\data is kept on purpose: it holds router.json,
-; keys and the browser profile, i.e. the user's own configuration.
+; remove it explicitly. {app}\data is kept on purpose: it holds router.json and
+; keys, i.e. the user's own configuration.
 Type: files; Name: "{app}\打开控制台.url"
+
+[InstallDelete]
+; Upgrade install: clean up old browser‑agent artifacts that are no longer used.
+; agent.cmd is the legacy Windows launcher; ms-playwright is the bundled Chromium;
+; cu-credentials.json held session cookies (明文凭据) and is deleted after the HTTP
+; sign‑to‑check‑in replacement landed.
+Type: files; Name: "{app}\agent.cmd"
+Type: deletedirectory; Name: "{app}\ms-playwright"
+Type: files; Name: "{app}\data\cu-credentials.json"
 
 [Code]
 var
