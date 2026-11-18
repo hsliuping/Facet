@@ -38,12 +38,25 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8787"
 
 # 与 docker/dsh-profile 同款：provider "facet" 指向本机网关，
 # apiKeyEnv 复用启动时透传的 ROUTER_API_KEY，无需用户把密钥复制进 profile。
+# 官方 web 模板只启用 base + web-app，工具插件随 CLI 装好了却没挂上，
+# 界面看着像空架子。追加的都是安装包里自带 patch 的官方 bundle，
+# 无需联网安装，解析失败时 dsh 会跳过而不是启动失败。
+_PROFILE_BUNDLES = [
+    "@deepseek-ai/dsh-base",
+    "@deepseek-ai/dsh-web-app",
+    "@deepseek-ai/dsh-experimental-terminal-bundle",
+    "@deepseek-ai/dsh-experimental-session-search",
+    "@deepseek-ai/dsh-experimental-session-titles-bundle",
+    "@deepseek-ai/dsh-experimental-plugin-market-bundle",
+]
+# 旧版本播种的 bundle 组合，用于升级已存在的 profile。
+_SEEDED_BUNDLES_V1 = ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]
+
 _PROFILE_PACKAGE = {
     "name": "dsh-profile-facet-web",
     "private": True,
     "dependencies": {},
-    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base",
-                                    "@deepseek-ai/dsh-web-app"]}},
+    "dsh": {"profile": {"bundles": _PROFILE_BUNDLES}},
 }
 
 _PROFILE_PATCH = (
@@ -82,7 +95,8 @@ def ensure_profile(profile: str = WEB_PROFILE,
 
     Mirrors docker/dsh-profile (seeded by the container entrypoint) so a
     Windows install works without a manual ``dsh --profile facet-web`` step.
-    An existing profile is never overwritten.
+    An existing profile is never overwritten; only the bundle list this
+    module seeded itself is upgraded in place.
     """
     directory = profile_dir(profile)
     patch = directory / "cordis.patch.yml"
@@ -90,6 +104,7 @@ def ensure_profile(profile: str = WEB_PROFILE,
     if patch.is_file():
         # The operator (or dsh itself) already created this profile; never
         # overwrite a hand-edited patch layer with the generated wiring.
+        _upgrade_bundles(manifest)
         return
     directory.mkdir(parents=True, exist_ok=True)
     patch.write_text(_PROFILE_PATCH.format(base_url=base_url.rstrip("/")),
@@ -97,6 +112,28 @@ def ensure_profile(profile: str = WEB_PROFILE,
     if not manifest.is_file():
         manifest.write_text(json.dumps(_PROFILE_PACKAGE, indent=2) + "\n",
                             encoding="utf-8")
+
+
+def _upgrade_bundles(manifest: Path) -> None:
+    """Replace the exact bundle tuple an earlier release seeded.
+
+    Profiles from older installs still list only base + web-app, so the
+    console would stay bare after upgrading. Only a manifest that still
+    carries the old tuple under our profile name is rewritten; any other
+    bundle list is left alone.
+    """
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or data.get("name") != _PROFILE_PACKAGE["name"]:
+        return
+    pkg = data.get("dsh")
+    profile = pkg.get("profile") if isinstance(pkg, dict) else None
+    if not isinstance(profile, dict) or profile.get("bundles") != _SEEDED_BUNDLES_V1:
+        return
+    profile["bundles"] = list(_PROFILE_BUNDLES)
+    manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 # Friendly labels for the ids the router itself owns; a bare `auto:<route>`

@@ -1,5 +1,6 @@
 """DSH integration: profile wiring detection and launch preconditions."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -88,9 +89,48 @@ class DshProfileTest(unittest.TestCase):
             dsh.start_web()
         directory = self.home / "profiles" / "facet-web"
         self.assertTrue((directory / "package.json").is_file())
+        manifest = json.loads(
+            (directory / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["dsh"]["profile"]["bundles"],
+                         dsh._PROFILE_BUNDLES)
         patch = (directory / "cordis.patch.yml").read_text(encoding="utf-8")
         self.assertIn("baseURL: http://127.0.0.1:8787/v1", patch)
         self.assertIn("apiKeyEnv: ROUTER_API_KEY", patch)
+
+    def test_ensure_profile_upgrades_the_seeded_bundle_list(self):
+        # Profiles seeded by an earlier release still carry the bare base +
+        # web-app tuple: a Facet upgrade must fill in the bundles itself.
+        directory = self.home / "profiles" / "facet-web"
+        directory.mkdir(parents=True)
+        manifest = {"name": "dsh-profile-facet-web", "private": True,
+                    "dependencies": {},
+                    "dsh": {"profile": {"bundles": dsh._SEEDED_BUNDLES_V1}}}
+        (directory / "package.json").write_text(json.dumps(manifest),
+                                                encoding="utf-8")
+        (directory / "cordis.patch.yml").write_text("keep: true\n",
+                                                    encoding="utf-8")
+        dsh.ensure_profile()
+        data = json.loads(
+            (directory / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["dsh"]["profile"]["bundles"],
+                         dsh._PROFILE_BUNDLES)
+        self.assertEqual((directory / "cordis.patch.yml").read_text(
+            encoding="utf-8"), "keep: true\n")
+
+    def test_ensure_profile_keeps_a_hand_edited_bundle_list(self):
+        directory = self.home / "profiles" / "facet-web"
+        directory.mkdir(parents=True)
+        manifest = {"name": "dsh-profile-facet-web",
+                    "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base"]}}}
+        (directory / "package.json").write_text(json.dumps(manifest),
+                                                encoding="utf-8")
+        (directory / "cordis.patch.yml").write_text("keep: true\n",
+                                                    encoding="utf-8")
+        dsh.ensure_profile()
+        data = json.loads(
+            (directory / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["dsh"]["profile"]["bundles"],
+                         ["@deepseek-ai/dsh-base"])
 
 
 class DshModelsTest(unittest.TestCase):
