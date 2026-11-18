@@ -158,6 +158,7 @@ def copy_app_files(icon: Path) -> None:
     shutil.copy2(ROOT / "tools" / "windows" / "run_gateway.py", app / "run_gateway.py")
     shutil.copy2(ROOT / "tools" / "windows" / "facet_tray.py", app / "facet_tray.py")
     shutil.copy2(ROOT / "tools" / "windows" / "set_port.py", app / "set_port.py")
+    shutil.copy2(ROOT / "tools" / "windows" / "open_console.py", app / "open_console.py")
     shutil.copy2(icon, app / "facet.ico")
     shutil.copy2(ROOT / "tools" / "windows" / "stop.cmd", APP / "stop.cmd")
     data = APP / "data"

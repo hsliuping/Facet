@@ -73,7 +73,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\facet_tray.py"""; WorkingDir: "{app}"; Description: "启动 Facet 托盘（网关在后台运行）"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\打开控制台.url"; Description: "打开管理控制台"; Flags: shellexec nowait postinstall skipifsilent unchecked
+; Checked by default: a fresh install leaves the operator with a console, so
+; they can see what was installed. open_console.py waits until the gateway
+; accepts connections (≈3 s typical) before opening the browser, otherwise the
+; first paint is a connection-refused error page.
+Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\open_console.py"""; WorkingDir: "{app}"; Description: "打开管理控制台"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{app}\stop.cmd"; Flags: runhidden; RunOnceId: "StopTray"
