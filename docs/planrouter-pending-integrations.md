@@ -40,7 +40,7 @@
 - **实现要点**：免费模型真 0 元计费（不扣赠金），故 CLI 输出大哨兵值 `remaining = NO_CAP_TOKENS = 1_000_000_000`——同时满足 sweep 的 10,000 reserve 过滤、`free_quota_status` 预算外推、UI 显示「充足」不误告警；`credential_envs` 为空（无需管理面 AK/SK）。
 - **免费清单维护机制**：官方定价页是 HTML 无 JSON API，清单内置于 CLI（`FREE_MODELS` 元组），清单变动随版本更新；后续可加价格页快照或社区上报。
 - **调研留存**：`$free` 链路新增常驻候选渠道；显示名映射在 Web UI（app.js）已预留；限速为账户级（RPM 1000–10000 / TPM 5 万–500 万，随账户等级浮动）。
-- **注册 / ToS**：国内站 +86 手机号 + 实名（实名后才能用全部免费模型），国际站不面向大陆用户；新用户 ¥16 赠金（无有效期）。ToS 禁止转售及「使平台服务惠及自身以外的第三方」——个人自用定位下与魔搭/百炼风险等级一致；若将来做代理商变现需重新评估。
+- **注册 / ToS**：国内站 +86 手机号 + 实名（实名后才能用全部免费模型），国际站不面向大陆用户；新用户 ¥14 赠金（用完即止）。ToS 禁止转售及「使平台服务惠及自身以外的第三方」——个人自用定位下与魔搭/百炼风险等级一致；若将来做代理商变现需重新评估。
 - 来源：https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info 、https://cloud-rd.siliconflow.cn/pricing 、https://docs.siliconflow.com/cn/faqs/misc_finance
 
 ## P1 中国电信（天翼云星辰 TokenHub / 息壤 / teleAI 天翼 AI 开放平台）✅ 已接入（2026-11-18）
