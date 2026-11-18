@@ -32,6 +32,7 @@ WEB_PROFILE = "facet-web"
 URL_LINE = re.compile(r"dsh web: (http://\S+)")
 BASE_URL_LINE = re.compile(r"^\s*baseURL:\s*(\S+)\s*$", re.MULTILINE)
 MODELS_LINE = re.compile(r"^\s*models:\s*$")
+PORT_IN_USE = re.compile(r"EADDRINUSE.*:(\d+)")
 LOG_LINES = 80
 START_TIMEOUT = 90.0
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
@@ -243,6 +244,161 @@ def _alive(proc: subprocess.Popen) -> bool:
     return proc.poll() is None
 
 
+def _kill_with_parent(proc: subprocess.Popen) -> object | None:
+    """Tie a spawned dsh to the gateway's lifetime (Windows job object).
+
+    The tray stops the gateway with TerminateProcess, so no Python cleanup
+    runs; without a kill-on-close job the node child survives, keeps the web
+    port, and the next launch dies with EADDRINUSE. Returns the job handle,
+    which must stay referenced for as long as the child runs.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in (
+                "ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount",
+                "WriteTransferCount", "OtherTransferCount")]
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BasicLimits),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [
+            wintypes.HANDLE, wintypes.HANDLE]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+                job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            return None
+        # Popen._handle is an int; anything else (tests hand in Mocks) must
+        # never reach ctypes, whose HANDLE conversion recurses on it.
+        handle = getattr(proc, "_handle", None)
+        if not isinstance(handle, int):
+            return None
+        if not kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(handle)):
+            return None
+        return job
+    except Exception:
+        return None
+
+
+def _port_owner_pid(port: int) -> int | None:
+    """PID currently listening on *port* (netstat keeps this dependency-free)."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0].upper() != "TCP":
+            continue
+        if fields[-2].upper() != "LISTENING":
+            continue
+        if fields[1].rsplit(":", 1)[-1] == str(port):
+            return int(fields[-1]) if fields[-1].isdigit() else None
+    return None
+
+
+def _is_dsh_process(pid: int) -> bool:
+    """True when *pid* is a node process running the dsh CLI."""
+    script = ("(Get-CimInstance Win32_Process -Filter \"ProcessId={}\")"
+              ".CommandLine").format(pid)
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    command = result.stdout.strip().lower()
+    return "dsh" in command and "node" in command
+
+
+def _release_port(port: int) -> bool:
+    """Kill a stale dsh left listening on *port* by a previous Facet run.
+
+    Only a node process whose command line runs dsh is touched, so an
+    unrelated app that happens to use the port is left alone.
+    """
+    pid = _port_owner_pid(port)
+    if pid is None or not _is_dsh_process(pid):
+        return False
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    # Give Windows a moment to close the listening socket before retrying.
+    time.sleep(0.5)
+    return True
+
+
+def _launch(cli: dict, profile: str, port: int | None,
+            api_key: str | None) -> dict:
+    """Spawn the profile and wait for its tokenised URL."""
+    command = _command(cli, profile, port)
+    env = dict(os.environ)
+    if api_key and not env.get("ROUTER_API_KEY"):
+        env["ROUTER_API_KEY"] = api_key
+    env["NO_COLOR"] = "1"
+    kwargs = {}
+    if sys.platform == "win32":
+        # Detach from the console so closing the gateway shell does not
+        # pop a window and keeps the agent process independent.
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    proc = subprocess.Popen(
+        command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+        errors="replace", bufsize=1, **kwargs,
+    )
+    entry = {"proc": proc, "url": "", "log": [], "error": "",
+             "job": _kill_with_parent(proc)}
+    with _lock:
+        _runs[profile] = entry
+    thread = threading.Thread(target=_pump, args=(entry,), daemon=True)
+    thread.start()
+    deadline = time.time() + START_TIMEOUT
+    while time.time() < deadline:
+        if entry.get("url") or proc.poll() is not None:
+            break
+        time.sleep(0.2)
+    return entry
+
+
 def _pump(entry: dict) -> None:
     proc = entry["proc"]
     stream = proc.stdout
@@ -268,12 +424,25 @@ def _failure_reason(entry: dict, returncode: int | None) -> str:
     for line in entry["log"]:
         text = line.strip()
         if text.startswith("Error"):
-            return text
+            return _explain_failure(text)
     for line in reversed(entry["log"]):
         text = line.strip()
         if text and not text.startswith("at ") and "code:" not in text:
             return text
     return f"dsh 启动失败（退出码 {returncode}）"
+
+
+def _explain_failure(text: str) -> str:
+    """Translate the EADDRINUSE crash into what the operator should do.
+
+    The raw English line is kept so start_web can still find the blocked
+    port and clear the stale dsh before retrying.
+    """
+    busy = PORT_IN_USE.search(text)
+    if busy:
+        return (f"端口 {busy.group(1)} 被占用：上次退出时遗留的 dsh 还在运行，"
+                f"点「启动 DSH」会自动结束它并重试（{text}）")
+    return text
 
 
 def _profile_base_url(directory: Path) -> str:
@@ -433,37 +602,20 @@ def start_web(api_key: str | None = None, profile: str = WEB_PROFILE,
             already = existing is not None and _alive(existing["proc"])
         if already:
             return {**status(profile), "ok": bool(existing.get("url"))}
-        command = _command(cli, profile, port)
-        env = dict(os.environ)
-        if api_key and not env.get("ROUTER_API_KEY"):
-            env["ROUTER_API_KEY"] = api_key
-        env["NO_COLOR"] = "1"
-        kwargs = {}
-        if sys.platform == "win32":
-            # Detach from the console so closing the gateway shell does not
-            # pop a window and keeps the agent process independent.
-            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-        proc = subprocess.Popen(
-            command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-            errors="replace", bufsize=1, **kwargs,
-        )
-        entry = {"proc": proc, "url": "", "log": [], "error": ""}
-        with _lock:
-            _runs[profile] = entry
-        thread = threading.Thread(target=_pump, args=(entry,), daemon=True)
-        thread.start()
-        deadline = time.time() + START_TIMEOUT
-        while time.time() < deadline:
-            if entry.get("url") or proc.poll() is not None:
-                break
-            time.sleep(0.2)
+        entry = _launch(cli, profile, port, api_key)
+        if not entry.get("url") and entry["proc"].poll() is not None:
+            # A dsh left behind by a previous exit still holds the web port;
+            # kill it and retry once so the console's 启动 button self-heals.
+            busy = PORT_IN_USE.search(_failure_reason(entry,
+                                                      entry["proc"].returncode))
+            if busy and _release_port(int(busy.group(1))):
+                entry = _launch(cli, profile, port, api_key)
         if not entry.get("url"):
-            if proc.poll() is None:
+            if entry["proc"].poll() is None:
                 entry["error"] = ("dsh 仍在启动中（冷启动较慢），进程已驻留；"
                                   "稍后点上角「刷新」即可看到访问地址")
             else:
-                entry["error"] = _failure_reason(entry, proc.returncode)
+                entry["error"] = _failure_reason(entry, entry["proc"].returncode)
             result = {**status(profile), "ok": False}
             result["error"] = entry["error"]
             return result

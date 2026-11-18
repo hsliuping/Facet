@@ -97,6 +97,50 @@ class DshProfileTest(unittest.TestCase):
         self.assertIn("baseURL: http://127.0.0.1:8787/v1", patch)
         self.assertIn("apiKeyEnv: ROUTER_API_KEY", patch)
 
+    def test_start_web_clears_a_stale_dsh_and_retries(self):
+        # Exiting Facet used to leave the node child holding 127.0.0.1:3080;
+        # the next launch must kill that orphan and retry instead of failing.
+        cli = {"path": "C:/npm/dsh.cmd",
+               "bin": "C:/npm/lib/node_modules/@deepseek-ai/dsh/lib/bin.js",
+               "version": "0.2.2-rc.1"}
+        dead = mock.Mock()
+        dead.poll.return_value = 1
+        dead.returncode = 1
+        dead.pid = 100
+        live = mock.Mock()
+        live.poll.return_value = None
+        live.pid = 101
+        launches = [
+            {"proc": dead, "url": "", "error": "", "job": None,
+             "log": ["Error: listen EADDRINUSE: address already in use "
+                     "127.0.0.1:3080"]},
+            {"proc": live, "url": "http://127.0.0.1:3080/?token=t",
+             "error": "", "job": None, "log": []},
+        ]
+        with mock.patch.object(dsh, "find_cli", return_value=cli), \
+                mock.patch.object(dsh, "_launch", side_effect=launches) as launch, \
+                mock.patch.object(dsh, "_release_port", return_value=True) as release:
+            result = dsh.start_web(api_key="k")
+        self.assertTrue(result["ok"])
+        release.assert_called_once_with(3080)
+        self.assertEqual(launch.call_count, 2)
+
+    def test_start_web_keeps_the_conflict_when_the_port_stays_taken(self):
+        cli = {"path": "C:/npm/dsh.cmd", "bin": "", "version": ""}
+        dead = mock.Mock()
+        dead.poll.return_value = 1
+        dead.returncode = 1
+        launches = [{"proc": dead, "url": "", "error": "", "job": None,
+                     "log": ["Error: listen EADDRINUSE: address already in use "
+                             "127.0.0.1:3080"]}]
+        with mock.patch.object(dsh, "find_cli", return_value=cli), \
+                mock.patch.object(dsh, "_launch", side_effect=launches) as launch, \
+                mock.patch.object(dsh, "_release_port", return_value=False):
+            result = dsh.start_web(api_key="k")
+        self.assertFalse(result["ok"])
+        self.assertIn("端口 3080", result["error"])
+        self.assertEqual(launch.call_count, 1)
+
     def test_ensure_profile_upgrades_the_seeded_bundle_list(self):
         # Profiles seeded by an earlier release still carry the bare base +
         # web-app tuple: a Facet upgrade must fill in the bundles itself.
@@ -306,6 +350,13 @@ class DshUrlTest(unittest.TestCase):
 
     def test_unrelated_lines_are_ignored(self):
         self.assertIsNone(dsh.URL_LINE.search("dsh: loaded 12 plugins"))
+
+    def test_port_conflict_is_explained_and_keeps_the_port(self):
+        entry = {"log": ["Error: listen EADDRINUSE: address already in use "
+                         "127.0.0.1:3080"]}
+        reason = dsh._failure_reason(entry, 1)
+        self.assertIn("端口 3080", reason)
+        self.assertEqual(dsh.PORT_IN_USE.search(reason).group(1), "3080")
 
 
 if __name__ == "__main__":
