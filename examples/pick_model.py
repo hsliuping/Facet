@@ -46,7 +46,18 @@ def load_table(path: Path) -> dict:
 def build_lookup(table: dict) -> dict[str, str]:
     """normalized name -> table key. Canonical keys first, then aliases."""
     lookup: dict[str, str] = {}
+    # Shallow keys ("provider/model") first: they win identity groups over
+    # nested aggregator copies ("edenai/tencent/hy3" vs "tencent/hy3").
     for key, rec in table["models"].items():
+        if key.count("/") > 1:
+            continue
+        bare = key.split("/", 1)[1]
+        lookup.setdefault(identity(bare), key)
+        for alias in rec.get("aliases", []):
+            lookup.setdefault(identity(alias), key)
+    for key, rec in table["models"].items():
+        if key.count("/") <= 1:
+            continue
         bare = key.split("/", 1)[1]
         lookup.setdefault(identity(bare), key)
         for alias in rec.get("aliases", []):

@@ -1,5 +1,5 @@
 {
-  "_readme": "Manual annotations, applied after every upstream sync; manual value wins. Keys are <provider>/<model> exactly like the table; keys starting with _ are documentation. quota_tier values: free_forever (standing unlimited free), free_daily (free with daily/rate/credit caps), paid. MANUAL ONLY - the sync never auto-fills it; verify against the vendor docs before adding. Current seed (verified from public vendor docs, 2026-11): openrouter/*:free, groq/*, cloudflare-workers-ai/*, nvidia/*, cohere/*, chutes/*, google/gemini-* -> free_daily.",
+  "_readme": "Manual annotations, applied after every upstream sync; manual value wins. Keys are <provider>/<model> exactly like the table; keys starting with _ are documentation. quota_tier values: free_forever (standing unlimited free), free_daily (free with daily/rate/credit caps), paid. MANUAL ONLY - the sync never auto-fills it; verify against the vendor docs before adding. Current seed (verified from public vendor docs, 2026-11): openrouter/*:free, groq/*, cloudflare-workers-ai/*, nvidia/*, cohere/*, chutes/*, google/gemini-*, kilo/ernie-5.5-flash-preview:free -> free_daily.",
   "chutes/deepseek-v3.2-tee": {
     "quota_tier": "free_daily"
   },
@@ -280,6 +280,9 @@
     "quota_tier": "free_daily"
   },
   "groq/orpheus-v1-english": {
+    "quota_tier": "free_daily"
+  },
+  "kilo/ernie-5.5-flash-preview:free": {
     "quota_tier": "free_daily"
   },
   "nvidia/active-speaker-detection": {

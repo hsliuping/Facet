@@ -644,11 +644,16 @@ def identity(name: str) -> str:
 def build_lookup(table: dict) -> dict:
     """normalized name -> table key. Canonical keys first, then aliases."""
     lookup: dict[str, str] = {}
-    for key, rec in table["models"].items():
-        bare = key.split("/", 1)[1]
-        lookup.setdefault(identity(bare), key)
-        for alias in rec.get("aliases", []):
-            lookup.setdefault(identity(alias), key)
+    # Shallow keys ("provider/model") first: they win identity groups over
+    # nested aggregator copies ("edenai/tencent/hy3" vs "tencent/hy3").
+    for shallow in (True, False):
+        for key, rec in table["models"].items():
+            if (key.count("/") <= 1) != shallow:
+                continue
+            bare = key.split("/", 1)[1]
+            lookup.setdefault(identity(bare), key)
+            for alias in rec.get("aliases", []):
+                lookup.setdefault(identity(alias), key)
     return lookup
 
 

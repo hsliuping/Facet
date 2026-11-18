@@ -40,9 +40,91 @@ MAX_TABLE_BYTES = 1024 * 1024  # table-level hard rule: single file < 1 MB
 FIRST_PARTY = frozenset({
     "openai", "anthropic", "google", "google-vertex", "xai", "deepseek",
     "moonshotai", "zhipuai", "alibaba", "alibaba-cn", "volcengine",
-    "baidu", "minimax", "stepfun", "sensenova", "mistral", "cohere",
+    "baidu", "tencent", "minimax", "stepfun", "sensenova", "mistral", "cohere",
     "nvidia", "perplexity", "amazon-bedrock", "azure", "azure-cognitive-services",
 })
+
+# Vendors the upstream sources ignore entirely or only expose through
+# reseller copies (Baidu ERNIE, Tencent Hy). Seeded BEFORE identity grouping
+# so the first-party copy wins its group and reseller spellings become
+# aliases. model-registry `id` values match the canonical upstream spelling
+# so copies land in the same identity group. Facts are taken from vendor
+# endpoints / canonical model listings; a field we could not verify is
+# omitted, never guessed (ABSENT == unknown).
+VENDOR_SEEDS = {
+    "baidu": {
+        "models": {
+            "ernie-5.5-flash-preview": {
+                "id": "ernie-5.5-flash-preview",
+                "name": "ERNIE-5.5-Flash-Preview",
+                "family": "ernie",
+                "reasoning": True,
+                "tool_call": True,
+                "structured_output": True,
+                "attachment": False,
+                "open_weights": False,
+                "release_date": "2026-11-10",
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "limit": {"context": 1024000, "output": 921600},
+            },
+            "ernie-light-dt-1.0-intl": {
+                "id": "ernie-light-dt-1.0-intl",
+                "name": "ERNIE-Light-DT-1.0",
+                "family": "ernie",
+                "reasoning": True,
+                "tool_call": True,
+                "structured_output": True,
+                "attachment": False,
+                "release_date": "2026-11-10",
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "limit": {"context": 1024000, "output": 131072},
+            },
+        },
+    },
+    "tencent": {
+        "models": {
+            "hy3": {
+                "id": "hy3",
+                "name": "Hy3",
+                "family": "Hy",
+                "reasoning": True,
+                "tool_call": True,
+                "structured_output": True,
+                "attachment": False,
+                "open_weights": True,
+                "release_date": "2026-07-06",
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "limit": {"context": 256000, "output": 128000},
+            },
+            "hy4": {
+                "id": "hy4",
+                "name": "Hy4",
+                "family": "Hy",
+                "reasoning": True,
+                "tool_call": True,
+                "structured_output": True,
+                "attachment": True,
+                "open_weights": False,
+                "release_date": "2026-11-04",
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "limit": {"context": 1048576, "output": 65536},
+                "cost": {"input": 0.834, "output": 2.501, "cache_read": 0.042},
+            },
+            "hy4-flash": {
+                "id": "hy4-flash",
+                "name": "Hy4 flash",
+                "family": "Hy",
+                "reasoning": True,
+                "tool_call": True,
+                "structured_output": True,
+                "attachment": True,
+                "release_date": "2026-11-16",
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "limit": {"context": 1048576, "output": 65536},
+            },
+        },
+    },
+}
 
 # Some providers mirror a first-party one under a suffix
 # (e.g. volcengine-coding-plan); they never outrank the base provider.
@@ -500,6 +582,10 @@ def main(argv=None) -> int:
         if or_data is not None:
             added = merge_source(raw, openrouter_to_modelsdev(or_data))
             print(f"merged OpenRouter source: {added} new model entries + gap fills")
+
+    added = merge_source(raw, VENDOR_SEEDS)
+    if added:
+        print(f"merged vendor seeds: {added} new model entries + gap fills")
 
     table, stats = build_table(raw, args.cny_rate)
     out = Path(args.out)
