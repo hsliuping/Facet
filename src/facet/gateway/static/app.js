@@ -27,7 +27,7 @@ const PAGE_TITLES = {
   subscriptions: '套餐订阅', vendors: '厂家管理',
   access: '接入信息',
   apikeys: 'API Keys', adminkey: '管理密钥',
-  status: '运行状态', maintenance: '自维护', usage: '用量报表', requests: '请求日志',
+  status: '运行状态', maintenance: '自维护', usage: '用量报表', compare: '模型对比', requests: '请求日志',
   members: '成员用量',
   quickstart: '快速开始',
   integration: '接入文档',
@@ -672,6 +672,7 @@ function switchPage(name) {
     loadUsage().catch((e) => toast(e.message, 'bad'));
     loadReport($('report-month').value).catch(() => {});
   }
+  if (name === 'compare') loadCompare().catch((e) => toast(e.message, 'bad'));
   if (name === 'requests') loadRequests().catch(() => {});
   if (name === 'members') {
     loadMembers().catch((e) => toast(e.message, 'bad'));
@@ -5534,6 +5535,263 @@ async function restoreDrafts() {
     }
     dropDraft(DRAFT_SUBS);
   }
+}
+
+// ── 模型对比（benchmark）───────────────────────────────────────────────────
+// Static data from GET /api/models/compare. Every number is traceable to a
+// source_url; scores are only ranked/colored inside the same comparable group
+// (bench + setting + harness) and only when that group has >= 3 samples.
+const compareState = { data: null, openId: '', bound: false };
+
+const COMPARE_CAT_ORDER = ['Agent', '代码', '推理', '知识工作', '长文', '安全', '多模态', '其他'];
+const COMPARE_SOURCE_LABEL = { vendor: '厂商', independent: '独立', aggregator: '聚合' };
+const COMPARE_BENCH_SHORT = {
+  terminal_bench_4: 'TB4', terminal_bench_3: 'TB3',
+  terminal_bench_2_1: 'TB2.1', terminal_bench_2_0: 'TB2.0',
+  terminal_bench_science: 'TB-Sci',
+  swe_bench_verified: 'SWE-V', swe_bench_pro: 'SWE-Pro', deepswe: 'DeepSWE',
+  frontier_swe: 'FrontierSWE', swe_sweep: 'SWE-sweep', swe_fficiency: 'SWE-fficiency',
+  agents_last_exam: 'ALE', agents_last_exam_v1_1: 'ALE 1.1',
+  aa_index: 'AA Index', aa_coding_index: 'AA Coding', osworld_2: 'OSWorld2',
+  osworld_2_1: 'OSWorld2.1', vals_index: 'Vals', vals_index_v2_2: 'Vals v2.2',
+  vals_finance_agent_v2: 'Vals Finance', gdpval_aa: 'GDPval-AA', gdpval: 'GDPval',
+  hle: 'HLE', gpqa_diamond: 'GPQA-D', graphwalks: 'GraphWalks',
+  cyber_gym: 'CyberGym', cybergym: 'CyberGym', exploitgym: 'ExploitGym',
+  exploitbench: 'ExploitBench', sec_bench_pro: 'SEC-Pro', cwe_bench: 'CWE',
+  automation_bench: 'Automation', posttrain_bench: 'PostTrain',
+  vending_bench_2: 'Vending2', blueprint_bench_2: 'Blueprint2',
+  chartography: 'Chartography', riemann_bench: 'Riemann', labbench2: 'LabBench2',
+  lvbench: 'LVBench', kimi_code_bench: 'Kimi-Code', bench_cad: 'BenchCAD',
+  officeqa_pro_v2: 'OfficeQA-Pro', mcp_atlas: 'MCP-Atlas', toolathlon: 'Toolathlon',
+  nl2repo: 'NL2Repo', dsbench_fullstack: 'DS-FullStack', dsbench_hard: 'DS-Hard',
+  kernelbench_hard: 'KernelBench', vibe_code_bench: 'VibeCode',
+  frontier_code: 'FrontierCode', cursor_bench: 'CursorBench', browsecomp: 'BrowseComp',
+};
+
+function compareFmtScore(s) {
+  const v = s.value;
+  switch (s.unit) {
+    case 'pct': return `${fmtNum(v)}%`;
+    case 'score100': return `${fmtNum(v)} 分`;
+    case 'score01': return `${v}`;
+    case 'elo': return `${fmtNum(v)} Elo`;
+    case 'usd': return `$${fmtNum(v)}`;
+    case 'f1': return `F1 ${fmtNum(v)}`;
+    case 'count': return `${fmtNum(v)} 项`;
+    default: return `${fmtNum(v)}`;
+  }
+}
+
+function compareSettingLabel(setting) {
+  return (!setting || setting === 'unspecified') ? '未标注' : setting;
+}
+
+function compareGroups(models) {
+  const groups = new Map();
+  models.forEach((m) => m.scores.forEach((s) => {
+    const key = `${s.bench}|${s.setting}|${s.harness}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(Number(s.value));
+  }));
+  return groups;
+}
+
+// Percentile class inside one comparable group; empty when the group is too
+// small (design §6: no percentile coloring below 3 samples).
+function comparePctClass(groups, s) {
+  if (s.source_type === 'aggregator') return 'agg';
+  const group = groups.get(`${s.bench}|${s.setting}|${s.harness}`);
+  if (!group || group.length < 3) return '';
+  const sorted = [...group].sort((a, b) => a - b);
+  const idx = sorted.indexOf(Number(s.value));
+  if (idx < 0) return '';
+  const p = sorted.length > 1 ? idx / (sorted.length - 1) : 1;
+  return p >= 0.67 ? 'p-hi' : (p >= 0.33 ? 'p-mid' : 'p-lo');
+}
+
+function compareBenchLabel(s) {
+  return COMPARE_BENCH_SHORT[s.bench] || s.bench_name || s.bench;
+}
+
+async function loadCompare(force) {
+  if (force || !compareState.data) {
+    compareState.data = await api('/api/models/compare');
+  }
+  bindCompareControls();
+  renderCompare();
+}
+
+function bindCompareControls() {
+  if (compareState.bound) return;
+  compareState.bound = true;
+  $('btn-compare-refresh').onclick = () => loadCompare(true).catch((e) => toast(e.message, 'bad'));
+  const rerender = () => renderCompare();
+  $('compare-vendor').addEventListener('change', rerender);
+  $('compare-tier').addEventListener('change', rerender);
+  $('compare-only-scores').addEventListener('change', rerender);
+  $('compare-search').addEventListener('input', rerender);
+  $('btn-compare-close').onclick = () => {
+    compareState.openId = '';
+    $('compare-detail-card').style.display = 'none';
+  };
+  $('compare-body').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-compare-open]');
+    if (!btn) return;
+    compareState.openId = btn.dataset.compareOpen;
+    renderCompareDetail();
+  });
+}
+
+function renderCompare() {
+  const data = compareState.data;
+  if (!data) return;
+  const totals = data.totals || {};
+  const covered = (data.models || []).filter((m) => m.score_count > 0).length;
+  $('compare-metrics').innerHTML = [
+    ['覆盖模型', `${totals.models || 0}`],
+    ['有跑分', `${covered}`],
+    ['分数条目', `${totals.scores || 0}`],
+    ['榜单词典', `${totals.benches || 0}`],
+  ].map(([k, v]) => `<div class="metric"><div class="label">${esc(k)}</div><div class="value">${esc(v)}</div></div>`).join('');
+
+  const vendorSel = $('compare-vendor');
+  if (vendorSel.options.length <= 1) {
+    (data.groups || []).forEach((g) => {
+      const opt = document.createElement('option');
+      opt.value = g.vendor;
+      opt.textContent = g.display || g.vendor;
+      vendorSel.appendChild(opt);
+    });
+  }
+
+  const vendor = vendorSel.value;
+  const tier = $('compare-tier').value;
+  const query = ($('compare-search').value || '').trim().toLowerCase();
+  const onlyScores = $('compare-only-scores').checked;
+
+  const rows = [];
+  (data.groups || []).forEach((g) => {
+    if (vendor && g.vendor !== vendor) return;
+    (g.models || []).forEach((m) => {
+      if (tier && m.tier !== tier) return;
+      if (onlyScores && !m.score_count) return;
+      if (query) {
+        const hay = `${m.label} ${m.id} ${m.vendor} ${m.vendor_display}`.toLowerCase();
+        if (!hay.includes(query)) return;
+      }
+      rows.push(m);
+    });
+  });
+
+  $('compare-note').textContent = `共 ${rows.length} 个模型；色阶只在同口径组（榜单 + 设定 + harness，且样本 ≥ 3）内计算，聚合站数据不参与着色`;
+
+  if (!rows.length) {
+    $('compare-body').innerHTML = '<tr><td colspan="6" class="hint">没有匹配的模型</td></tr>';
+  } else {
+    const groups = compareGroups(data.models || []);
+    $('compare-body').innerHTML = rows.map((m) => {
+      let scoreHtml = '<span class="hint">暂无公开跑分</span>';
+      if (m.score_count) {
+        const picked = [...m.scores]
+          .sort((a, b) => {
+            const ca = COMPARE_CAT_ORDER.indexOf(a.bench_category);
+            const cb = COMPARE_CAT_ORDER.indexOf(b.bench_category);
+            const da = ca < 0 ? 99 : ca;
+            const db = cb < 0 ? 99 : cb;
+            if (da !== db) return da - db;
+            return Number(b.value) - Number(a.value);
+          })
+          .slice(0, 5);
+        scoreHtml = picked.map((s) => {
+          const cls = ['score-pill', comparePctClass(groups, s)].filter(Boolean).join(' ');
+          const title = `${s.bench_name}｜${compareSettingLabel(s.setting)}｜harness ${s.harness}｜${COMPARE_SOURCE_LABEL[s.source_type] || s.source_type}｜${s.date}`;
+          const settingTag = (s.setting && s.setting !== 'unspecified')
+            ? `<em>${esc(s.setting)}</em>` : '';
+          return `<span class="${cls}" title="${esc(title)}">` +
+            `<b>${esc(compareBenchLabel(s))}</b>${esc(compareFmtScore(s))}${settingTag}</span>`;
+        }).join('');
+        if (m.score_count > picked.length) {
+          scoreHtml += `<span class="score-more">+${m.score_count - picked.length}</span>`;
+        }
+      }
+      const channelTitle = (m.channels || []).slice(0, 12).map((c) => c.channel).join('\n');
+      const channelHtml = m.channel_count
+        ? `<span title="${esc(channelTitle)}">${m.channel_count} 个</span>`
+        : '<span class="hint">—</span>';
+      return `<tr>
+        <td><strong>${esc(m.label)}</strong><br><span class="hint">${esc(m.id)}${m.release_date ? ' · ' + esc(m.release_date) : ''}</span></td>
+        <td>${esc(m.vendor_display || m.vendor)}</td>
+        <td>${esc(m.tier)}</td>
+        <td class="compare-scores">${scoreHtml}</td>
+        <td>${channelHtml}</td>
+        <td><button class="btn small ghost" data-compare-open="${esc(m.id)}">查看</button></td>
+      </tr>`;
+    }).join('');
+  }
+  if (compareState.openId) renderCompareDetail();
+}
+
+function renderCompareDetail() {
+  const data = compareState.data || {};
+  const model = (data.models || []).find((m) => m.id === compareState.openId);
+  const card = $('compare-detail-card');
+  if (!model) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  $('compare-detail-title').textContent = `${model.label} 的全部跑分`;
+  $('compare-detail-sub').textContent = [
+    model.id,
+    model.vendor_display || model.vendor,
+    model.tier,
+    model.release_date ? `发布 ${model.release_date}` : '',
+    `${model.channel_count} 个渠道可调用`,
+  ].filter(Boolean).join(' · ');
+
+  const groups = compareGroups(data.models || []);
+  const blocks = [];
+  if (model.notes) blocks.push(`<p class="sub-note" style="margin:0 0 12px">${esc(model.notes)}</p>`);
+
+  if (!model.score_count) {
+    blocks.push('<p class="hint">暂无公开跑分（不展示推测值）</p>');
+  } else {
+    const cats = {};
+    model.scores.forEach((s) => {
+      const cat = s.bench_category || '其他';
+      (cats[cat] = cats[cat] || []).push(s);
+    });
+    Object.keys(cats)
+      .sort((a, b) => {
+        const ia = COMPARE_CAT_ORDER.indexOf(a); const ib = COMPARE_CAT_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      })
+      .forEach((cat) => {
+        const rows = cats[cat].map((s) => {
+          const badge = COMPARE_SOURCE_LABEL[s.source_type] || s.source_type;
+          const link = s.source_url
+            ? `<a href="${esc(s.source_url)}" target="_blank" rel="noopener">${esc(s.source_name || s.source_url)}</a>`
+            : esc(s.source_name || '');
+          return `<tr>
+            <td>${esc(s.bench_name)}${s.note ? `<br><span class="hint">${esc(s.note)}</span>` : ''}</td>
+            <td><span class="score-pill ${comparePctClass(groups, s)}">${esc(compareFmtScore(s))}</span></td>
+            <td>${esc(compareSettingLabel(s.setting))}</td>
+            <td>${esc(s.harness)}</td>
+            <td><span class="source-badge ${esc(s.source_type)}">${esc(badge)}</span></td>
+            <td>${esc(s.date)}</td>
+            <td>${link}</td>
+          </tr>`;
+        }).join('');
+        blocks.push(`<h4 class="compare-cat">${esc(cat)}</h4>
+          <div class="table-wrap"><table class="status-table compare-detail-table">
+            <thead><tr><th>榜单</th><th>分数</th><th>设定</th><th>harness</th><th>来源</th><th>日期</th><th>出处</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>`);
+      });
+  }
+  if (model.channels && model.channels.length) {
+    blocks.push(`<div class="compare-channels"><h4 class="compare-cat">可调用渠道</h4>${
+      model.channels.map((c) => `<span class="tag">${esc(c.channel)}</span>`).join(' ')
+    }</div>`);
+  }
+  $('compare-detail-body').innerHTML = blocks.join('');
 }
 
 async function boot() {

@@ -10,6 +10,7 @@ from . import facts as facts_mod
 from . import providers as providers_mod
 from . import dsh as dsh_mod
 from . import keys as keys_mod
+from . import benchmarks as benchmarks_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -182,6 +183,9 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         if not key:
             return _json(h, 404, {"error": f"unresolved: {name}"})
         return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
+    if path == "/api/models/compare" and method == "GET":
+        _json(h, 200, benchmarks_mod.payload())
+        return True
     if path == "/api/guide" and method == "GET":
         # ?doc=integration serves the agent integration guide; the default is
         # the api-key manual. Names are whitelisted (no path traversal).

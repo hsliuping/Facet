@@ -1,0 +1,1955 @@
+{
+  "schema": 1,
+  "vendor_fallback": {
+    "glm": "zai",
+    "deepseek": "deepseek",
+    "doubao": "bytedance",
+    "kimi": "moonshotai",
+    "qwen": "alibaba",
+    "hy": "tencent",
+    "ernie": "baidu",
+    "step": "stepfun"
+  },
+  "models": {
+    "openai/gpt-5.6": {
+      "display_name": "GPT-5.6",
+      "vendor": "openai",
+      "tier": "flagship",
+      "release_date": "2026-07-09",
+      "scores": [
+        {
+          "bench": "agents_last_exam",
+          "value": 53.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.6",
+          "source_url": "https://openai.com/index/gpt-5-6/",
+          "date": "2026-07-09"
+        },
+        {
+          "bench": "browsecomp",
+          "value": 92.2,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.6",
+          "source_url": "https://openai.com/index/gpt-5-6/",
+          "date": "2026-07-09"
+        },
+        {
+          "bench": "osworld_2",
+          "value": 62.6,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.6",
+          "source_url": "https://openai.com/index/gpt-5-6/",
+          "date": "2026-07-09"
+        },
+        {
+          "bench": "aa_coding_index",
+          "value": 80,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "OpenAI 博客转引 Artificial Analysis",
+          "source_url": "https://openai.com/index/gpt-5-6/",
+          "date": "2026-07-09",
+          "note": "转引 AA 口径，仅作线索"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 37.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表（Sol 档）",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22",
+          "note": "Anthropic 复测，非 OpenAI 自报"
+        },
+        {
+          "bench": "frontier_code",
+          "value": 47.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "cursor_bench",
+          "value": 41.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "gdpval_aa",
+          "value": 1588,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 28.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 22.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "cybergym",
+          "value": 83.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "智谱 GLM-5.3 技术报告（Sol 档）",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14"
+        },
+        {
+          "bench": "exploitbench",
+          "value": 76.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "智谱 GLM-5.3 技术报告（Sol 档）",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14"
+        }
+      ]
+    },
+    "openai/gpt-5.5-pro": {
+      "display_name": "GPT-5.5 Pro",
+      "vendor": "openai",
+      "tier": "previous",
+      "release_date": "2026-04-23",
+      "scores": [
+        {
+          "bench": "gdpval",
+          "value": 82.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.5",
+          "source_url": "https://openai.com/index/introducing-gpt-5-5/",
+          "date": "2026-04-23"
+        },
+        {
+          "bench": "browsecomp",
+          "value": 90.1,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.5",
+          "source_url": "https://openai.com/index/introducing-gpt-5-5/",
+          "date": "2026-04-23"
+        },
+        {
+          "bench": "frontiermath_t1_3",
+          "value": 52.4,
+          "unit": "pct",
+          "setting": "no_tools",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.5",
+          "source_url": "https://openai.com/index/introducing-gpt-5-5/",
+          "date": "2026-04-23"
+        },
+        {
+          "bench": "frontiermath_t4",
+          "value": 39.6,
+          "unit": "pct",
+          "setting": "no_tools",
+          "harness": "openai",
+          "source_type": "vendor",
+          "source_name": "OpenAI GPT-5.5",
+          "source_url": "https://openai.com/index/introducing-gpt-5-5/",
+          "date": "2026-04-23"
+        }
+      ]
+    },
+    "openai/gpt-5.3-codex-spark": {
+      "display_name": "GPT-5.3 Codex Spark",
+      "vendor": "openai",
+      "tier": "specialist",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "openai/gpt-5-mini": {
+      "display_name": "GPT-5 mini",
+      "vendor": "openai",
+      "tier": "light",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "anthropic/claude-opus-5-5": {
+      "display_name": "Claude Opus 5.5",
+      "vendor": "anthropic",
+      "tier": "flagship",
+      "release_date": "2026-09-22",
+      "scores": [
+        {
+          "bench": "terminal_bench_4",
+          "value": 66.4,
+          "unit": "pct",
+          "setting": "xhigh",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "frontier_code",
+          "value": 54.4,
+          "unit": "pct",
+          "setting": "max",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "cursor_bench",
+          "value": 57.8,
+          "unit": "pct",
+          "setting": "max",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "gdpval_aa",
+          "value": 1846,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 40.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "hle",
+          "value": 67.7,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 58.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 81.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22",
+          "note": "partial 子集"
+        },
+        {
+          "bench": "chartography",
+          "value": 89.0,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Opus 5.5",
+          "source_url": "https://www.anthropic.com/claude-opus-5-5",
+          "date": "2026-09-22"
+        },
+        {
+          "bench": "briefcase_aa",
+          "value": 1822,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "chartography",
+          "value": 64.4,
+          "unit": "pct",
+          "setting": "no_tools",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5 对比表",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "vals_index",
+          "value": 67.0,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 42.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vals_finance_agent_v2",
+          "value": 58.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "harvey_legal",
+          "value": 3.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "deepswe",
+          "value": 74.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "frontier_swe",
+          "value": 62.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vibe_code_bench",
+          "value": 90.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "posttrain_bench",
+          "value": 49.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13",
+          "note": "卡片按百分制展示"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 63.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "labbench2",
+          "value": 73.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "riemann_bench",
+          "value": 69.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "graphwalks",
+          "value": 90.6,
+          "unit": "f1",
+          "setting": "ctx_128k",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "graphwalks",
+          "value": 66.8,
+          "unit": "f1",
+          "setting": "ctx_256k",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "agents_last_exam",
+          "value": 38.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "chartography",
+          "value": 66.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "lvbench",
+          "value": 83.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "cwe_bench",
+          "value": 67.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "osworld_2",
+          "value": 74.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "aa_index",
+          "value": 58,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "vals_index_v2_2",
+          "value": 70.2,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "swe_sweep",
+          "value": 3.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 59.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "agents_last_exam_v1_1",
+          "value": 71.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 87.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "vending_bench_2",
+          "value": 9235,
+          "unit": "usd",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "blueprint_bench_2",
+          "value": 51.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 59.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "exploitgym",
+          "value": 34.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        }
+      ]
+    },
+    "anthropic/claude-sonnet-5-5": {
+      "display_name": "Claude Sonnet 5.5",
+      "vendor": "anthropic",
+      "tier": "flagship",
+      "release_date": "2026-09-28",
+      "scores": [
+        {
+          "bench": "terminal_bench_4",
+          "value": 70.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "frontier_code",
+          "value": 52.1,
+          "unit": "pct",
+          "setting": "xhigh",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "frontier_code",
+          "value": 46.2,
+          "unit": "pct",
+          "setting": "max",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "cursor_bench",
+          "value": 55.5,
+          "unit": "pct",
+          "setting": "max",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "gdpval_aa",
+          "value": 1844,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "briefcase_aa",
+          "value": 1811,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "hle",
+          "value": 64.5,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 80.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28",
+          "note": "partial 子集"
+        },
+        {
+          "bench": "chartography",
+          "value": 61.6,
+          "unit": "pct",
+          "setting": "no_tools",
+          "harness": "anthropic",
+          "source_type": "vendor",
+          "source_name": "Anthropic Sonnet 5.5",
+          "source_url": "https://www.anthropic.com/claude-sonnet-5-5",
+          "date": "2026-09-28"
+        }
+      ]
+    },
+    "anthropic/claude-haiku-5-5": {
+      "display_name": "Claude Haiku 5.5",
+      "vendor": "anthropic",
+      "tier": "light",
+      "scores": [
+        {
+          "bench": "terminal_bench_4",
+          "value": 39.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "aggregator",
+          "source_name": "Morph Claude Benchmarks（转引 Anthropic）",
+          "source_url": "https://www.morphllm.com/claude-benchmarks",
+          "date": "2026-11-09",
+          "note": "聚合站转述，仅作线索"
+        },
+        {
+          "bench": "frontier_code",
+          "value": 46.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "anthropic",
+          "source_type": "aggregator",
+          "source_name": "Morph Claude Benchmarks",
+          "source_url": "https://www.morphllm.com/claude-benchmarks",
+          "date": "2026-11-09",
+          "note": "聚合站转述，仅作线索"
+        },
+        {
+          "bench": "hle",
+          "value": 57.4,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "anthropic",
+          "source_type": "aggregator",
+          "source_name": "Morph Claude Benchmarks（转引 Anthropic）",
+          "source_url": "https://www.morphllm.com/claude-benchmarks",
+          "date": "2026-11-09",
+          "note": "聚合站转述，仅作线索"
+        }
+      ]
+    },
+    "anthropic/claude-fable-5-1": {
+      "display_name": "Claude Fable 5.1",
+      "vendor": "anthropic",
+      "tier": "previous",
+      "scores": [
+        {
+          "bench": "terminal_bench_4",
+          "value": 57.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（复测）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 52.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 43.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 76.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（复测）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "chartography",
+          "value": 46.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（复测）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "aa_index",
+          "value": 49,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card（AA 口径）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        }
+      ],
+      "notes": "anthropic 口径自报数据待核验补充"
+    },
+    "google/gemini-4-argon": {
+      "display_name": "Gemini 4 Argon",
+      "vendor": "google",
+      "tier": "flagship",
+      "release_date": "2026-10-13",
+      "scores": [
+        {
+          "bench": "vals_index",
+          "value": 68.9,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 51.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vals_finance_agent_v2",
+          "value": 65.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "harvey_legal",
+          "value": 19.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "deepswe",
+          "value": 77.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "frontier_swe",
+          "value": 55.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vibe_code_bench",
+          "value": 91.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 57.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13",
+          "note": "model card 未标 effort 档"
+        },
+        {
+          "bench": "posttrain_bench",
+          "value": 45.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 57.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "labbench2",
+          "value": 88.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "riemann_bench",
+          "value": 76.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "graphwalks",
+          "value": 99.7,
+          "unit": "f1",
+          "setting": "ctx_128k",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13",
+          "note": "model card 报两档上下文结果"
+        },
+        {
+          "bench": "graphwalks",
+          "value": 84.2,
+          "unit": "f1",
+          "setting": "ctx_256k",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "agents_last_exam",
+          "value": 39.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "chartography",
+          "value": 71.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "lvbench",
+          "value": 91.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "cwe_bench",
+          "value": 68.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "swe_sweep",
+          "value": 4.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 74.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vending_bench_2",
+          "value": 13718,
+          "unit": "usd",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "blueprint_bench_2",
+          "value": 54.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "exploitgym",
+          "value": 42.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "sec_bench_pro",
+          "value": 83.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "vals_index_v2_2",
+          "value": 69.2,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "agents_last_exam_v1_1",
+          "value": 69.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Argon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13"
+        },
+        {
+          "bench": "aa_index",
+          "value": 50,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "Gemini 4 Argon model card（转引 Artificial Analysis）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13",
+          "note": "转引 AA 口径，仅作线索"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 57.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "Artificial Analysis（转引自 model card）",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-argon/",
+          "date": "2026-10-13",
+          "note": "AA harness 口径"
+        }
+      ]
+    },
+    "google/gemini-4-carbon": {
+      "display_name": "Gemini 4 Carbon",
+      "vendor": "google",
+      "tier": "flagship",
+      "release_date": "2026-11-10",
+      "scores": [
+        {
+          "bench": "aa_index",
+          "value": 59,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10",
+          "note": "转引 AA 口径"
+        },
+        {
+          "bench": "vals_index_v2_2",
+          "value": 70.4,
+          "unit": "score100",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "swe_sweep",
+          "value": 9.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "frontier_swe",
+          "value": 61.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 53.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "osworld_2_1",
+          "value": 81.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "chartography",
+          "value": 72.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "blueprint_bench_2",
+          "value": 58.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "riemann_bench",
+          "value": 80.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "cwe_bench",
+          "value": 71.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "exploitgym",
+          "value": 54.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "sec_bench_pro",
+          "value": 88.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "vending_bench_2",
+          "value": 16484,
+          "unit": "usd",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "graphwalks",
+          "value": 96.2,
+          "unit": "f1",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10",
+          "note": "model card 仅报单一结果，未标上下文档"
+        },
+        {
+          "bench": "agents_last_exam_v1_1",
+          "value": 77.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "google",
+          "source_type": "vendor",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10"
+        },
+        {
+          "bench": "terminal_bench_4",
+          "value": 65.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10",
+          "note": "AA harness 口径"
+        },
+        {
+          "bench": "terminal_bench_science",
+          "value": 64.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "aa",
+          "source_type": "aggregator",
+          "source_name": "Gemini 4 Carbon model card",
+          "source_url": "https://deepmind.google/models/model-cards/gemini-4-carbon/",
+          "date": "2026-11-10",
+          "note": "AA harness 口径"
+        }
+      ]
+    },
+    "deepseek/deepseek-v4-pro": {
+      "display_name": "DeepSeek V4 Pro",
+      "vendor": "deepseek",
+      "tier": "flagship",
+      "release_date": "2026-08-13",
+      "scores": [
+        {
+          "bench": "hle",
+          "value": 42.7,
+          "unit": "pct",
+          "setting": "no_tools",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "hle",
+          "value": 60.0,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "terminal_bench_2_1",
+          "value": 87.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "nl2repo",
+          "value": 61.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "cybergym",
+          "value": 83.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "deepswe",
+          "value": 62.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "toolathlon",
+          "value": 74.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13",
+          "note": "Toolathlon-Verified"
+        },
+        {
+          "bench": "agents_last_exam",
+          "value": 25.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 31.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13",
+          "note": "AutomationBench Public 子集"
+        },
+        {
+          "bench": "dsbench_fullstack",
+          "value": 71.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        },
+        {
+          "bench": "dsbench_hard",
+          "value": 67.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Pro 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-08-13"
+        }
+      ]
+    },
+    "deepseek/deepseek-v4-flash": {
+      "display_name": "DeepSeek V4 Flash",
+      "vendor": "deepseek",
+      "tier": "previous",
+      "release_date": "2026-07-31",
+      "scores": [
+        {
+          "bench": "terminal_bench_2_1",
+          "value": 82.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31",
+          "note": "DeepSeek Harness minimal mode, max effort"
+        },
+        {
+          "bench": "nl2repo",
+          "value": 54.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        },
+        {
+          "bench": "cybergym",
+          "value": 76.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        },
+        {
+          "bench": "deepswe",
+          "value": 54.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        },
+        {
+          "bench": "toolathlon",
+          "value": 70.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31",
+          "note": "Toolathlon-Verified"
+        },
+        {
+          "bench": "agents_last_exam",
+          "value": 25.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        },
+        {
+          "bench": "automation_bench",
+          "value": 25.1,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31",
+          "note": "AutomationBench Public 子集"
+        },
+        {
+          "bench": "dsbench_fullstack",
+          "value": 68.7,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        },
+        {
+          "bench": "dsbench_hard",
+          "value": 59.6,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "deepseek",
+          "source_type": "vendor",
+          "source_name": "DeepSeek V4-Flash 更新公告",
+          "source_url": "https://api-docs.deepseek.com/updates",
+          "date": "2026-07-31"
+        }
+      ]
+    },
+    "zai/glm-5.3": {
+      "display_name": "GLM-5.3",
+      "vendor": "zai",
+      "tier": "flagship",
+      "release_date": "2026-08-14",
+      "scores": [
+        {
+          "bench": "terminal_bench_3",
+          "value": 28.3,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14"
+        },
+        {
+          "bench": "deepswe",
+          "value": 66.9,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14",
+          "note": "DeepSWE v1.1"
+        },
+        {
+          "bench": "agents_last_exam",
+          "value": 28.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14",
+          "note": "CLI 口径"
+        },
+        {
+          "bench": "gdpval_aa",
+          "value": 1769,
+          "unit": "elo",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14",
+          "note": "GDPval-AA v2"
+        },
+        {
+          "bench": "cybergym",
+          "value": 84.5,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14"
+        },
+        {
+          "bench": "exploitbench",
+          "value": 54.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14"
+        },
+        {
+          "bench": "exploitgym",
+          "value": 105,
+          "unit": "count",
+          "setting": "budget_2h",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14",
+          "note": "2h 预算内完成任务数"
+        },
+        {
+          "bench": "exploitgym",
+          "value": 130,
+          "unit": "count",
+          "setting": "budget_6h",
+          "harness": "zhipu",
+          "source_type": "vendor",
+          "source_name": "GLM-5.3 技术报告",
+          "source_url": "https://zhipuai.cn/zh/research/162",
+          "date": "2026-08-14",
+          "note": "6h 预算内完成任务数"
+        }
+      ]
+    },
+    "moonshotai/kimi-k3.1-pro": {
+      "display_name": "Kimi K3.1 Pro",
+      "vendor": "moonshotai",
+      "tier": "flagship",
+      "scores": [
+        {
+          "bench": "terminal_bench_4",
+          "value": 65.7,
+          "unit": "pct",
+          "setting": "max",
+          "harness": "kimi",
+          "source_type": "vendor",
+          "source_name": "Kimi K3.1 Pro 博客",
+          "source_url": "https://www.kimi.com/en/blog/kimi-k3-1-pro",
+          "date": "2026-11-18",
+          "note": "博客未标发布日期，date 为核验日"
+        },
+        {
+          "bench": "kimi_code_bench",
+          "value": 61.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "kimi",
+          "source_type": "vendor",
+          "source_name": "Kimi K3.1 Pro 博客",
+          "source_url": "https://www.kimi.com/en/blog/kimi-k3-1-pro",
+          "date": "2026-11-18",
+          "note": "博客未标发布日期，date 为核验日"
+        },
+        {
+          "bench": "bench_cad",
+          "value": 92.7,
+          "unit": "pct",
+          "setting": "with_tools",
+          "harness": "kimi",
+          "source_type": "vendor",
+          "source_name": "Kimi K3.1 Pro 博客",
+          "source_url": "https://www.kimi.com/en/blog/kimi-k3-1-pro",
+          "date": "2026-11-18",
+          "note": "博客未标发布日期，date 为核验日"
+        },
+        {
+          "bench": "officeqa_pro_v2",
+          "value": 64.4,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "kimi",
+          "source_type": "vendor",
+          "source_name": "Kimi K3.1 Pro 博客",
+          "source_url": "https://www.kimi.com/en/blog/kimi-k3-1-pro",
+          "date": "2026-11-18",
+          "note": "博客未标发布日期，date 为核验日"
+        }
+      ]
+    },
+    "minimax/minimax-m3": {
+      "display_name": "MiniMax M3",
+      "vendor": "minimax",
+      "tier": "flagship",
+      "release_date": "2026-06-01",
+      "scores": [
+        {
+          "bench": "swe_bench_pro",
+          "value": 59.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01"
+        },
+        {
+          "bench": "terminal_bench_2_1",
+          "value": 66.0,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01"
+        },
+        {
+          "bench": "swe_fficiency",
+          "value": 34.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01"
+        },
+        {
+          "bench": "kernelbench_hard",
+          "value": 28.8,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01"
+        },
+        {
+          "bench": "mcp_atlas",
+          "value": 74.2,
+          "unit": "pct",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01"
+        },
+        {
+          "bench": "posttrain_bench",
+          "value": 0.37,
+          "unit": "score01",
+          "setting": "unspecified",
+          "harness": "minimax",
+          "source_type": "vendor",
+          "source_name": "MiniMax M3 博客",
+          "source_url": "https://www.minimaxi.com/blog/minimax-m3",
+          "date": "2026-06-01",
+          "note": "厂商 0-1 口径，与百分制口径以 unit 区分"
+        }
+      ]
+    },
+    "qwen/qwen3.8-max": {
+      "display_name": "Qwen3.8-Max",
+      "vendor": "alibaba",
+      "tier": "flagship",
+      "scores": [],
+      "notes": "发布博客（2026-08-03）只有 AIME24 实验数据与案例叙事，无标准基准数字，暂不收录"
+    },
+    "google/gemini-3.1-pro-preview": {
+      "display_name": "Gemini 3.1 Pro Preview",
+      "vendor": "google",
+      "tier": "previous",
+      "scores": [],
+      "notes": "model card 猜测 URL 抓取失败，暂无公开可核实跑分"
+    },
+    "google/gemini-3.5-flash": {
+      "display_name": "Gemini 3.5 Flash",
+      "vendor": "google",
+      "tier": "light",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "xai/grok-4.5": {
+      "display_name": "Grok 4.5",
+      "vendor": "xai",
+      "tier": "flagship",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "xai/grok-4.20-0309-reasoning": {
+      "display_name": "Grok 4.20 (0309, Reasoning)",
+      "vendor": "xai",
+      "tier": "previous",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "qwen/qwen3.7-plus": {
+      "display_name": "Qwen3.7-Plus",
+      "vendor": "alibaba",
+      "tier": "previous",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "qwen/qwen3-coder-plus": {
+      "display_name": "Qwen3 Coder Plus",
+      "vendor": "alibaba",
+      "tier": "specialist",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "zai/glm-5.3-flash": {
+      "display_name": "GLM-5.3-Flash",
+      "vendor": "zai",
+      "tier": "light",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "minimax/minimax-m3.1-flash": {
+      "display_name": "MiniMax M3.1 Flash",
+      "vendor": "minimax",
+      "tier": "light",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "stepfun/step-5-preview": {
+      "display_name": "Step-5 Preview",
+      "vendor": "stepfun",
+      "tier": "flagship",
+      "scores": [],
+      "notes": "暂无公开可核实跑分"
+    },
+    "bytedance/doubao-seed-1-8": {
+      "display_name": "Doubao Seed 1.8",
+      "vendor": "bytedance",
+      "tier": "flagship",
+      "scores": [],
+      "notes": "官方页面 404，暂无公开可核实跑分"
+    }
+  }
+}

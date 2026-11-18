@@ -1,0 +1,625 @@
+{
+  "schema": 1,
+  "benches": {
+    "gpqa_diamond": {
+      "name": "GPQA Diamond",
+      "category": "推理",
+      "measures": "研究生级物理/化学/生物选择题，抗搜索",
+      "scale": "百分制准确率",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰集中在 80-92，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://arxiv.org/abs/2311.12022",
+      "caveat": "带工具与不带工具不可直接比较；厂商常只报带工具那一档"
+    },
+    "hle": {
+      "name": "Humanity's Last Exam",
+      "category": "推理",
+      "measures": "覆盖数学/自然科学/人文的高难专家题，含多模态子集",
+      "scale": "百分制准确率",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰从 30 分区间爬到 60 分区间，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://humanity-last-exam.com",
+      "caveat": "带工具与不带工具差异极大；纯文本子集与多模态子集不可互比"
+    },
+    "swe_bench_verified": {
+      "name": "SWE-bench Verified",
+      "category": "代码",
+      "measures": "真实 GitHub issue 修复，人工核验过的子集",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "已接近饱和，仅作历史对照",
+      "settings": ["no_tools", "unspecified"],
+      "homepage": "https://benchmark.swebench.com",
+      "caveat": "不可与 SWE-bench 原版或 Pro 混比；通过率与 agent 脚手架强相关"
+    },
+    "swe_bench_pro": {
+      "name": "SWE-bench Pro",
+      "category": "代码",
+      "measures": "更难的多文件仓库级修复任务",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "2026 年仍在 55-80 区间，具区分度",
+      "settings": ["no_tools", "unspecified"],
+      "homepage": "https://scale.com/leaderboard/swe_bench_pro_public",
+      "caveat": "任务集与 Verified 不同，不可混比；厂商自报与第三方复跑差异较大"
+    },
+    "terminal_bench_4": {
+      "name": "Terminal-Bench 4.0",
+      "category": "Agent",
+      "measures": "真实终端环境下的多步任务完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰从 37 爬到 70 区间，区分度好",
+      "settings": ["no_tools", "with_tools", "default", "high", "xhigh", "max", "unspecified"],
+      "homepage": "https://terminal-bench.com",
+      "caveat": "effort 档位显著影响得分，跨档不可比；harness 不同（vendor/AA）也不可直接互比"
+    },
+    "terminal_bench_3": {
+      "name": "Terminal-Bench 3.0",
+      "category": "Agent",
+      "measures": "终端任务完成率（上一代）",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "上一代版本，仅作历史对照",
+      "settings": ["default", "high", "unspecified"],
+      "homepage": "https://terminal-bench.com",
+      "caveat": "与 4.0 任务集不同，不可混比；default 与 high 档差异明显"
+    },
+    "terminal_bench_2_0": {
+      "name": "Terminal-Bench 2.0",
+      "category": "Agent",
+      "measures": "终端任务完成率（历史版本）",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "历史版本，仅作对照",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://terminal-bench.com",
+      "caveat": "与 4.0 任务集不同，不可混比"
+    },
+    "terminal_bench_2_1": {
+      "name": "Terminal-Bench 2.1",
+      "category": "Agent",
+      "measures": "终端任务完成率（历史版本）",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "历史版本，仅作对照",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://terminal-bench.com",
+      "caveat": "与 4.0 任务集不同，不可混比"
+    },
+    "terminal_bench_science": {
+      "name": "Terminal-Bench-Science 0.1",
+      "category": "Agent",
+      "measures": "科研场景终端任务完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "新基准，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://terminal-bench.com",
+      "caveat": "厂商 harness 与 AA harness 结果不可直接互比，需看 harness 字段"
+    },
+    "vals_index": {
+      "name": "Vals Index",
+      "category": "知识工作",
+      "measures": "知识工作综合指数（未标版本）",
+      "scale": "0-100 分",
+      "higher_is_better": true,
+      "saturation": "版本未标注，仅在同一版本内比较",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://www.vals.ai",
+      "caveat": "未标版本，与 vals_index_v2_2 不可混比；厂商自报"
+    },
+    "vals_index_v2_2": {
+      "name": "Vals Index v2.2",
+      "category": "知识工作",
+      "measures": "知识工作综合指数 v2.2",
+      "scale": "0-100 分",
+      "higher_is_better": true,
+      "saturation": "v2.2 口径，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://www.vals.ai",
+      "caveat": "与未标版本 vals_index 不可混比；以 harness 与日期区分"
+    },
+    "vals_finance_agent_v2": {
+      "name": "Vals Finance Agent v2",
+      "category": "知识工作",
+      "measures": "金融分析 agent 任务完成率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "新版本，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://www.vals.ai",
+      "caveat": "v2 与 v1 不可混比"
+    },
+    "aa_index": {
+      "name": "AA Intelligence Index v5.0",
+      "category": "知识工作",
+      "measures": "Artificial Analysis 综合智能指数",
+      "scale": "0-100 分",
+      "higher_is_better": true,
+      "saturation": "独立综合指数，具备区分度",
+      "settings": ["unspecified"],
+      "homepage": "https://artificialanalysis.ai",
+      "caveat": "第三方独立口径；不同版本指数不可混比"
+    },
+    "aa_coding_index": {
+      "name": "AA Coding Agent Index",
+      "category": "代码",
+      "measures": "Artificial Analysis 编码 agent 综合指数",
+      "scale": "0-100 分",
+      "higher_is_better": true,
+      "saturation": "独立综合指数，具备区分度",
+      "settings": ["unspecified"],
+      "homepage": "https://artificialanalysis.ai",
+      "caveat": "独立第三方口径；与 AA Intelligence Index 为不同维度"
+    },
+    "osworld_2": {
+      "name": "OSWorld-2.0",
+      "category": "Agent",
+      "measures": "桌面/跨应用自动化操作成功率（2.0 版本）",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "2.0 版本，部分厂商用 offline 子集",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://os-world.github.io",
+      "caveat": "offline 子集与完整集不可互比；2.0 与 2.1 不可混比"
+    },
+    "osworld_2_1": {
+      "name": "OSWorld-2.1",
+      "category": "Agent",
+      "measures": "桌面/跨应用自动化操作成功率（2.1 版本）",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "2.1 版本，具备区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://os-world.github.io",
+      "caveat": "offline 子集与完整集不可互比；与 2.0 不可混比"
+    },
+    "cwe_bench": {
+      "name": "CWE-bench",
+      "category": "安全",
+      "measures": "已知 CWE 类型漏洞的发现能力",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "具备一定区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "漏洞发现类指标，高分不等于模型更安全"
+    },
+    "exploitgym": {
+      "name": "ExploitGym",
+      "category": "安全",
+      "measures": "漏洞利用任务完成量（不同来源计量口径不同）",
+      "scale": "% 完成，或 任务数/时间预算（见 note）",
+      "higher_is_better": true,
+      "saturation": "按吞吐计量，预算不同不可比",
+      "settings": ["budget_2h", "budget_6h", "unspecified"],
+      "caveat": "单位与预算差异极大（2h / 6h / 百分制），必须按 setting 与 note 里的口径比较"
+    },
+    "exploitbench": {
+      "name": "ExploitBench",
+      "category": "安全",
+      "measures": "漏洞利用能力评测",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "具备区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "安全类指标，厂商自报常偏乐观"
+    },
+    "cybergym": {
+      "name": "CyberGym",
+      "category": "安全",
+      "measures": "网络攻防场景任务成功率",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "具备区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "厂商自报与第三方复跑差异显著"
+    },
+    "sec_bench_pro": {
+      "name": "SEC-bench Pro",
+      "category": "安全",
+      "measures": "安全评估专业版任务通过率",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "专业安全评估，厂商与第三方口径不同"
+    },
+    "agents_last_exam": {
+      "name": "Agents' Last Exam",
+      "category": "Agent",
+      "measures": "跨领域长程专业工作流完成率（未标版本）",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "版本未标注，仅同版本内比较",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "未标版本，与 v1.1 不可混比；两版本得分差异极大"
+    },
+    "agents_last_exam_v1_1": {
+      "name": "Agents' Last Exam v1.1",
+      "category": "Agent",
+      "measures": "跨领域长程专业工作流完成率 v1.1",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "v1.1 口径，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "与未标版本 agents_last_exam 不可混比"
+    },
+    "browsecomp": {
+      "name": "BrowseComp",
+      "category": "Agent",
+      "measures": "需要多跳检索的浏览任务成功率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰从 79 到 92，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://openai.com/index/browsecomp",
+      "caveat": "带工具是常态；不同 harness 与检索预算不可直接互比"
+    },
+    "graphwalks": {
+      "name": "GraphWalks",
+      "category": "长文本",
+      "measures": "长上下文图遍历 BFS 的 F1",
+      "scale": "F1 分数",
+      "higher_is_better": true,
+      "saturation": "按上下文长度分档，短档已近饱和",
+      "settings": ["ctx_128k", "ctx_256k", "ctx_1m", "unspecified"],
+      "caveat": "128k / 256k / 1M 为不同可比较组，不可跨档比较"
+    },
+    "frontier_swe": {
+      "name": "FrontierSWE v2",
+      "category": "代码",
+      "measures": "前沿仓库级软件工程任务通过率",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "v2 口径；与 SWE-bench 系列不可混比"
+    },
+    "deepswe": {
+      "name": "DeepSWE v1.1",
+      "category": "代码",
+      "measures": "深度仓库级软件工程任务通过率",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "具备区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "与 SWE-bench 系列不可混比"
+    },
+    "swe_sweep": {
+      "name": "SWE-sweep",
+      "category": "代码",
+      "measures": "多仓库批量软件工程任务通过率",
+      "scale": "百分制通过率",
+      "higher_is_better": true,
+      "saturation": "极难，旗舰普遍个位数到十位数，区分度强",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "分数普遍很低，属难度极高基准，勿与其他 SWE 榜混比"
+    },
+    "cursor_bench": {
+      "name": "CursorBench 4.0",
+      "category": "代码",
+      "measures": "Cursor 编辑器内 agent 编码完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "具备一定区分度",
+      "settings": ["no_tools", "with_tools", "default", "max", "xhigh", "unspecified"],
+      "caveat": "effort 档位影响显著；CursorBench 版本更新不频繁"
+    },
+    "frontier_code": {
+      "name": "FrontierCode v1.1 Main",
+      "category": "代码",
+      "measures": "前沿代码任务主线完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "具备一定区分度",
+      "settings": ["no_tools", "with_tools", "medium", "max", "xhigh", "unspecified"],
+      "caveat": "effort 档位直接影响得分，跨档不可比"
+    },
+    "automation_bench": {
+      "name": "AutomationBench",
+      "category": "Agent",
+      "measures": "自动化工作流搭建任务完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰 28-54，区分度好",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "Public 子集与完整集不同；no_tools 与 with_tools 不可混比"
+    },
+    "toolathlon": {
+      "name": "Toolathlon",
+      "category": "Agent",
+      "measures": "多步骤工具使用综合评估",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "Verified 子集与普通集不可混比"
+    },
+    "nl2repo": {
+      "name": "NL2Repo",
+      "category": "代码",
+      "measures": "自然语言需求到完整仓库代码生成",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "厂商自研口径居多"
+    },
+    "dsbench_fullstack": {
+      "name": "DSBench-FullStack",
+      "category": "代码",
+      "measures": "从需求到可运行全栈应用生成",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "厂商自研口径；与 Hard 子集不可混比"
+    },
+    "dsbench_hard": {
+      "name": "DSBench-Hard",
+      "category": "代码",
+      "measures": "高难度全栈应用生成",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "Hard 子集难度更高，区分度好",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "与 FullStack 子集不可混比"
+    },
+    "posttrain_bench": {
+      "name": "PostTrainBench",
+      "category": "Agent",
+      "measures": "模型自主完成后训练（微调）任务的能力",
+      "scale": "0-1 连续分",
+      "higher_is_better": true,
+      "saturation": "新基准，绝对分低但区分度明显",
+      "settings": ["unspecified"],
+      "caveat": "原始分为 0-1 小数，勿与百分制混比"
+    },
+    "bench_cad": {
+      "name": "BenchCAD",
+      "category": "多模态",
+      "measures": "多视角渲染到 CAD 代码生成的 3D 重构能力",
+      "scale": "百分制成功率",
+      "higher_is_better": true,
+      "saturation": "新基准，区分度较高",
+      "settings": ["with_tools", "no_tools", "unspecified"],
+      "caveat": "需 CAD 工具链，带工具是常态"
+    },
+    "kimi_code_bench": {
+      "name": "Kimi Code Bench 3.0 (Long-horizon)",
+      "category": "代码",
+      "measures": "长程自主代码任务完成率",
+      "scale": "百分制完成率",
+      "higher_is_better": true,
+      "saturation": "厂商内部基准，仅作线索",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "厂商内部基准，仅作参考，不宜与其他厂商分数横比"
+    },
+    "officeqa_pro": {
+      "name": "OfficeQA Pro",
+      "category": "知识工作",
+      "measures": "办公文档理解与问答（v1）",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "v1 口径",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "与 v2 不可混比"
+    },
+    "officeqa_pro_v2": {
+      "name": "OfficeQA Pro v2",
+      "category": "知识工作",
+      "measures": "办公文档理解与问答 v2",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "v2 口径，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "与 v1 不可混比"
+    },
+    "vending_bench_2": {
+      "name": "Vending-Bench 2",
+      "category": "Agent",
+      "measures": "自动售货经营模拟的期末账户余额",
+      "scale": "美元余额",
+      "higher_is_better": true,
+      "saturation": "余额跨度大，区分度明显",
+      "settings": ["unspecified"],
+      "caveat": "单位是美元余额，不是百分制；不同初始条件不可比"
+    },
+    "chartography": {
+      "name": "Chartography",
+      "category": "多模态",
+      "measures": "图表理解与生成任务完成率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "带工具与不带工具差异显著",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "带工具与不带工具不可混比"
+    },
+    "blueprint_bench_2": {
+      "name": "Blueprint-Bench 2",
+      "category": "多模态",
+      "measures": "从蓝图/图纸理解到实现的任务完成率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "厂商自报口径"
+    },
+    "lvbench": {
+      "name": "LVBench",
+      "category": "多模态",
+      "measures": "长视频理解问答准确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "旗舰普遍 80-92，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "长视频理解专项"
+    },
+    "riemann_bench": {
+      "name": "RiemannBench",
+      "category": "推理",
+      "measures": "高难数学推理任务准确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "数学推理专项，与 GPQA 不同维度"
+    },
+    "labbench2": {
+      "name": "LABBench 2",
+      "category": "推理",
+      "measures": "科研实验设计与分析任务准确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "科研场景专项"
+    },
+    "harvey_legal": {
+      "name": "Harvey's Legal",
+      "category": "知识工作",
+      "measures": "法律专业任务准确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "极难，旗舰普遍个位数到二十，区分度强",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "法律垂直场景，绝对分很低"
+    },
+    "briefcase_aa": {
+      "name": "AA-Briefcase v1.1",
+      "category": "知识工作",
+      "measures": "商务办公任务综合评分",
+      "scale": "Elo",
+      "higher_is_better": true,
+      "saturation": "Elo 分制，区分度好",
+      "settings": ["unspecified"],
+      "caveat": "Elo 分制，不是百分制；与 GDPval-AA 同为 Elo 但任务集不同"
+    },
+    "gdpval_aa": {
+      "name": "GDPval-AA",
+      "category": "知识工作",
+      "measures": "真实职业任务产出质量（AA 版）",
+      "scale": "Elo",
+      "higher_is_better": true,
+      "saturation": "Elo 分制，区分度好",
+      "settings": ["unspecified"],
+      "caveat": "Elo 分制；与 OpenAI 自报 GDPval（胜率/平局）不可混比；v2.1 口径"
+    },
+    "gdpval": {
+      "name": "GDPval",
+      "category": "知识工作",
+      "measures": "真实职业任务胜率（OpenAI 口径）",
+      "scale": "百分制胜率（含平局）",
+      "higher_is_better": true,
+      "saturation": "OpenAI 自报口径，接近饱和",
+      "settings": ["unspecified"],
+      "caveat": "OpenAI 自报胜率/平局口径，与 GDPval-AA 的 Elo 不可混比"
+    },
+    "vibe_code_bench": {
+      "name": "Vibe Code Bench",
+      "category": "代码",
+      "measures": "自然语言直接生成可用页面/应用的成功率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "旗舰普遍 89-92，接近饱和",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "接近饱和，区分度有限"
+    },
+    "tau2_bench_telecom": {
+      "name": "τ²-bench (Telecom)",
+      "category": "Agent",
+      "measures": "多轮工具调用客服场景成功率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "电信子域，区分度一般",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "仅 Telecom 子域，不代表全 τ²-bench"
+    },
+    "swe_fficiency": {
+      "name": "SWE-fficiency",
+      "category": "代码",
+      "measures": "以最少 token/步数完成 SWE 任务的效率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "效率类指标，与通过率类不同维度"
+    },
+    "kernelbench_hard": {
+      "name": "KernelBench Hard",
+      "category": "代码",
+      "measures": "手写高性能 kernel 的正确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "极难，旗舰普遍 20-30，区分度强",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "底层 kernel 专项，绝对分低"
+    },
+    "mcp_atlas": {
+      "name": "MCP Atlas",
+      "category": "Agent",
+      "measures": "MCP 工具生态下的任务完成率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "依赖 MCP 工具集版本"
+    },
+    "mmlu": {
+      "name": "MMLU",
+      "category": "推理",
+      "measures": "57 学科的多选题知识覆盖",
+      "scale": "百分制准确率",
+      "higher_is_better": true,
+      "saturation": "已饱和（旗舰 90+），仅作历史对照，不应再作卖点",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://arxiv.org/abs/2009.03300",
+      "caveat": "已饱和，不参与分位着色"
+    },
+    "frontiermath_t1_3": {
+      "name": "FrontierMath T1-3",
+      "category": "推理",
+      "measures": "前沿数学难题（1-3 档）",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "2026 年旗舰 37-52，仍有区分度",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://epoch.ai/frontiermath",
+      "caveat": "1-3 档与 4 档难度不同，不可混比"
+    },
+    "frontiermath_t4": {
+      "name": "FrontierMath T4",
+      "category": "推理",
+      "measures": "前沿数学最难题（第 4 档）",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "极难，旗舰 16-40，区分度强",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "homepage": "https://epoch.ai/frontiermath",
+      "caveat": "第 4 档与 1-3 档不可混比"
+    },
+    "android_bench": {
+      "name": "AndroidBench",
+      "category": "Agent",
+      "measures": "安卓设备自动化操作成功率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "较新，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "移动端 GUI 专项"
+    },
+    "medxpertqa": {
+      "name": "MedXpertQA",
+      "category": "推理",
+      "measures": "医学专家级问答准确率",
+      "scale": "百分制",
+      "higher_is_better": true,
+      "saturation": "医学垂直场景，区分度较高",
+      "settings": ["no_tools", "with_tools", "unspecified"],
+      "caveat": "医学专项，非通用能力"
+    }
+  }
+}

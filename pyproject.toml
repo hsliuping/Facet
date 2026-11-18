@@ -41,7 +41,13 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-facet = ["py.typed", "data/model-registry.json"]
+facet = [
+    "py.typed",
+    "data/model-registry.json",
+    "data/benchmarks.json",
+    "data/model-scores.json",
+    "data/model-coverage.json",
+]
 "facet.gateway" = ["static/*", "providers.json"]
 
 [tool.pytest.ini_options]

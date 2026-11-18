@@ -22,9 +22,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 import validate_registry  # noqa: E402
+import validate_benchmarks  # noqa: E402
 
 REGISTRY = REPO / "registry" / "model-registry.json"
 DATA_DIR = REPO / "src" / "facet" / "data"
+BENCH_FILES = ("benchmarks.json", "model-scores.json", "model-coverage.json")
 
 
 def main(argv=None) -> int:
@@ -49,9 +51,21 @@ def main(argv=None) -> int:
             print(f"  - {e}", file=sys.stderr)
         return 1
 
+    missing = [f for f in ("model-registry.json",) + BENCH_FILES
+               if not (REGISTRY.parent / f).exists()]
+    if missing:
+        print(f"ERROR: source files missing under registry/: {', '.join(missing)}", file=sys.stderr)
+        return 1
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(REGISTRY, DATA_DIR / REGISTRY.name)
+    for fname in ("model-registry.json",) + BENCH_FILES:
+        shutil.copyfile(REGISTRY.parent / fname, DATA_DIR / fname)
     print(f"table: {len(table['models'])} models, updated {table['updated_at']} -> src/facet/data/")
+
+    # Benchmark data files ship in the wheel too: gate them before building.
+    if validate_benchmarks.main() != 0:
+        print("ERROR: benchmark data failed validation", file=sys.stderr)
+        return 1
 
     if args.skip_build:
         print("skipping python -m build (--skip-build)")

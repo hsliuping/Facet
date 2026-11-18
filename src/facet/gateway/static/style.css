@@ -606,3 +606,44 @@ select.auto-model { background: var(--bg); color: var(--text); border: 1px solid
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px; white-space: pre-wrap; word-break: break-all;
 }
+
+
+/* 模型对比页：跑分 pill、口径标注、来源徽章与分位色阶 */
+.compare-table td { vertical-align: top; }
+.compare-table .compare-scores { display: flex; flex-wrap: wrap; gap: 6px; max-width: 460px; }
+.score-pill {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 3px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: rgba(255, 255, 255, .03);
+  white-space: nowrap;
+}
+.score-pill b { font-weight: 650; color: var(--muted); }
+.score-pill em {
+  font-style: normal; font-size: 11px; color: var(--muted);
+  border-left: 1px solid var(--border); padding-left: 4px;
+}
+.score-pill.p-hi { border-color: rgba(94, 202, 130, .55); background: rgba(94, 202, 130, .10); }
+.score-pill.p-hi b { color: var(--ok); }
+.score-pill.p-mid { border-color: rgba(110, 168, 254, .5); background: rgba(110, 168, 254, .08); }
+.score-pill.p-mid b { color: var(--accent); }
+.score-pill.p-lo { border-color: rgba(242, 99, 107, .45); background: rgba(242, 99, 107, .08); }
+.score-pill.p-lo b { color: var(--bad); }
+.score-pill.agg { border-style: dashed; color: var(--muted); }
+.score-pill.agg b { color: var(--muted); }
+.score-more {
+  align-self: center; font-size: 11px; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 999px; padding: 2px 7px;
+}
+.compare-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.compare-cat { margin: 14px 0 8px; font-size: 13px; color: var(--accent); }
+.compare-detail-table td { vertical-align: top; font-size: 12.5px; }
+.compare-detail-table td .hint { font-size: 11.5px; }
+.source-badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; border: 1px solid var(--border); color: var(--muted);
+}
+.source-badge.vendor { color: var(--accent); border-color: rgba(110, 168, 254, .5); }
+.source-badge.independent { color: var(--ok); border-color: rgba(94, 202, 130, .5); }
+.source-badge.aggregator { border-style: dashed; }
+.compare-channels { margin-top: 14px; }
+.compare-channels .tag { margin: 0 6px 6px 0; }

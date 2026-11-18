@@ -37,6 +37,7 @@
         <button class="menu-item" data-tab="status">运行状态</button>
         <button class="menu-item" data-tab="maintenance">自维护</button>
         <button class="menu-item" data-tab="usage">用量报表</button>
+        <button class="menu-item" data-tab="compare">模型对比</button>
         <button class="menu-item" data-tab="members">成员用量</button>
         <button class="menu-item" data-tab="requests">请求日志</button>
       </nav>
@@ -643,6 +644,67 @@
               </table>
             </div>
             <div id="report-channels" class="sub-note" style="margin-top:10px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-compare">
+          <div class="panel-head">
+            <div>
+              <h2>模型对比</h2>
+              <p>主流旗舰模型的公开跑分。只展示可核实来源：厂商自报与独立评测分开标注，口径（版本 / 设定 / harness）全部摊开；同一口径组内才有排序与色阶。缺失即未公开，不做推测。</p>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="btn-compare-refresh">刷新</button>
+            </div>
+          </div>
+
+          <div class="summary" id="compare-metrics"></div>
+
+          <div class="card">
+            <div class="card-top">
+              <div>
+                <h3>跑分总览</h3>
+                <p class="sub-note" id="compare-note">按模型列出主要榜单分数；点开可看全部口径与来源链接</p>
+              </div>
+              <div class="actions">
+                <select id="compare-vendor">
+                  <option value="">全部厂商</option>
+                </select>
+                <select id="compare-tier">
+                  <option value="">全部层级</option>
+                  <option value="flagship">旗舰</option>
+                  <option value="previous">上代</option>
+                  <option value="specialist">专用</option>
+                  <option value="light">轻量</option>
+                </select>
+                <input type="search" id="compare-search" placeholder="搜索模型 / 厂商">
+                <label class="compare-toggle"><input type="checkbox" id="compare-only-scores" checked> 只看有跑分</label>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="status-table compare-table">
+                <thead>
+                  <tr>
+                    <th>模型</th><th>厂商</th><th>层级</th><th>跑分</th>
+                    <th>渠道</th><th>详情</th>
+                  </tr>
+                </thead>
+                <tbody id="compare-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card" id="compare-detail-card" style="display:none">
+            <div class="card-top">
+              <div>
+                <h3 id="compare-detail-title">模型详情</h3>
+                <p class="sub-note" id="compare-detail-sub"></p>
+              </div>
+              <div class="actions">
+                <button class="btn small ghost" id="btn-compare-close">收起</button>
+              </div>
+            </div>
+            <div id="compare-detail-body"></div>
           </div>
         </section>
 
