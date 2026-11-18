@@ -90,7 +90,7 @@ Type: files; Name: "{app}\打开控制台.url"
 ; cu-credentials.json held session cookies (明文凭据) and is deleted after the HTTP
 ; sign‑to‑check‑in replacement landed.
 Type: files; Name: "{app}\agent.cmd"
-Type: deletedirectory; Name: "{app}\ms-playwright"
+Type: filesandordirs; Name: "{app}\ms-playwright"
 Type: files; Name: "{app}\data\cu-credentials.json"
 
 [Code]
