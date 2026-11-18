@@ -53,7 +53,7 @@ class DshProfileTest(unittest.TestCase):
                 "path": "", "bin": "", "version": ""}):
             state = dsh.status()
         self.assertFalse(state["installed"])
-        self.assertIn("同一台宿主机", state["note"])
+        self.assertIn("同一台电脑", state["note"])
 
     def test_status_explains_a_missing_profile(self):
         with mock.patch.object(dsh, "find_cli", return_value={
@@ -62,7 +62,7 @@ class DshProfileTest(unittest.TestCase):
         self.assertTrue(state["installed"])
         self.assertFalse(state["profile_exists"])
         self.assertIn("facet-web", state["note"])
-        self.assertIn("自动生成", state["note"])
+        self.assertIn("自动创建", state["note"])
 
     def test_start_web_refuses_without_the_client(self):
         with mock.patch.object(dsh, "find_cli", return_value={

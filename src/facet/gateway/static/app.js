@@ -1145,13 +1145,15 @@ function renderDashboard() {
   } else {
     dshRows.push(dashRow('客户端', dsh.installed
       ? `已安装${dsh.version ? ' · v' + esc(dsh.version) : ''}`
-      : '<span class="days-left expired">未安装</span>'));
-    dshRows.push(dashRow('profile', `${esc(dsh.profile || '')}`
-      + (dsh.profile_exists ? '' : ' <span class="days-left expired">缺失</span>')));
-    dshRows.push(dashRow('指向网关', dsh.base_url ? esc(dsh.base_url) : '未配置'));
+      : '<span class="days-left expired">未安装 · 需先装 dsh</span>'));
+    dshRows.push(dashRow('配置档案', `${esc(dsh.profile || '')}`
+      + (dsh.profile_exists ? '' : ' <span class="days-left expired">缺失 · 启动时自动创建</span>')));
+    dshRows.push(dashRow('指向网关', dsh.base_url
+      ? esc(dsh.base_url)
+      : (dsh.profile_exists ? '未写入网关地址' : '启动时自动指向本网关')));
     dshRows.push(dashRow('运行状态', dsh.running
       ? `运行中 · pid ${dsh.pid}`
-      : '未运行'));
+      : '未运行 · 点「启动 DSH」开始'));
     if (dsh.url) {
       dshRows.push(dashRow('界面地址',
         `<a href="${esc(dshUrl(dsh.url))}" target="_blank" rel="noopener">打开</a>`));

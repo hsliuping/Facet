@@ -359,15 +359,16 @@ def status(profile: str = WEB_PROFILE) -> dict:
                 state["url"] = entry.get("url") or ""
                 state["pid"] = entry["proc"].pid
     if not state["installed"]:
-        state["note"] = ("未找到 dsh 命令：管理界面需与 dsh 装在同一台宿主机；"
-                         "容器里没有该客户端。")
+        state["note"] = ("未找到 dsh 命令：DSH 是独立客户端，需与网关装在同一台电脑"
+                         "（npm install -g @deepseek-ai/dsh），装好后刷新本页；"
+                         "容器部署没有该客户端。")
     elif not state["profile_exists"]:
-        state["note"] = (f"缺少 dsh profile {profile}：点「启动 DSH」会自动生成并指向"
-                         f"本网关（也可在终端运行 dsh --profile {profile} 生成）。")
+        state["note"] = (f"DSH 还没有配置档案 {profile}：点「启动 DSH」会自动创建"
+                         f"并指向本网关，无需手动设置。")
     elif entry is not None and not state["running"]:
         state["note"] = entry.get("error") or "上次启动的 dsh 已退出。"
     elif state["running"] and not state["url"]:
-        state["note"] = "dsh 已启动，但启动行里还没有解析到访问地址。"
+        state["note"] = "DSH 正在启动，还没拿到访问地址；等几秒刷新本页即可。"
     return state
 
 
@@ -384,7 +385,8 @@ def start_web(api_key: str | None = None, profile: str = WEB_PROFILE,
     with _start_lock:
         cli = find_cli()
         if not cli["path"]:
-            raise DshError("未找到 dsh 命令：管理界面需与 dsh 装在同一台宿主机")
+            raise DshError("未找到 dsh 命令：DSH 需与网关装在同一台电脑"
+                           "（npm install -g @deepseek-ai/dsh）；容器部署没有该客户端")
         try:
             ensure_profile(profile, base_url or DEFAULT_BASE_URL)
         except OSError as exc:
