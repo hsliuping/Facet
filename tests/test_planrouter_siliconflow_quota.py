@@ -1,4 +1,4 @@
-"""facet-siliconflow-quota: free-model rows and usage-card parsing."""
+"""facet-siliconflow-quota: curated free-model rows as freealign JSON."""
 from __future__ import annotations
 
 import contextlib
@@ -7,7 +7,6 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -37,59 +36,6 @@ class RowsTests(unittest.TestCase):
         self.assertEqual(code, 0)
         rows = json.loads(out.getvalue())
         self.assertEqual([r["model"] for r in rows], list(sfq.FREE_MODELS))
-
-
-class FetchBalanceTests(unittest.TestCase):
-    @staticmethod
-    def _urlopen_with(payload):
-        class Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def read(self):
-                return json.dumps(payload).encode("utf-8")
-
-        return lambda req, timeout: Resp()
-
-    def test_summary_reports_gift_charge_total(self):
-        payload = {"code": 20000, "status": True, "message": "OK",
-                   "data": {"id": "u1", "name": "alice",
-                            "balance": "0.88", "chargeBalance": "88.00",
-                            "totalBalance": "88.88"}}
-        with mock.patch.object(sfq.urllib.request, "urlopen",
-                               self._urlopen_with(payload)):
-            with mock.patch.object(sfq, "resolve_secret", lambda v: "sk-test"):
-                report = sfq.fetch_balance("sk-test")
-        self.assertEqual(report["provider"], "siliconflow")
-        self.assertEqual(report["windows"], [])
-        self.assertIn("赠金 ¥0.88", report["summary"])
-        self.assertIn("充值 ¥88", report["summary"])
-        self.assertIn("合计 ¥88.88", report["summary"])
-
-    def test_total_falls_back_to_gift_plus_charge(self):
-        payload = {"code": 20000, "data": {"balance": "1.50",
-                                           "chargeBalance": "2.50"}}
-        with mock.patch.object(sfq.urllib.request, "urlopen",
-                               self._urlopen_with(payload)):
-            with mock.patch.object(sfq, "resolve_secret", lambda v: "sk-test"):
-                report = sfq.fetch_balance("sk-test")
-        self.assertIn("合计 ¥4", report["summary"])
-
-    def test_missing_token_raises(self):
-        with mock.patch.object(sfq, "resolve_secret", lambda v: ""):
-            with self.assertRaises(RuntimeError):
-                sfq.fetch_balance("")
-
-    def test_api_error_raises(self):
-        payload = {"code": 40100, "message": "Invalid token"}
-        with mock.patch.object(sfq.urllib.request, "urlopen",
-                               self._urlopen_with(payload)):
-            with mock.patch.object(sfq, "resolve_secret", lambda v: "sk-bad"):
-                with self.assertRaises(RuntimeError):
-                    sfq.fetch_balance("sk-bad")
 
 
 if __name__ == "__main__":

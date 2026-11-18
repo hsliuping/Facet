@@ -8,7 +8,7 @@
 
 | 优先级 | 厂家 | 额度性质 | 额度查询 API | 结论 |
 | --- | --- | --- | --- | --- |
-| P0 | 硅基流动 SiliconFlow | 长期免费模型 + 一次性赠金 | **有**（`/v1/user/info`） | **已接入**（2026-11-17，走既有 0.5h 额度对齐管线） |
+| P0 | 硅基流动 SiliconFlow | 长期免费模型 + 一次性赠金 | **无**（`/v1/user/info` 已于 2026-08-14 退役，替代接口未出） | **已接入**（2026-11-17，走既有 0.5h 额度对齐管线） |
 | P1 | 中国电信（息壤/teleai/TokenHub） | 一次性大额试用包 | 无 | **已接入**（2026-11-18，固定额度包账本模式） |
 | P1 | 国家超算互联网 SCNet | 一次性 1000 万 + 活动 | 无（仅现金余额） | **已接入**（2026-11-18，固定额度包账本模式） |
 | P2 | 移动 MoMA（九天） | 一次性 2500 万 | 无 | 视 P1 两个的落地情况再定 |
@@ -35,8 +35,8 @@
 
 ## P0 硅基流动 SiliconFlow ✅ 已接入（2026-11-17）
 
-- **接入结果**：免费清单为策略级（所有账号相同），已落地为无凭证 CLI `facet-siliconflow-quota --output json`，接入既有 0.5h 额度对齐管线（sweep + `$free` 对齐）；余额用量卡走同一数据面 Bearer Key 调 `GET /v1/user/info`（展示「赠金 / 充值 / 合计」）。渠道模板已进 seed.py（`tier: "free"`，`auto → XingChenAGI/Xing4.0-29B`，环境变量 `SILICONFLOW_API_KEY`，默认不启用）。
-- **最终免费清单（3 个，2026-11-17 官方定价页核实）**：`XingChenAGI/Xing4.0-29B`（256K、原生工具调用）、`THUDM/GLM-Z1-9B-0414`、`tencent/Hunyuan-MT-7B`。调研时第三方快照列出的 `Qwen/Qwen3-8B` 已转付费（Qwen3.5-9B ¥0.5/¥4.0），剔除；PaddleOCR-VL（OCR 专用）与 Embedding/语音模型不服务 chat completions，排除。
+- **接入结果**：免费清单为策略级（所有账号相同），已落地为无凭证 CLI `facet-siliconflow-quota --output json`，接入既有 0.5h 额度对齐管线（sweep + `$free` 对齐）。余额用量卡**未接入**：厂商 `GET /v1/user/info` 已于 2026-08-14 退役（HTTP 410，code 20092），替代接口未发布，渠道卡不提供余额展示。渠道模板已进 seed.py（`tier: "free"`，`auto → XingChenAGI/Xing4.0-29B`，环境变量 `SILICONFLOW_API_KEY`，默认不启用）。
+- **最终免费清单（3 个，2026-11-18 官方定价页复核仍免费）**：`XingChenAGI/Xing4.0-29B`（256K、原生工具调用）、`THUDM/GLM-Z1-9B-0414`、`tencent/Hunyuan-MT-7B`。调研时第三方快照列出的 `Qwen/Qwen3-8B` 已转付费（Qwen3.5-9B ¥0.5/¥4.0），剔除；PaddleOCR-VL（OCR 专用）与 Embedding/语音模型不服务 chat completions，排除。
 - **实现要点**：免费模型真 0 元计费（不扣赠金），故 CLI 输出大哨兵值 `remaining = NO_CAP_TOKENS = 1_000_000_000`——同时满足 sweep 的 10,000 reserve 过滤、`free_quota_status` 预算外推、UI 显示「充足」不误告警；`credential_envs` 为空（无需管理面 AK/SK）。
 - **免费清单维护机制**：官方定价页是 HTML 无 JSON API，清单内置于 CLI（`FREE_MODELS` 元组），清单变动随版本更新；后续可加价格页快照或社区上报。
 - **调研留存**：`$free` 链路新增常驻候选渠道；显示名映射在 Web UI（app.js）已预留；限速为账户级（RPM 1000–10000 / TPM 5 万–500 万，随账户等级浮动）。

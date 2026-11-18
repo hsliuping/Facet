@@ -15,8 +15,10 @@ stdout is a bare JSON array of ``{"model", "type": "Text", "remaining",
 consumes to keep free-tier channel mappings in sync.
 
 No credentials are needed: the free list is policy-level (the same for every
-account) and the data-plane key stays on the channel for inference plus the
-console usage card (``GET /v1/user/info``, :func:`fetch_balance`).
+account) and the data-plane key stays on the channel for inference. The
+vendor's balance endpoint (``GET /v1/user/info``) was retired on 2026-08-14
+(HTTP 410, code 20092) with no announced replacement, so there is no
+usage card for this provider: the channel page intentionally offers none.
 
 Free models carry no token allowance — the only cap is account-level RPM —
 so rows report a large sentinel remaining/total. The sweep's reserve margin
@@ -36,12 +38,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import urllib.error
-import urllib.request
-
-from .core import resolve_secret
-
-BASE_URL = "https://api.siliconflow.cn"
 
 # Curated from the official pricing page (对话模型, price 免费). Order is the
 # $free preference: the general 29B model first so ``auto`` repoints at it on
@@ -63,60 +59,6 @@ def rows_from_models(models=FREE_MODELS) -> list[dict]:
     return [{"model": model, "type": "Text", "remaining": NO_CAP_TOKENS,
              "total": NO_CAP_TOKENS, "consumed": 0, "expires": EXPIRES}
             for model in models]
-
-
-def _money(value) -> float:
-    """Numeric balance field; the vendor sends strings ("0.88")."""
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _get(path: str, token: str, timeout: float = 20.0,
-         _urlopen=None) -> dict:
-    """One authed GET against the API host; raises RuntimeError on failure."""
-    req = urllib.request.Request(
-        BASE_URL + path,
-        headers={"Authorization": f"Bearer {token}",
-                 "Accept": "application/json"})
-    try:
-        opener = _urlopen or urllib.request.urlopen
-        with opener(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:200]
-        raise RuntimeError(f"HTTP {exc.code}：{detail}") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise RuntimeError(f"请求失败：{str(exc)[:200]}") from None
-    if not isinstance(payload, dict):
-        raise RuntimeError("响应不是 JSON 对象")
-    code = payload.get("code")
-    if code not in (None, 20000):
-        raise RuntimeError(f"API 错误 {code}: {payload.get('message') or ''}")
-    return payload
-
-
-def fetch_balance(api_key: str) -> dict:
-    """Console usage card: gift/charged/total balance from /v1/user/info.
-
-    Free-model calls do not consume the balance, so a shrinking total means
-    traffic hit a billed model on the same key. ``api_key`` is the channel's
-    value (``env:`` refs included) and is resolved here.
-    """
-    token = resolve_secret(api_key)
-    if not token or token == "***":
-        raise RuntimeError("未配置硅基流动 API Key")
-    info = _get("/v1/user/info", token).get("data")
-    if not isinstance(info, dict):
-        raise RuntimeError("响应缺少 data 对象")
-    gift = _money(info.get("balance"))
-    charged = _money(info.get("chargeBalance"))
-    raw_total = info.get("totalBalance")
-    total = _money(raw_total) if raw_total is not None else gift + charged
-    return {"plan": "硅基流动 SiliconFlow", "provider": "siliconflow",
-            "windows": [],
-            "summary": f"赠金 ¥{gift:g} · 充值 ¥{charged:g} · 合计 ¥{total:g}"}
 
 
 def main(argv: list[str] | None = None) -> int:

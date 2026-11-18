@@ -76,7 +76,7 @@
 | 16 | NVIDIA NIM | ✅ 免费层=速率限制（约 40 RPM，控制台右上角显示） | ❌ 无按量付费通道；提额需付费部署/自托管 | 免费层是速率限制非 credits；10,000 请求/日为页面嵌入值、非官方承诺 |
 | 17 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
 | 18 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
-| 19 | 硅基流动 SiliconFlow | ✅ 3 个永久免费模型（真 0 元计费）+ 注册实名赠 ¥14 | payg（含永久免费模型） | **已接入**：`facet-siliconflow-quota` 免费清单对齐 + `/v1/user/info` 余额用量卡；Qwen3-8B 已转付费故剔除 |
+| 19 | 硅基流动 SiliconFlow | ✅ 3 个永久免费模型（真 0 元计费）+ 注册实名赠 ¥14 | payg（含永久免费模型） | **已接入**：`facet-siliconflow-quota` 免费清单对齐（余额卡不可用：`/v1/user/info` 已于 2026-08-14 退役，替代接口未出）；Qwen3-8B 已转付费故剔除 |
 | 20 | 中国电信（teleAI / TokenHub / 息壤） | ✅ 一次性试用包：TokenHub 50 万/模型/14 天、息壤 DeepSeek 2500 万/模型、teleAI Xing4.0-29B 1 亿 | payg（一次性额度包） | **已接入**：无剩余额度 API，用渠道编辑器「一次性额度包」按模型登记面额与到期日，用完/到期自动停该模型（见 4.12） |
 | 21 | 国家超算互联网 SCNet | ✅ 注册实名赠 1000 万 tokens（核心节点 +1000 万、反馈最高 +5000 万，均可叠加） | payg（一次性额度包） | **已接入**：OpenAI + Anthropic 双协议；无剩余额度 API（仅现金余额），同样走一次性额度包账本（见 4.13） |
 
@@ -766,7 +766,7 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 **免费额度**：
 
 - **新用户注册实名赠 ¥14 体验金**（用完即止）；**永久免费模型消耗不扣赠金**。
-- **永久免费模型**（真 0 元计费，不扣赠金、不扣充值，官方定价页 2026-11-17 核实）：
+- **永久免费模型**（真 0 元计费，不扣赠金、不扣充值，官方定价页 2026-11-18 复核）：
   - `XingChenAGI/Xing4.0-29B`（256K 上下文、原生工具调用）
   - `THUDM/GLM-Z1-9B-0414`
   - `tencent/Hunyuan-MT-7B`
@@ -795,12 +795,12 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 **模式说明**：
 
 - `payg`：`tier: "free"`，`free_models` 为 `XingChenAGI/Xing4.0-29B`、`THUDM/GLM-Z1-9B-0414`、`tencent/Hunyuan-MT-7B`（顺序即 `$free` 偏好，`auto` 指向首个）；
-- 免费清单是策略级（所有账号相同），因此 `free_quota_cmd` **不需要任何管理面凭证**，`credential_envs` 为空数组；数据面 API Key 仍用于推理与用量卡；
+- 免费清单是策略级（所有账号相同），因此 `free_quota_cmd` **不需要任何管理面凭证**，`credential_envs` 为空数组；数据面 API Key 仍用于推理；
 - 免费模型按 0 元计费（不扣赠金），因此额度对齐使用大哨兵值，UI 显示「充足」，不会误告警。
 
 **套餐使用说明**
 
-- **余额 / 用量（已接入）**：经同一 Bearer Key 调 `GET https://api.siliconflow.cn/v1/user/info`，渠道卡展示「赠金 ¥x · 充值 ¥y · 合计 ¥z」（`balance` / `chargeBalance` / `totalBalance`，元）；
+- **余额 / 用量（不可用）**：厂商 `GET https://api.siliconflow.cn/v1/user/info` 已于 2026-08-14 退役（HTTP 410，code 20092），官方公告称替代接口「后续推出」，目前渠道卡不提供余额展示；
 - **免费额度对齐（已接入）**：`facet-siliconflow-quota` 每日参与 `$free` 对齐，免费模型消耗不扣赠金；免费清单变动随 CLI 版本更新；
 - **ToS 提示**：官方禁止转售及「使平台服务惠及自身以外的第三方」——个人自用与魔搭/百炼风险等级一致；若将来做代理商变现需重新评估。
 

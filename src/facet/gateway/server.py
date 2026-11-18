@@ -31,8 +31,7 @@ from . import facts as facts_mod
 from . import watch as watch_mod
 from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
                minimax_quota, modelscope_quota, moonshot_quota,
-               opencode_quota, openrouter_quota, siliconflow_quota,
-               zhipu_quota)
+               opencode_quota, openrouter_quota, zhipu_quota)
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -182,7 +181,6 @@ CHANNEL_USAGE_FETCHERS = {
     "minimax": minimax_quota.fetch_usage,
     "moonshot": moonshot_quota.fetch_balance,
     "modelscope": modelscope_quota.fetch_balance,
-    "siliconflow": siliconflow_quota.fetch_balance,
 }
 # Management-plane wallets: these authenticate with the account's AK/SK pair
 # from the credential chain (resolve_creds), not with the data-plane key the
