@@ -20,6 +20,12 @@ manual steps; the human only reviews the git diff afterwards:
      stays a deliberate manual edit
   6. append one JSON line to registry/maintenance-log.jsonl
 
+Note the two different "建议" in this codebase: the route suggestions
+written to registry/route-suggestions.json are routing-chain proposals for a
+human to review and merge into router.json by hand, nothing like the gateway
+console's maintenance suggestions (维护建议, runtime channel-config advice
+with one-click apply in the self-maintenance page).
+
 stdlib only. Usage:
     python tools/weekly_maintenance.py                     # full run (network)
     python tools/weekly_maintenance.py --skip-sync         # reuse the live table

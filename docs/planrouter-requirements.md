@@ -26,7 +26,7 @@ superagent 行动清单与各设计文档的需求项汇总编号，补齐验收
 | R6 | **superagent P3**：吸收层面 3 三条设计原则到维护层文档与实现 | 设计原则落进维护层文档；可实现项进实现 | 无硬依赖，渐进 |
 | R7 | **密钥手册补图**：按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（文件名对上即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册 | 各厂家小节截图齐全；手册口径与控制台一致 | 待办（用户实操） |
 | R8 | **tab 跳回 bug**：控制台自动刷新偶发跳回渠道配置 tab | 先拿到复现路径；复现即修并补 e2e | 观察中 |
-| R9 | **Facet 注册表自维护**：`tools/sync_models_dev.py`（上游 models.dev + OpenRouter）同步定时化、自动产出变更报告；与网关渠道目录实况交叉验证（渠道在售而表未收录 → 补录/告警；表有而全渠道下架 → 标记过时）；表更新后联动路由建议生成器（facet-auto / facet-cheap 适合度排序，2026-11-09 讨论定调：免费 ≠ 小模型，按用途选最适合的模型） | registry `updated_at` 按周期自动滚动（首期每周）；交叉差集出现在维护日志；人工只保留 git 确认 | 已落地（2026-11-09）：`tools/weekly_maintenance.py` 一键编排（staging 先验后落盘，坏抓取不毁正本）+ 计划任务 `FacetWeeklyMaintenance` 每周日 03:30 自动跑；交叉差集进 `registry/maintenance-log.jsonl`；建议链写 `registry/route-suggestions.json`（仅报告，合入 router.json 仍是人工编辑） |
+| R9 | **Facet 注册表自维护**：`tools/sync_models_dev.py`（上游 models.dev + OpenRouter）同步定时化、自动产出变更报告；与网关渠道目录实况交叉验证（渠道在售而表未收录 → 补录/告警；表有而全渠道下架 → 标记过时）；表更新后联动路由建议生成器（facet-auto / facet-cheap 适合度排序，2026-11-09 讨论定调：免费 ≠ 小模型，按用途选最适合的模型） | registry `updated_at` 按周期自动滚动（首期每周）；交叉差集出现在维护日志；人工只保留 git 确认 | 已落地（2026-11-09）：`tools/weekly_maintenance.py` 一键编排（staging 先验后落盘，坏抓取不毁正本）+ 计划任务 `FacetWeeklyMaintenance` 每周日 03:30 自动跑；交叉差集进 `registry/maintenance-log.jsonl`；路由链提案写 `registry/route-suggestions.json`（仅报告，合入 router.json 仍是人工编辑；注意区别于网关运行时的「维护建议」，后者是渠道配置建议、控制台一键采纳） |
 
 ## 3. 远期方向（仅记录，现在不做）
 
