@@ -474,7 +474,7 @@
             <div class="card-top">
               <div>
                 <h3>Agent 模型推荐</h3>
-                <p class="sub-note">按当前各渠道目录 + 内置 registry 能力表，筛出适合 Agent / 开发的模型（支持工具调用优先，免费优先，自动剔除不支持工具调用、已冷却失效的模型）。<b>把工具的 model 填成 <code>facet-agent</code></b> 即可，网关会在下表范围内动态挑一个最合适的模型；下表只是说明它现在能用哪些。</p>
+                <p class="sub-note">按当前各渠道目录 + 内置 registry 能力表，筛出适合 Agent / 开发的模型（支持工具调用优先，免费优先，同档内按内置榜单的 Agent 能力分与稳定性排序，自动剔除不支持工具调用、已冷却失效的模型）。<b>把工具的 model 填成 <code>facet-agent</code></b> 即可，网关会在下表范围内动态挑一个最合适的模型；下表只是说明它现在能用哪些。</p>
               </div>
               <div class="actions">
                 <button class="btn small ghost" id="btn-refresh-recommend">刷新</button>
@@ -485,11 +485,11 @@
                 <thead>
                   <tr>
                     <th>模型</th><th>渠道</th><th>档位</th><th>工具调用</th>
-                    <th>上下文</th><th>稳定性</th><th>操作</th>
+                    <th>能力分</th><th>上下文</th><th>稳定性</th><th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="recommend-body">
-                  <tr><td colspan="7" class="sub-note">加载中…</td></tr>
+                  <tr><td colspan="8" class="sub-note">加载中…</td></tr>
                 </tbody>
               </table>
             </div>

@@ -3062,7 +3062,7 @@ function renderRecommendations() {
   if (!data) return;
   const items = data.items || [];
   if (!items.length) {
-    body.innerHTML = '<tr><td colspan="7" class="sub-note">暂无推荐模型：请先拉取一次渠道模型目录（自维护 → 立即运行）。</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="sub-note">暂无推荐模型：请先拉取一次渠道模型目录（自维护 → 立即运行）。</td></tr>';
     note.textContent = '';
     return;
   }
@@ -3072,6 +3072,7 @@ function renderRecommendations() {
       <td>所有符合条件的渠道</td>
       <td><span class="tag free">免费优先</span></td>
       <td><span class="tag active">支持</span></td>
+      <td>按榜排序</td>
       <td>—</td>
       <td>—</td>
       <td><button class="btn small primary" data-copy-model="facet-agent">复制 facet-agent</button></td>
@@ -3083,11 +3084,15 @@ function renderRecommendations() {
       : '<span class="tag unknown">未知</span>';
     const ctx = it.context_window ? `${Number(it.context_window).toLocaleString()} tok` : '—';
     const score = typeof it.score === 'number' ? it.score : 0;
+    const agentScore = (typeof it.agent_score === 'number')
+      ? `<span class="tag active">${it.agent_score}</span>`
+      : '<span class="sub-note">—</span>';
     return `<tr${unknown ? ' class="row-unknown"' : ''}>
       <td><code>${esc(it.wire_model)}</code>${unknown ? '<br><span class="sub-note">能力未知（registry 未收录）</span>' : ''}</td>
       <td>${esc(it.channel || '—')}</td>
       <td>${tierBadge(it.tier) || '<span class="sub-note">—</span>'}</td>
       <td>${toolText}</td>
+      <td>${agentScore}</td>
       <td>${esc(ctx)}</td>
       <td><span class="tag ${score >= 0 ? 'active' : 'expired'}">${score}</span></td>
       <td><button class="btn small ghost" data-copy-model="${esc(it.wire_model)}">复制模型名</button></td>
@@ -3096,7 +3101,7 @@ function renderRecommendations() {
   const cov = data.coverage || {};
   note.textContent = `目录覆盖 ${cov.matched ?? 0}/${cov.total ?? items.length} 个已映射模型`
     + (data.unknown_capability ? ` · ${data.unknown_capability} 个模型能力未知（registry 未收录，排在「支持工具调用」之后）` : '')
-    + ` · 已剔除不支持工具调用、冷却/失效的模型，免费优先，按稳定性排序`;
+    + ` · 已剔除不支持工具调用、冷却/失效的模型，免费优先，同档内按 Agent 榜分（内置榜单均分，0-100）与稳定性排序`;
 }
 
 $('recommend-body').addEventListener('click', async (e) => {

@@ -320,6 +320,42 @@ class ConsoleTests(unittest.TestCase):
         # Unknown models are counted in unknown_capability.
         self.assertGreaterEqual(payload["unknown_capability"], 1)
 
+    def test_recommend_agent_orders_by_benchmark_score(self):
+        base = self.start()
+        app = self.httpd.app  # type: ignore[union-attr]
+        # Both resolve to registry keys with tool_call=True on the same
+        # channel, so tool bucket and tier tie; the bundled benchmark
+        # aggregate decides: sonnet-5-5 (75.3) before gpt-5.6 (49.5).
+        app.store.record_catalog(
+            "plan-a", ["openai/gpt-5.6", "anthropic/claude-sonnet-5-5"], "http://a/v1")
+        status, _, body = self.call(base, "GET", "/api/recommend?purpose=agent",
+                                    admin="admin")
+        self.assertEqual(status, 200, body)
+        items = json.loads(body)["items"]
+        self.assertEqual([it["wire_model"] for it in items],
+                         ["anthropic/claude-sonnet-5-5", "openai/gpt-5.6"])
+        self.assertGreater(items[0]["agent_score"], items[1]["agent_score"])
+        # Runtime selection (facet-agent attempts) keeps the same order.
+        self.assertEqual(
+            app._agent_candidates()[:2],
+            [("plan-a", "anthropic/claude-sonnet-5-5"),
+             ("plan-a", "openai/gpt-5.6")])
+
+    def test_recommend_agent_ranks_scored_before_unscored(self):
+        base = self.start()
+        app = self.httpd.app  # type: ignore[union-attr]
+        # gpt-4o is registry-known tool_call=True but has no bundled agent
+        # score; a scored model must rank before it within the same group.
+        app.store.record_catalog(
+            "plan-a", ["gpt-4o", "anthropic/claude-sonnet-5-5"], "http://a/v1")
+        status, _, body = self.call(base, "GET", "/api/recommend?purpose=agent",
+                                    admin="admin")
+        self.assertEqual(status, 200, body)
+        items = json.loads(body)["items"]
+        self.assertEqual([it["wire_model"] for it in items],
+                         ["anthropic/claude-sonnet-5-5", "gpt-4o"])
+        self.assertIsNone(items[1]["agent_score"])
+
     def test_recommend_agent_excludes_tool_less_models(self):
         base = self.start()
         app = self.httpd.app  # type: ignore[union-attr]

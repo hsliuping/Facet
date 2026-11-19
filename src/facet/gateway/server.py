@@ -32,6 +32,7 @@ from . import watch as watch_mod
 from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
                minimax_quota, modelscope_quota, moonshot_quota,
                opencode_quota, openrouter_quota, zhipu_quota)
+from . import benchmarks as bench_mod
 from .audit import RequestLog
 from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
@@ -607,13 +608,18 @@ def _free_align_summary(report: dict) -> str:
 
 
 def _row_better(old: dict, new: dict) -> bool:
-    """Pick the best channel entry for one shared wire model: free beats paid,
-    known tool-call beats unknown beats none, then the higher stability score."""
+    """Pick the best channel entry for one shared wire model, mirroring the
+    main agent sort: known tool-call beats unknown beats none, then free
+    tier, then benchmark score, then the higher stability score."""
     def rank(row: dict) -> tuple:
         tool = (0 if row["tool_call"] is True
                 else 1 if row["tool_call"] is None else 2)
-        tier = 0 if row["tier"] == "free" else 1
-        return (tier, tool, -row["score"])
+        score = row.get("agent_score")
+        return (tool,
+                0 if row["tier"] == "free" else 1,
+                0 if score is not None else 1,
+                -(score or 0.0),
+                -row["score"])
 
     return rank(new) < rank(old)
 
@@ -3642,6 +3648,9 @@ class App:
                 rec = facts.record(key) if key else {}
                 tier = model_tier(channel, self.subscriptions, wire)
                 score = self.store.scores_for(channel.name).get(wire, 0)
+                # 内置榜单的 Agent 能力分（benchmarks.py，0-100）：同档内
+                # 得分高的排前，榜单未收录（None）的排在有得分的之后。
+                bench_score = bench_mod.agent_score(key) if key else None
                 row = {
                     "wire_model": wire,
                     "channel": channel.name,
@@ -3649,9 +3658,10 @@ class App:
                     "matched": bool(rec),
                     "tier": tier,
                     "tool_call": (rec.get("tool_call")
-                                 if isinstance(rec, dict) and rec else None),
+                                  if isinstance(rec, dict) and rec else None),
                     "context_window": rec.get("context_window") if rec else None,
                     "cost": rec.get("cost") or {} if rec else {},
+                    "agent_score": bench_score,
                     "score": int(score or 0),
                 }
                 existing = candidates.get(wire)
@@ -3672,6 +3682,8 @@ class App:
                     bucket(r),
                     0 if r["tier"] == "free" else 1,
                     r["tier"],
+                    0 if r["agent_score"] is not None else 1,
+                    -(r["agent_score"] or 0.0),
                     -r["score"],
                     -(r["context_window"] or 0),
                     r["wire_model"],
@@ -3704,8 +3716,12 @@ class App:
         logged on the request page read top-down like that table: models the
         bundled registry knows can call tools first, capability-unknown next,
         and models it says *cannot* call tools are dropped outright — an
-        agent cannot drive them. Dead (probe-verified) models and disabled
-        or blocked channels are skipped too.
+        agent cannot drive them. Within one tool/tier group the bundled
+        benchmark table's aggregate agent score orders models (see
+        benchmarks.agent_score); models without a score rank after scored
+        ones, then stability, context and name break ties. Dead
+        (probe-verified) models and disabled or blocked channels are
+        skipped too.
         """
         facts = facts_mod.snapshot()
         dead = maint.dead_model_set(self)
@@ -3726,10 +3742,13 @@ class App:
                 if tool is False:
                     continue
                 tier = model_tier(channel, self.subscriptions, wire)
+                bench_score = bench_mod.agent_score(key) if key else None
                 rows.append((
                     (0 if tool is True else 1,
                      0 if tier == "free" else 1,
                      tier,
+                     0 if bench_score is not None else 1,
+                     -(bench_score or 0.0),
                      -int(scores.get(wire, 0)),
                      -int(rec.get("context_window") or 0) if rec else 0,
                      wire,

@@ -70,6 +70,55 @@ def _resolve_channels(mid: str, rows: list[tuple[str, str, str]]) -> list[dict]:
     return out
 
 
+#: Units that share a 0-100 percentage scale. Other units (usd amounts,
+#: 0-1 fractions) cannot be averaged into one number and are excluded
+#: from the aggregate agent score.
+SCORE_UNITS = ("pct", "score100")
+
+
+@lru_cache(maxsize=1)
+def _agent_score_map() -> dict[str, float]:
+    """normalized model base → mean of best-per-bench Agent-category scores.
+
+    Cross-setting / cross-harness values of one bench are not directly
+    comparable, so the best observed value per bench is kept (an upper
+    bound of capability); the mean across benches is the aggregate score
+    facet-agent ranks by.
+    """
+    benches = _load("benchmarks.json", {"benches": {}}).get("benches", {})
+    agent_benches = {k for k, v in benches.items()
+                     if (v or {}).get("category") == "Agent"}
+    scores = _load("model-scores.json", {"models": {}}).get("models", {})
+    out: dict[str, float] = {}
+    for mid, mdl in scores.items():
+        best: dict[str, float] = {}
+        for s in mdl.get("scores") or []:
+            if (s.get("bench") not in agent_benches
+                    or s.get("unit") not in SCORE_UNITS):
+                continue
+            value = s.get("value")
+            if not isinstance(value, (int, float)) or not 0 <= value <= 100:
+                continue
+            bench = s["bench"]
+            if bench not in best or value > best[bench]:
+                best[bench] = float(value)
+        if best:
+            out[_norm_base(mid)] = round(sum(best.values()) / len(best), 1)
+    return out
+
+
+def agent_score(registry_key: str) -> float | None:
+    """Aggregate Agent-benchmark score for one registry model, 0-100.
+
+    None when the bundled score table has no comparable Agent-category
+    entry for the model — callers rank unknown scores after known ones
+    instead of guessing a capability.
+    """
+    if not registry_key:
+        return None
+    return _agent_score_map().get(_norm_base(registry_key))
+
+
 @lru_cache(maxsize=1)
 def payload() -> dict:
     benches = _load("benchmarks.json", {"benches": {}})

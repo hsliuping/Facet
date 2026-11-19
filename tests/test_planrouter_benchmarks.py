@@ -157,6 +157,44 @@ class BenchmarkDataPipelineTests(unittest.TestCase):
                 benchmarks_mod.DATA, benchmarks_mod.REPO_DATA = old_data, old_repo
 
 
+class AgentScoreTests(unittest.TestCase):
+    """benchmarks.agent_score — facet-agent 排序用的聚合能力分。"""
+
+    def setUp(self):
+        benchmarks_mod._agent_score_map.cache_clear()
+
+    def test_scored_models_rank_within_0_100(self):
+        sonnet = benchmarks_mod.agent_score("anthropic/claude-sonnet-5-5")
+        gpt = benchmarks_mod.agent_score("openai/gpt-5.6")
+        self.assertIsNotNone(sonnet)
+        self.assertIsNotNone(gpt)
+        self.assertTrue(0 < gpt < 100)
+        self.assertTrue(0 < sonnet < 100)
+        # 榜单顺序：sonnet 的高于 gpt-5.6 的聚合分。
+        self.assertGreater(sonnet, gpt)
+
+    def test_unscored_models_return_none(self):
+        self.assertIsNone(benchmarks_mod.agent_score("no-such-vendor/model-x"))
+        self.assertIsNone(benchmarks_mod.agent_score(""))
+
+    def test_non_percentage_units_are_excluded(self):
+        # vending_bench_2 以美元计（原始值上千）：混进 0-100 聚合会破坏量纲，
+        # 只允许 pct/score100 单位进入能力分。
+        for value in benchmarks_mod._agent_score_map().values():
+            self.assertTrue(0 <= value <= 100, value)
+
+    def test_registry_wire_ids_resolve_to_scores(self):
+        # facts 表的键与 score id 同族同版本（validate_benchmarks 保证一致），
+        # 精确归一化匹配即可命中——这是 _agent_candidates 查分的通路。
+        from facet.gateway import facts as facts_mod
+        table = facts_mod.snapshot()
+        for wire in ("anthropic/claude-sonnet-5-5", "openai/gpt-5.6"):
+            key = table.resolve(wire)
+            self.assertEqual(benchmarks_mod.agent_score(key),
+                             benchmarks_mod.agent_score(wire))
+            self.assertIsNotNone(benchmarks_mod.agent_score(key))
+
+
 class BenchmarkCompareEndpointTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
