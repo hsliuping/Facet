@@ -100,6 +100,17 @@ def build_seed() -> dict:
                                 {"tokens": 10000000}},
             },
             {
+                "name": "openai-embeddings",
+                "protocol": "openai",
+                "provider": "openai",
+                "mode": "payg",
+                "base_url": "https://api.openai.com/v1",
+                "api_key": "env:OPENAI_API_KEY",
+                "enabled": False,
+                "tier": "paid",
+                "models": {"auto": "text-embedding-3-small"},
+            },
+            {
                 "name": "anthropic-template",
                 "protocol": "anthropic",
                 "provider": "anthropic",
@@ -110,11 +121,39 @@ def build_seed() -> dict:
                 "models": {"auto": "claude-haiku-4-5"},
             },
         ],
+        # 与 core.DEFAULT_BRANDED_MODELS / models 默认值一致；显式写出，
+        # 控制台「模型接入」页直接从 raw 配置读 branded，不写就只剩兜底文案。
+        "models": {
+            "branded": {
+                "facet-auto": "default",
+                "facet-cheap": "cheap",
+                "facet-free": "free",
+                "facet-agent": "default",
+                "facet-embedding": "embedding",
+            },
+            "fallback_unknown": True,
+            "fallback_route": "default",
+        },
         "routes": [
             {"name": "default", "protocol": "openai",
              "channels": ["nvidia-nim", "siliconflow"]},
+            # 免费优先链（facet-cheap）：所有免费层模板都排进来，
+            # 包括一次性体验包；将来用户加付费渠道时会排在免费之后。
+            # 不能用 "$free" 宏：种子渠道全部 enabled=false，宏展开为空会报错，
+            # 用户启用一个免费模板后它才自动并入（见 core.FREE_CHANNEL_MACRO）。
+            {"name": "cheap", "protocol": "openai",
+             "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
+                          "siliconflow", "teleai-xing", "scnet"]},
+            # 纯免费链（facet-free）：只保留长期 0 元模型，不含会用完的体验包。
+            {"name": "free", "protocol": "openai",
+             "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
+                          "siliconflow"]},
             {"name": "default", "protocol": "anthropic",
              "channels": ["anthropic-template"]},
+            # facet-embedding 的默认落点（core.DEFAULT_BRANDED_MODELS）；
+            # 模板渠道默认关闭，注册 OpenAI Key 并启用后即可使用。
+            {"name": "embedding", "protocol": "openai",
+             "channels": ["openai-embeddings"]},
         ],
         "setup": {"wizard_done": False},
     }
@@ -140,4 +179,5 @@ def print_seed_banner(path: str | Path) -> None:
     print("  匿名上游已退役（限速/延迟不实用）：请注册免费 key 并在控制台启用模板渠道，", flush=True)
     print("  或运行「快速开始」向导；免费层模板支持 NVIDIA NIM / Google AI Studio / Z.AI / 硅基流动，", flush=True)
     print("        对应环境变量 NVIDIA_API_KEY / GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY / SILICONFLOW_API_KEY", flush=True)
-    print("  anthropic 协议客户端暂无可用渠道（协议不转换）：添加 anthropic 渠道后即可使用", flush=True)
+    print("  另含一次性体验包模板（电信 teleAI / 国家超算 SCNet）与嵌入模板（OpenAI text-embedding-3-small）", flush=True)
+    print("  anthropic 协议客户端请启用模板渠道 anthropic-template 并设置 ANTHROPIC_API_KEY（协议不转换）", flush=True)

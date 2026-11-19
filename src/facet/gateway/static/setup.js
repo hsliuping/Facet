@@ -352,6 +352,9 @@ const WIZARD_STEPS = [
         creds: wizardState.providerCreds,
         models,
         priority: 100,
+        // 注册表 mode.tier（free/paid）透传为渠道档位：控制台渠道卡与
+        // 免费池都按这个字段标注，向导建的渠道不能是「未标注」状态。
+        tier: mode.tier || '',
         enabled: true,
       };
       try {
@@ -575,6 +578,32 @@ function wizardChannelName(base) {
   }
 }
 
+// 向导渠道落链：不加进任何路由链的渠道永远不会被排程到——facet-auto 测得
+// 再通也用不上。anthropic 渠道进 anthropic:default；openai 渠道进 default
+// 尾部，tier=free 的免费层渠道同时进 cheap / free 链（赠送额度型厂家注册表
+// 标 paid，只进 default，与渠道页「免费池」口径一致）。
+function wizardRouteAppend(draft) {
+  const routes = state.config.routes || (state.config.routes = []);
+  const ensure = (protocol, name) => {
+    let route = routes.find((r) => r.protocol === protocol && r.name === name);
+    if (!route) {
+      route = { name, protocol, channels: [] };
+      routes.push(route);
+    }
+    route.channels = route.channels || [];
+    return route;
+  };
+  if (draft.protocol === 'anthropic') {
+    ensure('anthropic', 'default').channels.push(draft.name);
+    return;
+  }
+  ensure('openai', 'default').channels.push(draft.name);
+  if (draft.tier === 'free') {
+    ensure('openai', 'cheap').channels.push(draft.name);
+    ensure('openai', 'free').channels.push(draft.name);
+  }
+}
+
 // 把向导构造的渠道追加进配置并保存（沿用控制台的保存路径，带热加载）。
 async function wizardSaveChannel(draft) {
   if (!state.config) {
@@ -585,6 +614,7 @@ async function wizardSaveChannel(draft) {
     }
   }
   state.config.channels.push(draft);
+  wizardRouteAppend(draft);
   try {
     await api('/api/config', { method: 'POST', body: state.config });
     if (typeof loadConfig === 'function') await loadConfig();

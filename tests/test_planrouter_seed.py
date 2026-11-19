@@ -25,11 +25,11 @@ class SeedConfigTests(unittest.TestCase):
         self.assertEqual(
             {c.name for c in config.channels},
             {"nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow",
-             "teleai-xing", "scnet", "anthropic-template"},
+             "teleai-xing", "scnet", "anthropic-template", "openai-embeddings"},
         )
         for name in ("nvidia-nim", "google-ai-studio",
                      "z-ai-glm", "siliconflow", "teleai-xing", "scnet",
-                     "anthropic-template"):
+                     "anthropic-template", "openai-embeddings"):
             self.assertFalse(by_name[name].enabled, name)
         # one-time allowance packs survive the config round-trip
         xing = by_name["teleai-xing"].model_quota["Xing4.0-29B"]
@@ -42,6 +42,30 @@ class SeedConfigTests(unittest.TestCase):
                          ("nvidia-nim", "siliconflow"))
         self.assertEqual(config.routes["anthropic:default"].channels,
                          ("anthropic-template",))
+        # 与测试环境一致的 5 条默认路由链：facet-cheap / facet-free /
+        # facet-embedding 这些品牌模型名首启就该有真实落点，而不是回落到 default。
+        self.assertEqual(
+            sorted(config.routes),
+            ["anthropic:default", "openai:cheap", "openai:default",
+             "openai:embedding", "openai:free"])
+        self.assertEqual(
+            config.routes["openai:cheap"].channels,
+            ("nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow",
+             "teleai-xing", "scnet"))
+        self.assertEqual(
+            config.routes["openai:free"].channels,
+            ("nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow"))
+        self.assertEqual(config.routes["openai:embedding"].channels,
+                         ("openai-embeddings",))
+        # 控制台「模型接入」页从 raw 配置读 models.branded：种子显式写出，
+        # 新装的机器上这页才有名字→链映射，而不是只有兜底文案。
+        seed = build_seed()
+        self.assertEqual(
+            seed["models"]["branded"],
+            {"facet-auto": "default", "facet-cheap": "cheap",
+             "facet-free": "free", "facet-agent": "default",
+             "facet-embedding": "embedding"})
+        self.assertEqual(config.models.branded["facet-embedding"], "embedding")
         self.assertEqual(config.defaults.maintenance_model, "auto")
 
     def test_write_seed_is_idempotent(self):
