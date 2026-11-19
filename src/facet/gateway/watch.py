@@ -6,7 +6,9 @@ everything is already configured for catalog refresh and maintenance:
 - the vendor registry (builtin providers.json + user overlay): every mode's
   ``docs_url`` and ``models_url``,
 - every enabled channel's own models endpoint (``base_url`` + models path,
-  with the channel's key — the same read ``probe_models`` performs),
+  with the channel's key) — only while no catalog sweep runs (see
+  collect_sources): refresh_all_catalogs already fetches exactly this
+  endpoint and reports its model-set diff,
 - every subscription's plan-document URL (``models_url``).
 
 Each sweep fetches every source concurrently, extracts the model set (docs
@@ -107,8 +109,19 @@ def collect_sources(app) -> list[dict]:
                 add(f"provider:{pid}:{mode_key}:models", "models", "provider",
                     label, models_url, api_key=api_key, proxy=proxy)
 
-    # Layer 2: enabled channels' own models endpoints.
-    for channel in getattr(app, "config", None) and app.config.channels or []:
+    # Layer 2: enabled channels' own models endpoints. Skipped while a
+    # catalog sweep is active (catalog_refresh_hours, or maintenance_hours
+    # because run_maintenance sweeps catalogs too): refresh_all_catalogs
+    # fetches exactly these endpoints and records the model-set diff per
+    # channel, so a watch fetch would double the traffic and double-report
+    # every model-set change. With both sweeps off the watch is the only
+    # observer and keeps covering the channels.
+    defaults = getattr(getattr(app, "config", None), "defaults", None)
+    catalog_covered = bool(getattr(defaults, "catalog_refresh_hours", 0)
+                           or getattr(defaults, "maintenance_hours", 0))
+    channels = () if catalog_covered else (
+        getattr(app, "config", None) and app.config.channels or [])
+    for channel in channels:
         if not getattr(channel, "enabled", False) or not channel.base_url:
             continue
         url = channel.base_url.rstrip("/") + models_path_for(

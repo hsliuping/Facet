@@ -86,6 +86,33 @@ class AnalyzeTests(unittest.TestCase):
         repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
         self.assertEqual((repoint["from"], repoint["to"]), ("gpt-old", "gpt-keep"))
 
+    def test_repoint_prefers_the_closest_mapped_chat_survivor(self):
+        models = self.config.channels[0].models
+        models["gpt-old-2"] = "gpt-old-2"
+        report = self.run_analyze(
+            {"a": catalog(["gpt-old-2", "gpt-keep"], removed=["gpt-old"])})
+        repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
+        self.assertEqual(repoint["to"], "gpt-old-2")  # closest to gpt-old
+
+    def test_repoint_falls_back_to_the_closest_catalog_chat_model(self):
+        models = self.config.channels[0].models
+        models.clear()
+        models["auto"] = "gpt-old"
+        report = self.run_analyze(
+            {"a": catalog(["asr-stream", "gpt-old-v2"], removed=["gpt-old"])})
+        repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
+        self.assertEqual(repoint["to"], "gpt-old-v2")  # asr ids never auto
+
+    def test_repoint_never_picks_a_non_chat_catalog_id(self):
+        report = self.run_analyze(
+            {"a": catalog(["text-embedding-3-small"], removed=["gpt-old"])})
+        # the dead mapping is still cleaned up, but auto stays untouched —
+        # an embedding id must never become an auto target
+        self.assertEqual(report["patch"]["a"]["auto"], "gpt-old")
+        self.assertNotIn("gpt-old", report["patch"]["a"])
+        kinds = [a["kind"] for a in report["alerts"]]
+        self.assertIn("auto_target_gone", kinds)
+
     def test_all_models_removed_becomes_alert(self):
         models = self.config.channels[0].models
         models.clear()
@@ -198,6 +225,8 @@ class ApplySuggestionTests(unittest.TestCase):
     def tearDown(self):
         self.path.unlink(missing_ok=True)
         Path(str(self.path) + ".maintenance.bak").unlink(missing_ok=True)
+        Path(str(self.path) + ".suggestion.bak").unlink(missing_ok=True)
+        (self.path.parent / "maintenance-ignored.json").unlink(missing_ok=True)
         (self.path.parent / "maintenance_models.json").unlink(missing_ok=True)
 
     def test_add_model_updates_config_file(self):
@@ -207,6 +236,26 @@ class ApplySuggestionTests(unittest.TestCase):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         models = next(c["models"] for c in raw["channels"] if c["name"] == "b")
         self.assertEqual(models, {"gpt-x": "gpt-x", "gpt-new": "gpt-new"})
+
+    def test_add_model_snapshots_the_config_first(self):
+        # A real adopt lands through the config pipeline with a backup, so a
+        # bad adopt is undoable from the console's backup list.
+        self.app.apply_maintenance_suggestion({"channel": "b", "models": ["gpt-new"]})
+        bak = Path(str(self.path) + ".suggestion.bak")
+        self.assertTrue(bak.is_file())
+        snap = json.loads(bak.read_text(encoding="utf-8"))
+        models = next(c["models"] for c in snap["channels"] if c["name"] == "b")
+        self.assertNotIn("gpt-new", models)  # pre-change state
+
+    def test_noop_adopt_writes_nothing(self):
+        # An adopt that adds nothing is not a change: no config rewrite and
+        # no backup churn over the previous snapshot.
+        before = self.path.read_text(encoding="utf-8")
+        result = self.app.apply_maintenance_suggestion(
+            {"channel": "b", "models": ["gpt-x"]})
+        self.assertEqual(result, {"ok": True, "channel": "b", "models": ["gpt-x"]})
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+        self.assertFalse(Path(str(self.path) + ".suggestion.bak").is_file())
 
     def test_accepts_single_model_string(self):
         self.app.apply_maintenance_suggestion({"channel": "b", "models": "gpt-new"})
@@ -226,6 +275,193 @@ class ApplySuggestionTests(unittest.TestCase):
             self.app.apply_maintenance_suggestion({"channel": "b", "models": []})
         with self.assertRaises(ValueError):
             self.app.apply_maintenance_suggestion("nope")
+
+
+class IgnoreSuggestionTests(unittest.TestCase):
+    """忽略按钮：被拒的建议在后续运行中不再出现。"""
+
+    SUGGESTION = {"kind": "add_model", "channel": "b", "models": ["gpt-new"],
+                  "message": "上游新增 gpt-new"}
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        (self.path.parent / "maintenance-ignored.json").unlink(missing_ok=True)
+        (self.path.parent / "maintenance.jsonl").unlink(missing_ok=True)
+        (self.path.parent / "maintenance_models.json").unlink(missing_ok=True)
+
+    def test_ignore_hides_the_suggestion_everywhere(self):
+        app = self.app
+        other = {"kind": "add_model", "channel": "a", "models": ["gpt-z"],
+                 "message": "上游新增 gpt-z"}
+        app.maintenance_reports.append(
+            {"finished_at": 1.0, "trigger": "manual", "applied": [],
+             "suggestions": [dict(self.SUGGESTION), other], "alerts": []})
+        result = app.ignore_maintenance_suggestion(dict(self.SUGGESTION))
+        self.assertTrue(result["ok"])
+        payload = app.maintenance_payload()
+        self.assertEqual(payload["reports"][0]["suggestions"], [other])
+        # Dashboard counts see the filtered view too.
+        self.assertEqual(app._maintenance_summary()["suggestions"], 1)
+
+    def test_ignore_matches_the_same_item_regenerated_with_new_text(self):
+        # A later run re-suggests the same model with different wording: the
+        # model list is the identity, so it stays hidden.
+        self.app.ignore_maintenance_suggestion(dict(self.SUGGESTION))
+        again = dict(self.SUGGESTION, message="这次换个说法")
+        self.app.maintenance_reports.append(
+            {"finished_at": 1.0, "trigger": "manual", "applied": [],
+             "suggestions": [again], "alerts": []})
+        payload = self.app.maintenance_payload()
+        self.assertEqual(payload["reports"][0]["suggestions"], [])
+
+    def test_history_logs_are_filtered_too(self):
+        log = self.path.parent / "maintenance.jsonl"
+        line = {"finished_at": 1.0, "trigger": "manual", "applied": [],
+                "suggestions": [dict(self.SUGGESTION)], "alerts": []}
+        log.write_text(json.dumps(line) + "\n", encoding="utf-8")
+        self.app.ignore_maintenance_suggestion(dict(self.SUGGESTION))
+        payload = self.app.maintenance_log_payload(limit=10)
+        self.assertEqual(payload["source"], "file")
+        self.assertEqual(payload["logs"][0]["suggestions"], [])
+
+    def test_signature_stability(self):
+        # set_rate messages carry the cooldown reason text, which drifts
+        # between runs; the (kind, channel) pair is what gets rejected.
+        one = {"kind": "set_rate", "channel": "b", "message": "额度冷却（429）"}
+        two = {"kind": "set_rate", "channel": "b", "message": "额度冷却（quota）"}
+        self.assertEqual(maint.suggestion_signature(one),
+                         maint.suggestion_signature(two))
+        # add_model identities are the models themselves, order-independent.
+        a = {"kind": "add_model", "channel": "b", "models": ["x", "y"]}
+        b = {"kind": "add_model", "channel": "b", "models": ["y", "x"]}
+        self.assertEqual(maint.suggestion_signature(a),
+                         maint.suggestion_signature(b))
+        c = {"kind": "add_model", "channel": "b", "models": ["x"]}
+        self.assertNotEqual(maint.suggestion_signature(a),
+                            maint.suggestion_signature(c))
+
+    def test_ignore_requires_a_kind(self):
+        with self.assertRaises(ValueError):
+            self.app.ignore_maintenance_suggestion({})
+        with self.assertRaises(ValueError):
+            self.app.ignore_maintenance_suggestion("nope")
+
+    def test_ignore_list_is_capped(self):
+        for i in range(205):
+            self.app.ignore_maintenance_suggestion(
+                {"kind": "add_model", "channel": "b", "models": [f"m{i}"]})
+        data = json.loads((self.path.parent / "maintenance-ignored.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual(len(data["signatures"]), 200)
+        oldest = maint.suggestion_signature(
+            {"kind": "add_model", "channel": "b", "models": ["m0"]})
+        self.assertNotIn(oldest, data["signatures"])
+
+
+class RestoreBackupTests(unittest.TestCase):
+    """恢复按钮：备份换回配置，且恢复前先留快照。"""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        for tag in ("suggestion", "restore"):
+            Path(str(self.path) + f".{tag}.bak").unlink(missing_ok=True)
+        (self.path.parent / "maintenance_models.json").unlink(missing_ok=True)
+
+    def _models_b(self) -> dict:
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        return next(c["models"] for c in raw["channels"] if c["name"] == "b")
+
+    def test_restore_swaps_the_config_back(self):
+        self.app.apply_maintenance_suggestion({"channel": "b", "models": ["gpt-new"]})
+        self.assertIn("gpt-new", self._models_b())
+        result = self.app.restore_backup("suggestion")
+        self.assertEqual(result["tag"], "suggestion")
+        self.assertNotIn("gpt-new", self._models_b())
+        # the pre-restore snapshot is itself a listed backup
+        self.assertTrue(Path(str(self.path) + ".restore.bak").is_file())
+
+    def test_restore_rejects_bad_tags(self):
+        for tag in ("../evil", "a/b", "ghost", "", None):
+            with self.assertRaises(ValueError):
+                self.app.restore_backup(tag)
+
+
+class LlmErrorTests(unittest.TestCase):
+    """AI 分析层的失败必须落到报告里，而不是静默消失。"""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = []
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        Path(str(self.path) + ".maintenance.bak").unlink(missing_ok=True)
+        (self.path.parent / "maintenance.jsonl").unlink(missing_ok=True)
+        (self.path.parent / "maintenance_models.json").unlink(missing_ok=True)
+
+    def _wire_catalog(self, app):
+        app.store.record_catalog("a", ["gpt-old"], "http://upstream/v1")
+        app._fetch_catalog = lambda payload: (
+            {"ok": True, "name": payload.get("name"), "models": ["gpt-old"],
+             "endpoint": "http://upstream/v1"})
+
+    def test_report_says_when_no_ai_analysis_ran(self):
+        # No maintenance model anywhere: the report must say the AI layer did
+        # not run instead of reading like "the analysis found nothing wrong".
+        self._wire_catalog(self.app)
+        report = self.app.run_maintenance("manual")
+        self.assertIn("没有 AI 分析", report["llm_error"])
+        self.assertEqual(report.get("llm_model", ""), "")
+
+    def test_report_surfaces_candidate_failures(self):
+        cfg = maintenance_config()
+        cfg["defaults"] = {"maintenance_model": "m1, m2"}
+        self.path.write_text(json.dumps(cfg), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = []
+        self._wire_catalog(self.app)
+
+        def boom(model, prompt):
+            raise RuntimeError(f"{model} is down")
+
+        self.app._maintenance_llm_call = boom
+        report = self.app.run_maintenance("manual")
+        self.assertIn("全部候选模型分析失败", report["llm_error"])
+        self.assertIn("m1", report["llm_error"])
+        self.assertIn("m2", report["llm_error"])
+
+    def test_success_keeps_the_error_field_empty(self):
+        cfg = maintenance_config()
+        cfg["defaults"] = {"maintenance_model": "m1"}
+        self.path.write_text(json.dumps(cfg), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = []
+        self._wire_catalog(self.app)
+        self.app._maintenance_llm_call = lambda model, prompt: "这不是 JSON，走兜底备注"
+        report = self.app.run_maintenance("manual")
+        self.assertFalse(report.get("llm_error"))
+        self.assertEqual(report.get("llm_model"), "m1")
 
 
 class RunMaintenanceTests(unittest.TestCase):
@@ -252,11 +488,11 @@ class RunMaintenanceTests(unittest.TestCase):
         def fake_probe(payload):
             name = payload.get("name") if isinstance(payload, dict) else payload
             models = ["gpt-keep"] if name == "a" else ["gpt-x"]
-            app.store.record_catalog(name, models, "http://upstream/v1")
             return {"ok": True, "name": name, "models": models,
                     "endpoint": "http://upstream/v1"}
 
-        app.probe_channel_models = fake_probe  # no network in tests
+        app._fetch_catalog = fake_probe  # no network in tests
+        app._maintenance_direct_call = lambda channel, model, prompt: "OK"
         report = app.run_maintenance("manual")
 
         self.assertEqual(report["trigger"], "manual")
@@ -275,10 +511,47 @@ class RunMaintenanceTests(unittest.TestCase):
         self.assertEqual(payload["reports"][0]["applied"], report["applied"])
         self.assertFalse(payload["llm_available"])  # maintenance_model not set
 
+    def test_repoint_is_ping_verified_after_apply(self):
+        app = self.app
+        app.store.record_catalog("a", ["gpt-old", "gpt-keep"], "http://upstream/v1")
+        app._fetch_catalog = lambda payload: (
+            {"ok": True, "name": payload.get("name"), "models": ["gpt-keep"],
+             "endpoint": "http://upstream/v1"})
+        pings = []
+
+        def direct_call(channel, model, prompt):
+            pings.append((channel.name, model))
+            return "OK"
+
+        app._maintenance_direct_call = direct_call
+        report = app.run_maintenance("manual")
+        repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
+        self.assertTrue(repoint["verified"])
+        self.assertEqual(pings, [("a", "gpt-keep")])
+        self.assertNotIn("repoint_unverified",
+                         [a["kind"] for a in report["alerts"]])
+
+    def test_repoint_ping_failure_raises_an_alert(self):
+        app = self.app
+        app.store.record_catalog("a", ["gpt-old", "gpt-keep"], "http://upstream/v1")
+        app._fetch_catalog = lambda payload: (
+            {"ok": True, "name": payload.get("name"), "models": ["gpt-keep"],
+             "endpoint": "http://upstream/v1"})
+
+        def boom(channel, model, prompt):
+            raise RuntimeError("HTTP Error 404: model not found")
+
+        app._maintenance_direct_call = boom
+        report = app.run_maintenance("manual")
+        repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
+        self.assertFalse(repoint["verified"])
+        self.assertIn("repoint_unverified",
+                      [a["kind"] for a in report["alerts"]])
+
     def test_run_records_jsonl_log(self):
         app = self.app
         app.store.record_catalog("a", ["gpt-old", "gpt-keep"], "http://upstream/v1")
-        app.probe_channel_models = lambda payload: (
+        app._fetch_catalog = lambda payload: (
             {"ok": True, "name": payload.get("name"), "models": ["gpt-old", "gpt-keep"],
              "endpoint": "http://upstream/v1"})
         app.run_maintenance("manual")
@@ -329,7 +602,7 @@ class RunMaintenanceTests(unittest.TestCase):
     def test_maintenance_log_payload_memory_fallback(self):
         app = self.app
         app.store.record_catalog("a", ["gpt-x"], "http://upstream/v1")
-        app.probe_channel_models = lambda payload: (
+        app._fetch_catalog = lambda payload: (
             {"ok": True, "name": payload.get("name"), "models": ["gpt-x"],
              "endpoint": "http://upstream/v1"})
         app.run_maintenance("manual")
@@ -1350,8 +1623,34 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         # A label nobody rechecks disappears on its own after the TTL.
         maint.label_dead_model(self.app, "a", wire, False,
                                "HTTP Error 404: model not found")
-        later = time.time() + maint.DEAD_LABEL_TTL + 1
+        later = time.time() + maint.dead_label_ttl(self.app) + 1
         self.assertEqual(maint.dead_model_set(self.app, later), set())
+
+    def test_dead_label_ttl_scales_with_the_verification_cadence(self):
+        """A label must outlive two scheduled verification cycles.
+
+        With a 24h cadence the fixed 6h TTL lapsed before any recheck could
+        clear it, so the label expired unrechecked.
+        """
+        self.make_channel_free("a")
+        wire = [w for w in self.app.config.channels[0].models.values()
+                if w not in (maint.AUTO_MODEL, "*")][0]
+        defaults = dataclasses.replace(self.app.config.defaults,
+                                       free_verify_hours=24)
+        self.app.config = dataclasses.replace(self.app.config, defaults=defaults)
+        self.assertEqual(maint.dead_label_ttl(self.app), 48 * 3600)
+        maint.label_dead_model(self.app, "a", wire, False,
+                               "HTTP Error 404: model not found")
+        self.assertIn(
+            ("a", wire),
+            maint.dead_model_set(self.app, time.time() + maint.DEAD_LABEL_TTL + 1))
+        self.assertEqual(
+            maint.dead_model_set(self.app, time.time() + 48 * 3600 + 1), set())
+        # a disabled schedule falls back to the fixed floor
+        defaults = dataclasses.replace(self.app.config.defaults,
+                                       free_verify_hours=0)
+        self.app.config = dataclasses.replace(self.app.config, defaults=defaults)
+        self.assertEqual(maint.dead_label_ttl(self.app), maint.DEAD_LABEL_TTL)
 
     def test_routing_skips_a_labelled_dead_mapping(self):
         self.make_channel_free("a")
@@ -1666,7 +1965,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                                          maintenance_model="m-1, m-2"))
         self.app._maintenance_llm_call = lambda model, prompt: (
             json.dumps(["a"]) if model == "m-1" else json.dumps(["b"]))
-        reply, model = self.app._maintenance_llm_call_any("p")
+        reply, model, _errors = self.app._maintenance_llm_call_any("p")
         self.assertEqual((model, json.loads(reply)), ("m-1", ["a"]))
         # fixed mode never touches the queue even when a candidate fails
         def llm(model, prompt):
@@ -1674,7 +1973,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                 raise RuntimeError("boom")
             return json.dumps(["kimi-k3"])
         self.app._maintenance_llm_call = llm
-        reply, model = self.app._maintenance_llm_call_any("p")
+        reply, model, _errors = self.app._maintenance_llm_call_any("p")
         self.assertEqual(model, "m-2")
         self.assertEqual(self.app.maintenance_pool["queue"], [])
 
@@ -1683,7 +1982,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.app._maintenance_llm_call = lambda model, prompt: (
             "抱歉，我无法输出 JSON" if model == "m-1"
             else json.dumps(["kimi-k3"]))
-        reply, model = self.app._maintenance_llm_call_any(
+        reply, model, _errors = self.app._maintenance_llm_call_any(
             "p", validate=lambda r: bool(maint.parse_plan_models_reply(r)))
         self.assertEqual(model, "m-2")
         self.assertEqual(self.app.maintenance_pool["queue"], ["m-2"])
@@ -1720,7 +2019,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.app._maintenance_llm_call = lambda model, prompt: (
             "抱歉，我无法输出 JSON" if model == "m-1"
             else json.dumps(["kimi-k3"]))
-        reply, model = self.app._maintenance_llm_call_any(
+        reply, model, _errors = self.app._maintenance_llm_call_any(
             "p", validate=maint._plan_reply_is_array)
         self.assertEqual(model, "m-2")
         self.assertEqual(self.app.maintenance_pool["queue"], ["m-2"])
@@ -1767,6 +2066,99 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertIn(channel.api_key, captured["auth"])
         self.assertEqual(captured["timeout"],
                          max(60, self.app.config.defaults.timeout))
+
+
+class SystemCallUsageTests(unittest.TestCase):
+    """探测/分析调用的 token 必须进 usage 台账，免费额度账本才不高估剩余。"""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.path.write_text(json.dumps(maintenance_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        Path(str(self.path) + ".maintenance.bak").unlink(missing_ok=True)
+
+    @staticmethod
+    def _resp(payload: dict):
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode()
+
+        return FakeResp()
+
+    def test_direct_call_books_the_reported_usage(self):
+        resp = self._resp({
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 5,
+                      "total_tokens": 17},
+        })
+        with mock.patch("facet.gateway.server.open_with_proxy",
+                        return_value=resp):
+            with mock.patch.object(self.app, "record_usage") as rec:
+                reply = self.app._maintenance_direct_call(
+                    self.app.config.channels[0], "gpt-keep", "ping")
+        self.assertEqual(reply, "ok")
+        args, kwargs = rec.call_args
+        self.assertEqual(args, ("a", True, 17))
+        self.assertEqual(kwargs["model"], "gpt-keep")
+        self.assertEqual(kwargs["input_tokens"], 12)
+        self.assertNotIn("h", kwargs)  # 系统开销不落到任何会员头上
+
+    def test_direct_call_books_anthropic_usage_shape(self):
+        resp = self._resp({
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 9, "cache_read_input_tokens": 4,
+                      "output_tokens": 3},
+        })
+        with mock.patch("facet.gateway.server.open_with_proxy",
+                        return_value=resp):
+            with mock.patch.object(self.app, "record_usage") as rec:
+                reply = self.app._maintenance_direct_call(
+                    self.app.config.channels[2], "claude-x", "ping")
+        self.assertEqual(reply, "ok")
+        args, kwargs = rec.call_args
+        self.assertEqual(args, ("claude", True, 16))
+        self.assertEqual(kwargs["input_tokens"], 13)   # 9 + cache read 4
+        self.assertEqual(kwargs["cached_tokens"], 4)
+
+    def test_ledger_counts_system_spend_without_a_member_bucket(self):
+        recorder = UsageRecorder(self.path.parent / "usage-sys.json")
+        self.addCleanup(lambda: Path(str(self.path.parent / "usage-sys.json")).unlink(missing_ok=True))
+        self.app.usage = recorder
+        resp = self._resp({
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 5,
+                      "total_tokens": 17},
+        })
+        with mock.patch("facet.gateway.server.open_with_proxy",
+                        return_value=resp):
+            self.app._maintenance_direct_call(
+                self.app.config.channels[0], "gpt-keep", "ping")
+        used = self.app.usage.model_usage("a", "gpt-keep", "total")
+        self.assertEqual(used["tokens"], 17)
+        self.assertNotIn("users", self.app.usage.data)
+
+    def test_failed_call_books_nothing(self):
+        err = urllib.error.HTTPError("http://x", 429, "Too Many Requests", {},
+                                     io.BytesIO(b"{}"))
+        with mock.patch("facet.gateway.server.open_with_proxy",
+                        side_effect=err):
+            with mock.patch.object(self.app, "record_usage") as rec:
+                with self.assertRaises(RuntimeError):
+                    self.app._maintenance_direct_call(
+                        self.app.config.channels[0], "gpt-keep", "ping")
+        rec.assert_not_called()
 
 
 if __name__ == "__main__":

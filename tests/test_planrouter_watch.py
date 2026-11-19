@@ -5,6 +5,7 @@ data survive a sweep untouched.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import http.client
 import json
@@ -25,7 +26,10 @@ def watch_config() -> dict:
     key = "sk-" + "fixture"
     return {
         "listen": {"host": "127.0.0.1", "port": 0},
-        "defaults": {"watch_hours": 0},
+        # watch-only fixture: with both catalog sweeps off the watch keeps
+        # covering channel endpoints (the dedup path has its own test).
+        "defaults": {"watch_hours": 0, "catalog_refresh_hours": 0,
+                     "maintenance_hours": 0},
         "channels": [
             {"name": "a", "protocol": "openai", "base_url": "http://127.0.0.1:9201",
              "api_key": key, "models": {"gpt-x": "gpt-x"},
@@ -126,6 +130,32 @@ class CollectSourcesTests(unittest.TestCase):
         self.assertEqual(claude["protocol"], "anthropic")
         # Disabled channels stay out of the sweep.
         self.assertNotIn("channel:b", sources)
+
+    def test_channels_are_left_to_the_catalog_sweep(self):
+        """A running catalog sweep already fetches every channel's models
+        endpoint and reports its model-set diff; the watch must not fetch
+        the same endpoints again (traffic) and double-report the changes."""
+        defaults = dataclasses.replace(self.app.config.defaults,
+                                       catalog_refresh_hours=24)
+        self.app.config = dataclasses.replace(self.app.config, defaults=defaults)
+        sources = {s["key"] for s in watch_mod.collect_sources(self.app)}
+        self.assertFalse(any(k.startswith("channel:") for k in sources))
+        # the registry and subscription layers are the watch's own job
+        self.assertIn("provider:volcengine:coding:models", sources)
+        # run_maintenance sweeps catalogs too — maintenance_hours alone
+        # already leaves the channels to it
+        defaults = dataclasses.replace(self.app.config.defaults,
+                                       catalog_refresh_hours=0,
+                                       maintenance_hours=24)
+        self.app.config = dataclasses.replace(self.app.config, defaults=defaults)
+        sources = {s["key"] for s in watch_mod.collect_sources(self.app)}
+        self.assertFalse(any(k.startswith("channel:") for k in sources))
+        # with both sweeps off the watch is the only observer
+        defaults = dataclasses.replace(self.app.config.defaults,
+                                       maintenance_hours=0)
+        self.app.config = dataclasses.replace(self.app.config, defaults=defaults)
+        sources = {s["key"] for s in watch_mod.collect_sources(self.app)}
+        self.assertIn("channel:a", sources)
 
     def test_subscription_docs(self):
         self.app.subscriptions = [{"id": "s1", "plan": "Coding 套餐",

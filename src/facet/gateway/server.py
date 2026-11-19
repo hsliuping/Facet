@@ -136,6 +136,7 @@ PERSIST_KIND_LABELS = {
     "vendor_quota": "厂家额度快照 vendorquota.json",
     "maintenance_log": "维护日志 maintenance.jsonl",
     "freealign_log": "免费额度日志 freealign.jsonl",
+    "probe_log": "探测记录 probe.jsonl",
     "config_backup": "配置备份 config.json.bak",
     "maintenance_pool": "维护模型池 maintenance_models.json",
     "change_log": "变更事件 change-events.jsonl",
@@ -2634,17 +2635,19 @@ class App:
         }
 
     def _append_probe_log(self, results: list[dict], kind: str = "probe") -> None:
-        """Persist one JSON line per probe/catalog batch; secrets are masked."""
+        """Persist one JSON line per probe/catalog batch; secrets are masked.
+
+        Shares the report-log rotation (append_jsonl) and the write-failure
+        alerts of the other persisted artefacts; a failed write never breaks
+        the console.
+        """
         if not self.config_path:
             return
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
                  "kind": kind, "results": results}
-        try:
-            path = self.config_path.parent / "probe.jsonl"
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # logging must never break the console
+        append_jsonl(self.config_path.parent / "probe.jsonl", entry, "probe_log",
+                     on_error=self._note_write_failure,
+                     on_ok=self._note_write_ok)
 
     def _registry_plan_models(self, channel: dict) -> tuple[str, list[str]] | None:
         """Curated plan-model list for a channel linked to a vendor mode.
@@ -2942,6 +2945,15 @@ class App:
         ``free_models`` subset, the pull falls back to that curated list.
         The background catalog sweep keeps using the data-plane route.
         """
+        return self._record_catalog_result(
+            self._fetch_catalog(channel, allow_ark_quota))
+
+    def _fetch_catalog(self, channel, allow_ark_quota: bool = False) -> dict:
+        """Fetch half of probe_channel_models: no store writes, no probe log.
+
+        Pure upstream I/O, so the background sweep may run several of these
+        concurrently (see refresh_all_catalogs).
+        """
         if not isinstance(channel, dict):
             raise ValueError("channel 必须是对象")
         name = channel.get("name")
@@ -2977,7 +2989,19 @@ class App:
             # chat-completion test against them is rejected upstream. Callers
             # (setup wizard, console) use this instead of models[0].
             result["suggested"] = pick_probe_model(result["models"])
-        if result.get("ok") and isinstance(name, str) and self.config.channel(name):
+        result.setdefault("name", name)  # some probe paths omit the echo
+        return result
+
+    def _record_catalog_result(self, result: dict) -> dict:
+        """Bookkeeping half of probe_channel_models: record + probe log.
+
+        Serial on purpose: catalog diffs against the previous snapshot and
+        report-log appends must not interleave when a sweep fetches channels
+        concurrently.
+        """
+        name = result.get("name")
+        if result.get("ok") and result.get("models") \
+                and isinstance(name, str) and self.config.channel(name):
             self.store.record_catalog(name, result["models"], result["endpoint"])
             view = self.store.catalog_view(name)
             result["catalog"] = view
@@ -2986,8 +3010,13 @@ class App:
         return result
 
     def refresh_all_catalogs(self) -> list[dict]:
-        """Re-fetch every enabled channel's upstream model catalog."""
-        results = []
+        """Re-fetch every enabled channel's upstream model catalog.
+
+        Fetches run concurrently — one slow upstream must not serialize the
+        whole sweep — while catalog records and probe-log lines are written
+        serially afterwards, keeping the sweep's channel order.
+        """
+        payloads = []
         for channel in list(self.config.channels):
             if not channel.enabled or not channel.api_key:
                 continue
@@ -2996,11 +3025,21 @@ class App:
                 payload["provider"] = channel.provider
             if channel.mode:
                 payload["mode"] = channel.mode
+            payloads.append((channel.name, payload))
+
+        def fetch(entry: tuple[str, dict]) -> dict:
+            name, payload = entry
             try:
-                results.append(self.probe_channel_models(payload))
+                return self._fetch_catalog(payload)
             except Exception as exc:  # one broken channel must not stop the sweep
-                results.append({"ok": False, "name": channel.name,
-                                "error": repr(exc)[:200]})
+                return {"ok": False, "name": name, "error": repr(exc)[:200]}
+
+        results = []
+        if payloads:
+            with ThreadPoolExecutor(max_workers=min(maint.PROBE_WORKERS,
+                                                    len(payloads))) as executor:
+                fetched = list(executor.map(fetch, payloads))
+            results = [self._record_catalog_result(result) for result in fetched]
         return results
 
     # ---------------------------------------------------------- maintenance
@@ -3043,6 +3082,11 @@ class App:
                     "channel": "", "kind": "apply_failed",
                     "message": f"自动应用变更失败，配置已回读未提交：{exc}",
                 })
+            else:
+                # The repoint is live; prove its new target answers before the
+                # report goes out, or a wrong pick bills through a broken
+                # mapping until the next sweep (paid channels included).
+                maint.verify_repoints(self, report)
 
         maint.refresh_plan_models(self, report)
         maint.refresh_providers(self, report)
@@ -3050,7 +3094,7 @@ class App:
         usage = None
         if self.usage is not None:
             usage = {c["name"]: c for c in self.usage.series(1)["channels"]}
-        reply, model = self._maintenance_llm_call_any(
+        reply, model, llm_errors = self._maintenance_llm_call_any(
             maint.build_prompt(self.config, catalogs, states, report, usage))
         if reply is not None:
             try:
@@ -3058,8 +3102,18 @@ class App:
                 report["llm_model"] = model
                 report["llm_notes"] = parsed["notes"]
                 report["suggestions"].extend(parsed["suggestions"])
-            except Exception:  # LLM analysis is best-effort
-                pass
+            except Exception as exc:  # LLM analysis is best-effort
+                report["llm_error"] = f"LLM 输出处理失败：{str(exc)[:160]}"
+        elif llm_errors:
+            # Every candidate was tried and failed: say so, or the report
+            # would read as "the analysis found nothing wrong" when in fact
+            # no analysis ran at all.
+            report["llm_error"] = (
+                "全部候选模型分析失败：" + "；".join(llm_errors[:2]))[:300]
+        else:
+            report["llm_error"] = (
+                "本次没有 AI 分析：未找到可用的维护模型"
+                "（可点「测试维护模型」探测）")
 
         report["trigger"] = trigger
         report["finished_at"] = time.time()
@@ -3155,6 +3209,17 @@ class App:
                 data = json.loads(resp.read())
         except HTTPError as exc:
             raise RuntimeError(self._http_error_text(exc)) from None
+        # Book the spend like routed traffic: probe pings and maintenance
+        # analysis are real completions, and the free-quota ledger
+        # (usage.model_usage against the registered face value) must not
+        # report a grant as fuller than it is. h stays unset so the overhead
+        # lands on no member's costs — it is system traffic, not user traffic.
+        # A failed call raises before here and books nothing: upstream bills
+        # answered requests only.
+        total, input_tokens, cached_tokens = _usage_fields(
+            data.get("usage") or {})
+        self.record_usage(channel.name, True, total, model=model,
+                          input_tokens=input_tokens, cached_tokens=cached_tokens)
         if protocol == ANTHROPIC:
             return "".join(b.get("text") or "" for b in data.get("content") or []
                            if isinstance(b, dict))
@@ -3218,30 +3283,37 @@ class App:
         return data["choices"][0]["message"]["content"]
 
     def _maintenance_llm_call_any(self, prompt: str,
-                                  validate=None) -> tuple[str | None, str | None]:
+                                  validate=None) -> tuple:
         """Run a maintenance prompt through the first working model.
 
         Candidates come from defaults.maintenance_model when it lists explicit
         ids, otherwise from the auto-discovered verified queue (see
         maintenance.probe_maintenance_models). A queue model that raises or
         fails validation is dropped on the spot so a dead free model cannot
-        break the next run; returns (None, None) when every candidate failed.
+        break the next run. Returns (reply, model, errors) where errors lists
+        why each candidate failed — the maintenance report surfaces them so
+        "no AI analysis ran" is visible instead of silent. (None, None, [])
+        means no candidate existed at all.
         """
         models, mode = maint.pick_maintenance_models(self)
+        errors: list[str] = []
         for model in models:
             try:
                 reply = self._maintenance_llm_call(model, prompt)
             except Exception as exc:
+                errors.append(f"{model}: {str(exc)[:120]}")
                 if mode == "pool":
                     maint.drop_maintenance_model(self, model, str(exc))
                 continue
             reply = str(reply or "")
             if reply.strip() and (validate is None or validate(reply)):
-                return reply, model
+                return reply, model, errors
+            errors.append(f"{model}: " + (
+                "空回复" if not reply.strip() else "输出未通过校验"))
             if mode == "pool":
                 maint.drop_maintenance_model(
                     self, model, "空回复" if not reply.strip() else "输出未通过校验")
-        return None, None
+        return None, None, errors
 
     def probe_maintenance_models(self) -> dict:
         """Quiz candidate maintenance models now and rebuild the queue."""
@@ -3551,10 +3623,10 @@ class App:
             "llm_queue_verified_at": float(pool.get("verified_at") or 0),
             "llm_queue_results": list(pool.get("results") or []),
             "dead_models": maint.dead_models_payload(self),
-            "dead_ttl_hours": maint.DEAD_LABEL_TTL / 3600,
+            "dead_ttl_hours": maint.dead_label_ttl(self) / 3600,
             "free_scan_at": float(pool.get("free_scan_at") or 0),
             "free_models": maint.free_models_payload(self),
-            "reports": list(reversed(reports)),
+            "reports": list(reversed(self._without_ignored(reports))),
             "free_align": {
                 "enabled": bool(self.config.defaults.free_align_hours),
                 "hours": self.config.defaults.free_align_hours,
@@ -3793,8 +3865,8 @@ class App:
                 ]
             has_more = len(reports) > limit
             entries = list(reversed(reports[-limit:]))
-        return {"logs": entries, "source": source, "has_more": has_more,
-                "limit": limit}
+        return {"logs": self._without_ignored(entries), "source": source,
+                "has_more": has_more, "limit": limit}
 
     def maintenance_log_payload(self, limit: int = 50) -> dict:
         """History of maintenance runs, newest first, from maintenance.jsonl."""
@@ -3810,7 +3882,8 @@ class App:
         """Read-only list of config backups (router.json.<tag>.bak), newest first.
 
         Backups are written by _backup_config before maintenance/free-align
-        rewrite the config. Restoring stays a manual file operation on purpose.
+        rewrite the config; restore_backup (the console's 恢复 button) swaps
+        one back in through the validated config pipeline.
         """
         backups: list[dict] = []
         if self.config_path and self.config_path.parent.is_dir():
@@ -3868,16 +3941,109 @@ class App:
         if self.config.channel(channel_name) is None:
             raise ValueError(f"渠道 {channel_name} 不存在")
         raw = copy.deepcopy(self.raw)
+        added = []
         for channel in raw.get("channels") or []:
             if isinstance(channel, dict) and channel.get("name") == channel_name:
                 mapping = channel.get("models") or {}
                 for m in models:
-                    mapping[m.strip()] = m.strip()
+                    key = m.strip()
+                    if mapping.get(key) != key:
+                        added.append(key)
+                    mapping[key] = key
                 channel["models"] = mapping
                 break
-        self.apply_config(raw)
+        if added:
+            # A real change is about to land: snapshot the config first so a
+            # bad adopt is undoable from the console's backup list. An adopt
+            # that adds nothing is a no-op and keeps the previous backup.
+            self._backup_config("suggestion")
+            self.apply_config(raw)
         return {"ok": True, "channel": channel_name,
                 "models": [m.strip() for m in models]}
+
+    # ------------------------------------------------------- suggestions
+    def _load_ignored_suggestions(self) -> list[str]:
+        """Signatures of suggestions the operator rejected (忽略 button)."""
+        if not self.config_path:
+            return []
+        path = self.config_path.with_name("maintenance-ignored.json")
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        sigs = data.get("signatures") if isinstance(data, dict) else None
+        return [str(s) for s in (sigs or []) if s]
+
+    def _without_ignored(self, reports: list[dict]) -> list[dict]:
+        """Report copies with operator-ignored suggestions dropped.
+
+        The JSONL log keeps every suggestion (it is what actually ran); the
+        console hides the ones the operator said no to, in both the
+        latest-report card and the run history.
+        """
+        ignored = set(self._load_ignored_suggestions())
+        out = []
+        for report in reports:
+            copy = dict(report)
+            copy["suggestions"] = [
+                s for s in (report.get("suggestions") or [])
+                if maint.suggestion_signature(s) not in ignored]
+            out.append(copy)
+        return out
+
+    def ignore_maintenance_suggestion(self, payload) -> dict:
+        """Remember one rejected suggestion; the console stops showing it.
+
+        The signature is computed server-side from the suggestion itself, so
+        a later run that regenerates the same item (same kind + channel +
+        models) is filtered too. Newest 200 signatures are kept.
+        """
+        if not isinstance(payload, dict) or not payload.get("kind"):
+            raise ValueError("body 必须携带建议（kind）")
+        if not self.config_path:
+            raise ValueError("config path unknown")
+        sig = maint.suggestion_signature(payload)
+        path = self.config_path.with_name("maintenance-ignored.json")
+        sigs = self._load_ignored_suggestions()
+        if sig not in sigs:
+            sigs.append(sig)
+        sigs = sigs[-200:]
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
+            json.dumps({"signatures": sigs}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        os.replace(tmp, path)
+        return {"ok": True, "signature": sig}
+
+    def restore_backup(self, tag) -> dict:
+        """Swap the config back to one console-written backup.
+
+        The current config is snapshotted first (tag "restore") so a bad
+        restore is itself revertible, and apply_config revalidates the
+        backup before anything touches the live file. The tag is matched
+        against a strict name pattern: it only ever selects
+        ``<config>.<tag>.bak`` next to the config, never an arbitrary path.
+        """
+        if not self.config_path:
+            raise ValueError("config path unknown")
+        tag = str(tag or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", tag):
+            raise ValueError("无效的备份标签")
+        source = self.config_path.with_name(
+            self.config_path.name + f".{tag}.bak")
+        if not source.is_file():
+            raise ValueError(f"备份不存在：{tag}")
+        try:
+            raw = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"备份文件无法解析：{exc}")
+        if not isinstance(raw, dict):
+            raise ValueError("备份内容不是配置对象")
+        self._backup_config("restore")
+        self.apply_config(raw)
+        return {"ok": True, "tag": tag, "restored": source.name}
 
     def _apply_catalog_filter(self, candidates, decision) -> tuple[list, list]:
         """Soft validation of candidates against recorded upstream catalogs.
@@ -3904,7 +4070,7 @@ class App:
     def _apply_dead_filter(self, candidates) -> tuple[list, list]:
         """Skip channel mappings a verification run proved unusable.
 
-        Labels are per channel+wire and expire (maintenance.DEAD_LABEL_TTL),
+        Labels are per channel+wire and expire (maintenance.dead_label_ttl),
         so an upstream recovery re-admits the model without a config edit.
         Applies to every routing mode: in internal scheduling the wire model
         is the channel's own mapping, which is exactly what was verified.
@@ -4171,7 +4337,7 @@ class App:
     def _maintenance_summary(self) -> dict | None:
         if not self.maintenance_reports:
             return None
-        report = self.maintenance_reports[-1]
+        report = self._without_ignored([self.maintenance_reports[-1]])[0]
         return {
             "finished_at": report.get("finished_at"),
             "trigger": report.get("trigger"),

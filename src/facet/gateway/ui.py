@@ -786,6 +786,40 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, result)
         return True
 
+    if path == "/api/maintenance/ignore" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            result = app.ignore_maintenance_suggestion(incoming)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write ignore list: {exc}"}})
+            return True
+        _json(h, 200, result)
+        return True
+
+    if path == "/api/backups/restore" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            result = app.restore_backup((incoming or {}).get("tag"))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write config: {exc}"}})
+            return True
+        _json(h, 200, result)
+        return True
+
     if path.startswith("/api/channels/") and path.endswith("/reset") and method == "POST":
         name = unquote(path[len("/api/channels/"):-len("/reset")])
         if not name or "/" in name:

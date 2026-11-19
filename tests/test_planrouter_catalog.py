@@ -686,6 +686,53 @@ class CatalogAppTests(unittest.TestCase):
         self.assertEqual([r["name"] for r in results], ["plan-a"])
         self.assertTrue(results[0]["ok"])
 
+    def test_refresh_all_catalogs_fetches_channels_concurrently(self):
+        """One slow upstream must not serialize the sweep: every fetch has to
+        be in flight together, or the barrier trips and the rows fail."""
+        barrier = threading.Barrier(3, timeout=5)
+        original = self.app._fetch_catalog
+
+        def sync_fetch(channel, allow_ark_quota=False):
+            barrier.wait()
+            return original(channel, allow_ark_quota)
+
+        self.app._fetch_catalog = sync_fetch
+        results = self.app.refresh_all_catalogs()
+        self.assertEqual([r["name"] for r in results],
+                         ["plan-a", "plan-b", "claude"])
+        self.assertTrue(all(r["ok"] for r in results))
+        # bookkeeping stays serial after the sweep: catalogs recorded once,
+        # one probe-log line per channel in channel order
+        self.assertEqual(self.app.store.catalog_view("plan-a")["models"],
+                         ["model-a", "model-b"])
+        log = (self.path.parent / "probe.jsonl").read_text(encoding="utf-8")
+        self.assertEqual(log.count('"kind": "catalog"'), 3)
+
+    def test_refresh_all_catalogs_survives_one_broken_channel(self):
+        original = self.app._fetch_catalog
+
+        def broken(channel, allow_ark_quota=False):
+            if channel.get("name") == "plan-a":
+                raise RuntimeError("boom")
+            return original(channel, allow_ark_quota)
+
+        self.app._fetch_catalog = broken
+        results = self.app.refresh_all_catalogs()
+        by_name = {r["name"]: r for r in results}
+        self.assertFalse(by_name["plan-a"]["ok"])
+        self.assertIn("boom", by_name["plan-a"]["error"])
+        self.assertTrue(by_name["plan-b"]["ok"])
+
+    def test_probe_log_rotates_like_the_other_report_logs(self):
+        with mock.patch("facet.gateway.server.REPORT_LOG_MAX_BYTES", 10), \
+                mock.patch("facet.gateway.server.REPORT_LOG_KEEP", 2):
+            for i in range(5):
+                self.app._append_probe_log([{"n": i}])
+        lines = (self.path.parent / "probe.jsonl").read_text(
+            encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn('"n": 4', lines[-1])
+
     def test_ui_state_carries_catalog_summary(self):
         self.app.probe_channel_models({"name": "plan-a"})
         snap = self.app.ui_state()

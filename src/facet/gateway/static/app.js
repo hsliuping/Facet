@@ -1125,7 +1125,7 @@ function renderDashboard() {
   if (last) {
     rows.push(dashRow('维护结果',
       `应用 ${last.applied} · 待采纳 ${last.suggestions} · 告警 ${last.alerts}`
-      + (last.llm_error ? ' · <span class="days-left expired">LLM 分析失败</span>' : '')));
+      + (last.llm_error ? ` · <span class="days-left expired" title="${esc(last.llm_error)}">AI 分析未完成</span>` : '')));
   }
   const align = state.maintenance?.free_align;
   const alignLast = (align?.reports || [])[0];
@@ -3371,8 +3371,10 @@ function maintReportRows(r, withApply) {
     const btn = withApply && s.kind === 'add_model' && (s.models || []).length
       ? ` <button class="btn small" data-apply="${esc(JSON.stringify(s.models))}"`
         + ` data-channel="${esc(s.channel)}">一键采纳</button>` : '';
+    const ignore = withApply
+      ? ` <button class="btn small ghost" data-ignore="${esc(JSON.stringify(s))}">忽略</button>` : '';
     rows.push(maintItem(s.source === 'llm' ? 'AI 建议' : '建议', 'unknown',
-      `${s.channel ? `<strong>${esc(s.channel)}</strong>${tierTag(s.channel)} ` : ''}${esc(s.message)}${btn}`));
+      `${s.channel ? `<strong>${esc(s.channel)}</strong>${tierTag(s.channel)} ` : ''}${esc(s.message)}${btn}${ignore}`));
   });
   (r.alerts || []).forEach((a) => {
     rows.push(maintItem('注意', 'expired',
@@ -3382,7 +3384,10 @@ function maintReportRows(r, withApply) {
     rows.push(maintItem('AI', 'active', `<span class="sub-note">${esc(n)}</span>`));
   });
   if (r.llm_error) {
-    rows.push(maintItem('AI', 'expired', `LLM 分析失败：${esc(r.llm_error)}`));
+    // The message itself says what went wrong (failed candidates vs. no
+    // candidate at all), so it renders verbatim instead of behind a
+    // misleading "分析失败" prefix.
+    rows.push(maintItem('AI', 'expired', esc(r.llm_error)));
   }
   return rows;
 }
@@ -3821,6 +3826,20 @@ $('btn-run-maintenance').onclick = async (e) => {
 };
 
 $('maintenance-body').addEventListener('click', async (e) => {
+  const ign = e.target.closest('button[data-ignore]');
+  if (ign) {
+    ign.disabled = true;
+    try {
+      await api('/api/maintenance/ignore',
+        { method: 'POST', body: JSON.parse(ign.dataset.ignore) });
+      toast('已忽略该建议，后续运行不再显示');
+      await loadMaintenance();
+    } catch (err) {
+      toast(err.message, 'bad');
+      ign.disabled = false;
+    }
+    return;
+  }
   const b = e.target.closest('button[data-apply]');
   if (!b) return;
   b.disabled = true;
@@ -3946,7 +3965,10 @@ async function loadBackups() {
   renderBackups();
 }
 
-const BACKUP_TAGS = { maintenance: '自动运维', freealign: '免费额度对齐' };
+const BACKUP_TAGS = {
+  maintenance: '自动运维', freealign: '免费额度对齐',
+  suggestion: '建议采纳', restore: '恢复前快照',
+};
 
 function renderBackups() {
   const data = state.backups;
@@ -3958,9 +3980,30 @@ function renderBackups() {
       <code>${esc(b.file)}</code>
       <span class="tag unknown">${esc(BACKUP_TAGS[b.tag] || b.tag)}</span>
       <span class="sub-note">${new Date(b.mtime * 1000).toLocaleString()} · ${(b.size / 1024).toFixed(1)} KB</span>
+      <button class="btn small ghost" data-restore-tag="${esc(b.tag)}">恢复</button>
     </div>`).join('')
     : '<p class="sub-note">还没有备份文件。自动运维或免费额度对齐改写配置前会自动生成。</p>';
 }
+
+$('backup-body').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-restore-tag]');
+  if (!b) return;
+  const tag = b.dataset.restoreTag;
+  const ok = await askConfirm('恢复备份',
+    `用备份「${tag}」覆盖当前配置？当前配置会先存为「恢复前快照」，随时可再换回来。`);
+  if (!ok) return;
+  b.disabled = true;
+  try {
+    await api('/api/backups/restore', { method: 'POST', body: { tag } });
+    toast(`已恢复备份「${tag}」`);
+    await loadConfig();
+    await loadState();
+    await loadBackups();
+  } catch (err) {
+    toast(err.message, 'bad');
+    b.disabled = false;
+  }
+});
 
 async function loadMaintLogs() {
   state.maintlog = await api('/api/maintenance/logs');

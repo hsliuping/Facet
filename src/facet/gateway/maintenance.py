@@ -18,6 +18,7 @@ things really break:
 from __future__ import annotations
 
 import gzip
+import hashlib
 import html
 import json
 import os
@@ -173,12 +174,17 @@ def analyze(config, catalogs: dict, states: dict,
 
         auto_target = mapping.get(AUTO_MODEL)
         if auto_target and auto_target in removed and models:
+            # Replacement candidates in trust order: first a model the
+            # channel already maps (it is in active use behind this channel),
+            # then any catalog model; closest to the vanished id wins within
+            # a tier. Non-chat catalog ids (speech, embedding, image) must
+            # never become an auto target.
             mapped_survivors = [v for v in mapping.values()
-                                if v != auto_target and v != "*" and v in models]
-            replacement = (mapped_survivors[0] if mapped_survivors
-                           else _pick_replacement(auto_target,
-                                                  [m for m in models
-                                                   if m != auto_target]))
+                                if v != auto_target and v != "*" and v in models
+                                and is_chat_model(v)]
+            pool = [m for m in models if m != auto_target and is_chat_model(m)]
+            replacement = (_pick_replacement(auto_target, mapped_survivors)
+                           or _pick_replacement(auto_target, pool))
             if replacement:
                 mapping[AUTO_MODEL] = replacement
                 touched = True
@@ -186,6 +192,11 @@ def analyze(config, catalogs: dict, states: dict,
                     "channel": channel.name, "action": "repoint_auto",
                     "from": auto_target, "to": replacement,
                     "reason": "auto 目标模型已被上游下架，自动切换到最接近的存活模型",
+                })
+            else:
+                alerts.append({
+                    "channel": channel.name, "kind": "auto_target_gone",
+                    "message": f"auto 目标 {auto_target} 已下架且目录无可用的对话模型，需人工处理",
                 })
         elif auto_target and auto_target in removed:
             alerts.append({
@@ -326,6 +337,29 @@ def parse_llm_output(text: str) -> dict:
             })
         result["suggestions"] = clean[:10]
     return result
+
+
+def suggestion_signature(s: dict) -> str:
+    """Stable identity of one suggestion, for the console's 忽略 button.
+
+    add_model suggestions are keyed by their model list (stable across runs);
+    set_rate carries the cooldown reason in its message, which drifts with
+    the failure text, so the pair (kind, channel) is what gets rejected;
+    anything else is keyed by its message — a reworded suggestion is a new
+    suggestion.
+    """
+    kind = str(s.get("kind") or "")
+    channel = str(s.get("channel") or "")
+    source = str(s.get("source") or "")
+    models = sorted(str(m) for m in (s.get("models") or []) if m)
+    if models:
+        basis = ",".join(models)
+    elif kind == "set_rate":
+        basis = ""
+    else:
+        basis = str(s.get("message") or "")[:120]
+    return hashlib.sha1(
+        f"{kind}|{channel}|{source}|{basis}".encode("utf-8")).hexdigest()
 
 
 # ------------------------------------------------------- plan model refresh
@@ -551,7 +585,7 @@ def _llm_extract_doc_models(app, doc_text: str, label: str, kind: str,
     models, _mode = pick_maintenance_models(app)
     if not models:
         return None
-    reply, _model = app._maintenance_llm_call_any(
+    reply, _model, _errors = app._maintenance_llm_call_any(
         build_plan_models_prompt(doc_text),
         validate=_plan_reply_is_array)
     if reply is None:
@@ -1184,7 +1218,9 @@ def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
 
 # A verified-dead mapping is skipped by routing only for a while: free quotas
 # reset, upstreams recover from outages, and a model can come back. Expiring
-# the label keeps one bad probe from shrinking the free pool forever.
+# the label keeps one bad probe from shrinking the free pool forever. The
+# floor below is extended by dead_label_ttl() when verification runs less
+# often, so a label never lapses before a scheduled recheck could clear it.
 DEAD_LABEL_TTL = 6 * 3600
 VERIFY_FREE_PROMPT = "只回复 OK 两个字母，不要输出任何其他内容。"
 _HTTP_STATUS = re.compile(r"HTTP Error (\d{3})")
@@ -1194,13 +1230,27 @@ def _dead_key(channel: str, model: str) -> str:
     return f"{channel}\u0000{model}"
 
 
+def dead_label_ttl(app) -> float:
+    """Dead-label lifetime in seconds, derived from the verification cadence.
+
+    Two full cycles of the scheduled free-pool verification
+    (defaults.free_verify_hours) must fit inside the lifetime, so a still
+    healthy model gets rechecked and cleared before its label lapses; the
+    DEAD_LABEL_TTL floor keeps a slow or disabled schedule from pinning
+    labels for days.
+    """
+    hours = int(getattr(app.config.defaults, "free_verify_hours", 0) or 0)
+    return max(DEAD_LABEL_TTL, 2 * hours * 3600)
+
+
 def dead_model_labels(app, now: float | None = None) -> dict[str, dict]:
     """Current dead labels, expired ones pruned; keyed by channel+model."""
     now = time.time() if now is None else now
+    ttl = dead_label_ttl(app)
     with app.maintenance_pool_lock:
         ledger = app.maintenance_pool.setdefault("dead_models", {})
         expired = [key for key, entry in ledger.items()
-                   if now - float(entry.get("marked_at") or 0) > DEAD_LABEL_TTL]
+                   if now - float(entry.get("marked_at") or 0) > ttl]
         for key in expired:
             ledger.pop(key, None)
         return {key: dict(entry) for key, entry in ledger.items()}
@@ -1337,6 +1387,38 @@ def verify_free_models(app, pairs=None) -> dict:
         "results": results,
         "dead_models": dead_models_payload(app),
     }
+
+
+def verify_repoints(app, report: dict) -> None:
+    """Ping every auto target a just-applied repoint switched to.
+
+    analyze() picks the replacement from trusted candidate tiers, but only an
+    upstream call proves it answers. The ping is the safety net for every
+    channel — paid ones included, where a wrong pick would otherwise bill
+    through a broken mapping until the next sweep. An unverified pick is
+    marked on its applied entry and raised as an alert in the same report.
+    """
+    channels = {c.name: c for c in app.config.channels}
+    for entry in report.get("applied") or []:
+        if entry.get("action") != "repoint_auto":
+            continue
+        channel = channels.get(entry.get("channel"))
+        if channel is None:
+            continue
+        try:
+            reply = app._maintenance_direct_call(channel, entry.get("to"),
+                                                 VERIFY_FREE_PROMPT)
+            ok = bool(str(reply or "").strip())
+            error = "" if ok else "空回复（无法判定）"
+        except Exception as exc:  # noqa: BLE001 - upstream errors vary
+            ok = False
+            error = str(exc)[:160]
+        entry["verified"] = ok
+        if not ok:
+            report.setdefault("alerts", []).append({
+                "channel": entry.get("channel"), "kind": "repoint_unverified",
+                "message": f"auto 已重指到 {entry.get('to')}，但验证调用失败：{error}",
+            })
 
 
 def probe_maintenance_models(app, candidates=None) -> dict:
