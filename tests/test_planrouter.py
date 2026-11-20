@@ -323,6 +323,33 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
 
 
+class CrossProtocolSkipTests(unittest.TestCase):
+    """Routes only dispatch channels speaking the route's own protocol.
+
+    Locks in actual scheduling behavior: parse_config accepts an explicit
+    cross-protocol channel name inside a route, but Router.pick skips it at
+    scheduling time instead of converting the payload at the channel
+    boundary — so one wire dialect flows through a route end to end.
+    """
+
+    def setUp(self):
+        data = json.loads(json.dumps(BASE))
+        # claude (anthropic, priority 5) sits inside the openai route;
+        # plan-a (openai) sits inside the anthropic route.
+        data["routes"][0]["channels"] = ["plan-a", "claude", "plan-b", "free"]
+        data["routes"][2]["channels"] = ["claude", "plan-a"]
+        self.cfg = load_config(write_config(data))
+        self.store = StateStore(self.cfg)
+
+    def test_openai_route_skips_anthropic_channel(self):
+        candidates, _ = self.store.pick(OPENAI, "default", "auto", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates], ["plan-a", "plan-b", "free"])
+
+    def test_anthropic_route_skips_openai_channel(self):
+        candidates, _ = self.store.pick("anthropic", "default", "auto", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates], ["claude"])
+
+
 class ModelLevelCooldownTests(unittest.TestCase):
     """A model's allowance is not the channel's: its siblings stay usable."""
 

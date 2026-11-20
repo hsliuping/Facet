@@ -2,9 +2,9 @@
 
 Pure standard library. A *channel* is one upstream endpoint (a coding plan, a
 subscription bridge, or a free-tier API key). A route speaks the client's wire
-protocol (picked by the endpoint path); its channels may speak either one —
-payloads are converted at the channel boundary (convert.py) when the protocols
-differ, and pass through byte-for-byte when they match.
+protocol (picked by the endpoint path) and only dispatches channels speaking
+that same protocol: a cross-protocol channel listed in a route is skipped at
+pick time (Router.pick), never converted on the wire.
 """
 from __future__ import annotations
 
@@ -1098,8 +1098,9 @@ def parse_config(raw: dict) -> Config:
             channel = next((c for c in channels if c.name == channel_name), None)
             if channel is None:
                 raise ValueError(f"route {name}: unknown channel {channel_name!r}")
-        # A channel may speak another protocol than its route: the payload is
-        # converted at the channel boundary (see convert.py).
+        # An explicit cross-protocol name is accepted here, but the scheduler
+        # skips such channels at pick time (Router.pick): a route only ever
+        # dispatches channels speaking its own protocol.
         key = f"{protocol}:{name}"
         if key in routes:
             raise ValueError(f"duplicate route {key!r}")

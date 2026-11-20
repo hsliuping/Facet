@@ -37,7 +37,10 @@ jobs:
       - name: snapshot table + build
         run: python tools/build_package.py
       - name: tests (incl. package tests)
-        run: python -m unittest discover -s tests
+        # 与 validate.yml 同口径：pytest（tests/web 无 playwright 自动跳过）。
+        run: |
+          python -m pip install pytest
+          python -m pytest -q -p no:cacheprovider
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -57,6 +60,31 @@ jobs:
         run: python -m playwright install chromium
       - name: build installer
         run: python tools/build_windows.py
+      - name: smoke（打包产物起网关：/ 判活 + /health JSON 断言）
+        # dist/windows/Facet 是与 Setup.exe 同源的散装目录（build_windows.py
+        # 注释明确留给冒烟）。用内嵌 CPython 首启 seed 配置；零渠道时 /health
+        # 按设计返回 503 all_channels_cooling，所以判活打 /，/health 不带 -f。
+        run: |
+          $py  = "build/windows/Facet/runtime/python.exe"
+          $app = "build/windows/Facet/app/run_gateway.py"
+          $tmp = Join-Path $env:RUNNER_TEMP "facet-smoke"
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          $proc = Start-Process -FilePath $py `
+            -ArgumentList @($app, "--config", (Join-Path $tmp "router.json"), "--port", "18787") `
+            -PassThru -WindowStyle Hidden
+          try {
+            $up = $false
+            foreach ($i in 1..30) {
+              curl.exe -fsS --max-time 3 http://127.0.0.1:18787/ > $null 2>&1
+              if ($LASTEXITCODE -eq 0) { $up = $true; break }
+              Start-Sleep -Seconds 2
+            }
+            if (-not $up) { throw "打包网关未在 :18787 判活" }
+            curl.exe -sS --max-time 5 http://127.0.0.1:18787/health -o "$tmp/health.json"
+            python -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print('health:', d.get('status')); assert d.get('status') in ('ok','all_channels_cooling'), d" "$tmp/health.json"
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-dist

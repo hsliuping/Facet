@@ -6137,8 +6137,9 @@ class App:
             payload["model"] = wire
             normalize_kimi_temperature(payload)
             stream = bool(payload.get("stream"))
-            # The channel speaks its own wire protocol; when that differs from the
-            # client's, the payload is converted right here at the boundary (P1-3).
+            # Scheduling guarantees wire_proto == protocol (Router.pick skips
+            # other-protocol channels); the conversion branch below remains a
+            # defensive pass-through, not a cross-protocol dispatch path.
             wire_proto = channel.protocol
             if wire_proto != protocol:
                 payload = convert_request(payload, protocol, wire_proto)

@@ -9,16 +9,28 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject 声明 requires-python >=3.10、classifiers 到 3.13：
+        # 矩阵卡住地板（3.10）与天花板（3.13），3.12 由两端夹逼。
+        python-version: ["3.10", "3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - name: bundle registry snapshot
         # src/facet/data/model-registry.json is a build artifact (gitignored);
         # tests rely on it for model capability facts, same as the Docker build.
         run: python tools/build_package.py --skip-build
-      - name: unit tests (sync tool + demo)
-        run: python -m unittest discover -s tests
+      - name: python tests (pytest)
+        # 与本地基线同一口径（pytest）。早先用 unittest discover 时，tests/web
+        # 下 11 个纯 pytest 文件（Playwright E2E，无 unittest.TestCase）一个都
+        # 收不到，CI 绿灯只覆盖 37/48 个测试文件；pytest 下这些文件在无
+        # playwright 的 CI 环境经 conftest 的 importorskip 自动跳过，缺口可见。
+        run: |
+          python -m pip install pytest
+          python -m pytest -q -p no:cacheprovider
       - name: registry table contract
         run: python tools/validate_registry.py

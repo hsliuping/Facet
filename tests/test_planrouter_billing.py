@@ -9,9 +9,18 @@ pay-as-you-go. Internal aliases (auto/free) keep the console chain order.
 from __future__ import annotations
 
 import unittest
+from datetime import date, timedelta
 
 from facet.gateway.core import parse_config
 from facet.gateway.server import App
+
+# Expiry fixtures are relative to today: hardcoded calendar dates rot as the
+# clock passes them (2026-11-20 expired one day after the suite last ran
+# green and took the whole billing class red under every runner).
+SOON_ISO = (date.today() + timedelta(days=3)).isoformat()
+LATE_ISO = (date.today() + timedelta(days=130)).isoformat()
+OLD_ISO = (date.today() - timedelta(days=90)).isoformat()
+PAYG_ISO = (date.today() + timedelta(days=40)).isoformat()
 
 
 def billing_config() -> dict:
@@ -71,8 +80,8 @@ def picked(app: App, model: str) -> list[str]:
 class BillingOrderTests(unittest.TestCase):
     def test_exact_request_drains_soonest_plan_first(self):
         app = app_with([
-            subscription("soon", "2026-11-20", ["plan-soon"]),
-            subscription("late", "2027-03-01", ["plan-late"]),
+            subscription("soon", SOON_ISO, ["plan-soon"]),
+            subscription("late", LATE_ISO, ["plan-late"]),
         ])
         self.assertEqual(picked(app, "deepseek-flash"),
                          ["plan-soon", "plan-late", "plan-undated",
@@ -80,8 +89,8 @@ class BillingOrderTests(unittest.TestCase):
 
     def test_expired_subscription_leaves_plan_undated(self):
         app = app_with([
-            subscription("soon", "2026-11-20", ["plan-soon"]),
-            subscription("old", "2026-01-01", ["plan-late"]),
+            subscription("soon", SOON_ISO, ["plan-soon"]),
+            subscription("old", OLD_ISO, ["plan-late"]),
         ])
         self.assertEqual(app.store.billing_ranks["plan-late"], (1, 0.0, 0.0))
         self.assertEqual(picked(app, "deepseek-flash"),
@@ -89,14 +98,14 @@ class BillingOrderTests(unittest.TestCase):
                           "free-c", "payg-a"])
 
     def test_linked_subscription_marks_channel_monthly(self):
-        app = app_with([subscription("p", "2027-01-01", ["payg-a"])])
+        app = app_with([subscription("p", PAYG_ISO, ["payg-a"])])
         self.assertEqual(app.store.billing_ranks["payg-a"][0], 0)
         self.assertEqual(picked(app, "deepseek-flash")[0], "payg-a")
 
     def test_auto_alias_keeps_chain_order(self):
         app = app_with([
-            subscription("soon", "2026-11-20", ["plan-soon"]),
-            subscription("late", "2027-03-01", ["plan-late"]),
+            subscription("soon", SOON_ISO, ["plan-soon"]),
+            subscription("late", LATE_ISO, ["plan-late"]),
         ])
         self.assertEqual(picked(app, "auto"),
                          ["payg-a", "plan-late", "plan-soon",
@@ -111,8 +120,8 @@ class BillingOrderTests(unittest.TestCase):
                           "free-c", "payg-a"])
 
     def test_same_expiry_fuller_plan_drains_first(self):
-        soon = subscription("soon", "2026-11-20", ["plan-soon"])
-        tied = subscription("tied", "2026-11-20", ["plan-late"])
+        soon = subscription("soon", SOON_ISO, ["plan-soon"])
+        tied = subscription("tied", SOON_ISO, ["plan-late"])
         # Both plans lapse on the same day, but plan-late still holds 90% of
         # its quota while plan-soon holds 10%: the fuller plan is the one at
         # risk of going unused, so it drains first within the shared day.
@@ -125,10 +134,10 @@ class BillingOrderTests(unittest.TestCase):
                          ["plan-late", "plan-soon"])
 
     def test_ui_state_exposes_billing(self):
-        app = app_with([subscription("soon", "2026-11-20", ["plan-soon"])])
+        app = app_with([subscription("soon", SOON_ISO, ["plan-soon"])])
         items = {c["name"]: c for c in app.ui_state()["channels"]}
         self.assertEqual(items["plan-soon"]["billing"]["group"], 0)
-        self.assertEqual(items["plan-soon"]["billing"]["expiry"], "2026-11-20")
+        self.assertEqual(items["plan-soon"]["billing"]["expiry"], SOON_ISO)
         self.assertEqual(items["payg-a"]["billing"]["group"], 3)
         self.assertEqual(items["payg-a"]["billing"]["expiry"], "")
 
