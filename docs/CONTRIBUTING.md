@@ -1,85 +1,142 @@
-# Contributing to Facet
+# 为 Facet 贡献
 
-Facet is deliberately tiny: a JSON table, two stdlib-only tools, one demo,
-tests, CI. Keep it that way.
+Facet 是一个自托管、纯标准库的大模型免费额度聚合网关：一个端点、一个控制台、
+一套自动运维。欢迎任何形式的贡献——但请先读完下面的**要求**与**你能得到什么**，
+再动手。
 
-## Setup
+提交任何贡献前，请确认你已接受 [docs/CLA.md](CLA.md)：你可以保留版权，同时授权
+项目维护者以 Apache-2.0 分发你的贡献。以下任意一种方式即表示接受：
 
-Python 3.10+. No dependencies to install.
+- 提交时签核：`git commit -s`（推荐，每个 commit 都签）；
+- 首个 PR 下评论 `/cla`。
 
-```bash
-python -m unittest discover -s tests   # run tests
-python tools/validate_registry.py      # check the committed table
-python tools/sync_models_dev.py        # refresh from models.dev (network)
-```
+## 快速开始
 
-Package development (the `facet-models` pip package, stdlib only — thin fact
-client, integration contract documented in the README):
+Python 3.10+，无需安装任何运行时依赖。
 
 ```bash
-python tools/build_package.py --skip-build   # snapshot table + derive version
-pip install -e .                             # editable install
-facet "glm-5.3"                              # CLI smoke test
+# 跑全量测试
+PYTHONPATH=src python -m pytest            # macOS / Linux
+$env:PYTHONPATH='src'; python -m pytest    # Windows PowerShell
+
+python tools/validate_registry.py          # 校验事实表
+python tools/sync_models_dev.py            # 从 models.dev 同步（需联网）
+python tools/build_windows.py              # 构建 Windows 安装包
 ```
 
-## Repo layout
+可编辑安装（PyPI 包名沿用历史名 `facet-models`，装出来的命令是 `facet`）：
 
-```
-schema/model-registry.schema.json   field standard (JSON Schema 2020-12)
-registry/model-registry.json        the table (generated, single file < 1 MB)
-registry/manual-overrides.json      manual additions & corrections (survive sync)
-tools/sync_models_dev.py            fetch -> normalize -> dedup -> emit
-tools/validate_registry.py          quality gate for the table
-tools/verify_claims.py              live-verify declared capabilities (optional)
-tools/build_package.py              validate -> snapshot -> version -> build
-src/facet/                          the pip package (load / resolve / find)
-examples/pick_model.py              reference consumer (read -> filter -> rank)
-tests/                              stdlib unittest
-reports/                            verify_claims output (local, gitignored)
+```bash
+pip install -e .
+facet serve                                # 控制台 127.0.0.1:8787
 ```
 
-## The hard rules ( enforced by tools/validate_registry.py )
+## 目录结构
 
-1. Single file < 1 MB.
-2. ABSENT field == null (unknown). Never fill a missing value with a default,
-   never write a literal `null` — omit the key.
-3. Facts only, except `quality_hint` (the single subjective field).
-4. Cost is USD per million tokens, nothing else.
-5. Fields are only ever added, never re-purposed; breaking changes bump
-   `schema_version`.
-6. Consumers ignore unknown fields.
+```
+src/facet/                     pip 包：CLI + 事实表客户端
+src/facet/gateway/             网关主体（服务、路由、维护、watch、配额）
+src/facet/gateway/static/      控制台前端（app.js / index.html）
+schema/                        事实表 JSON Schema
+registry/                      事实表 + 人工覆盖 + 路由链提案
+tools/                         同步 / 校验 / 验证 / 构建脚本
+tests/                         pytest 测试集（网关 + 事实表）
+docker/, Dockerfile, compose.yaml
+docs/                          设计与运维文档
+examples/                      参考消费方
+```
 
-## Manual data
+## 贡献要求
 
-Two mechanisms, both applied after the upstream sync and never clobbered
-by weekly refreshes:
+### 一、不可妥协的产品底线
 
-1. **Annotations** — `quota_tier` (free tier info) and `quality_hint`
-   (1-5 subjective prior) on the winning record in
-   `registry/model-registry.json`. Edit directly and open a PR; sync
-   preserves them automatically.
-2. **Additions & corrections** — `registry/manual-overrides.json`:
-   - vendors the upstream sources ignore (Baidu ERNIE, InternLM, Kunlun...)
-     get full manual entries
-   - verified corrections to synced fields (manual value wins)
-   - every value must be checked against the vendor's official
-     docs/console before committing — facts only, USD per MTok, absent
-     == unknown.
+触碰以下任一条的 PR 不会被合并：
 
-Live verification results (`tools/verify_claims.py`) never flow into the
-table automatically: attach the report to an issue or PR, and after human
-review apply corrections through `manual-overrides.json`.
+1. **零运行时依赖。** 网关只用 Python 标准库；工具类依赖必须先开 issue 讨论。
+2. **双协议兼容。** OpenAI 与 Anthropic 端点在同一个端口上并存，两者都必须可用。
+3. **配置向后兼容。** 字段只增不改语义；破坏性变更必须升版本号。
+4. **免费优先。** 维护与探测调用绝不能烧付费额度。
+5. **事实表只存事实。** 缺失字段即未知，禁止填默认值；成本统一为美元/百万 token；
+   数据必须来自声明的上游源或厂家官方文档/控制台。
 
-## Pull requests
+### 二、代码与测试要求
 
-- Run the tests and the validator before pushing.
-- Changes to the sync pipeline need a test covering the changed rule.
-- Regenerate the table only with the sync tool; do not hand-edit synced
-  fields (manual-annotation fields above are the exception).
-- Sign off commits (`git commit -s`) to accept the CLA (see CLA.md).
+- **一个 PR 只做一件事。** 修 bug、重构、格式化不要混在一起。
+- **修复必须带回归测试**；新增行为必须有覆盖该行为的测试。
+- **只改与问题相关的行**，不做顺手格式化或全局重命名。
+- **提交信息用 Conventional Commits**（`fix:`、`feat:`、`docs:` 等），每个
+  commit 用 `git commit -s` 签核。
+- **UI 改动附截图**；改动路由/维护/容灾逻辑的，必须在 PR 描述里写明影响面
+  （会走哪些路径、失败时如何回退）。
+- **数据类改动必须给出官方来源链接**（厂家文档、控制台截图或可复核的公开事实）。
+- 文档中英文均可，与所在文件保持一致即可。
 
-## Sync cadence
+### 三、PR 流程
 
-The `sync` workflow refreshes the table weekly from models.dev and opens a
-PR. Reviewer focus: winner flips across providers, big price moves, new
-models.
+1. **小问题直接开 PR；大改动先开 issue** 对齐方案，避免白写。
+2. Fork 仓库，从 `main` 拉分支。
+3. 本地跑通测试与校验，把结果贴进 PR。
+4. 提交并按上文方式签署 CLA。
+5. PR 描述包含：问题、方案、影响面、测试证据；UI 改动附截图。
+6. 维护者按「产品底线」审查，至少一人 approve 后合并。
+7. 合并采用 **squash**，主干保持「一笔提交一件事」；维护者可能润色最终提交信息。
+
+### 四、评审与响应预期
+
+- 维护者通常在 **7 天内**给出首次反馈；超过 14 天未回复可 @ 提醒。
+- 60 天无进展的 PR 会被关闭（随时可重开，不会丢失讨论）。
+- 安全性问题**不要开公开 issue**：请通过仓库主页的联系方式私下告知维护者，
+  尤其不要把真实 Key 贴进 issue 或截图。
+
+### 五、我们不接受什么
+
+- 引入第三方运行时依赖；
+- 改路由/维护语义却不带测试；
+- 手工修改同步生成的字段（下文「人工数据」中的注解字段除外）；
+- 无法用官方来源核实的事实表数据；
+- 混入格式化 / 重构 / 功能的大杂烩 PR；
+- 配置、测试夹具、日志或截图里出现密钥、个人路径等敏感信息。
+
+## 贡献者能得到什么
+
+贡献不是单向付出。每一笔被合并的贡献，你都会得到：
+
+1. **公开署名。** 每个版本的发布说明（release notes）都会列出合并的贡献者；
+   重大贡献者由维护者列入 README 致谢区。
+2. **真正的代码审查。** 逐行 review + 架构讨论，不是点个 approve 了事；
+   复杂改动会一起讨论方案取舍。
+3. **可写入简历的贡献记录。** 你的 PR 是公开、可追溯的工程记录；求职或评奖
+   需要时，维护者可出具贡献说明（contribution letter）。
+4. **提前体验与话语权。** 新功能 beta 构建优先试用；路线图讨论与方向投票权。
+5. **社区曝光。** 愿意的话，你的贡献会在公众号 / B 站「共建者」栏目介绍。
+6. **成长通道。** 持续贡献、判断可靠的贡献者可被邀请成为 reviewer，进而成为
+   maintainer，获得合并权限。
+7. **新手友好。** 标注 `good first issue` 的任务适合第一次贡献；维护者会先给
+   方向性指引，不会让你卡在环境上。
+
+如果你只是想用、不想改：提一个可复现的 issue 同样是贡献，同样会被署名致谢。
+
+## 事实表（facet-models）
+
+- 只允许用同步工具重生成事实表，不要手改同步字段（下一节的注解字段除外）。
+- 改同步管线的，必须为改动的那条规则补测试。
+- 实测结果（`tools/verify_claims.py`）不会自动进表：把报告附在 issue 或 PR 上，
+  人工复核后通过 `manual-overrides.json` 应用修正。
+
+## 人工数据
+
+两套机制，都在上游同步之后应用，且不会被每周刷新覆盖：
+
+1. **注解** —— `registry/model-registry.json` 中胜出记录上的 `quota_tier`
+   （免费额度信息）与 `quality_hint`（1-5 主观先验）。直接改并开 PR，同步会自
+   动保留。
+2. **增补与修正** —— `registry/manual-overrides.json`：
+   - 上游源忽略的厂家（百度 ERNIE、InternLM、昆仑等）写完整人工条目；
+   - 对同步字段的核实修正（人工值优先）；
+   - 每个值提交前都必须对照厂家官方文档/控制台核实——只存事实，美元/百万
+     token，缺失即未知。
+
+## 同步节奏
+
+`sync` 工作流每周从 models.dev 刷新事实表并开 PR。审查重点：跨厂家胜出者变化、
+大幅价格变动、新模型。

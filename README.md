@@ -382,7 +382,20 @@ python tools/verify_claims.py gpt-5 --dry-run   # 实测验证模型能力声明
 事实表不做路由、不管 API key、不采集遥测、不做逐请求排序、不聚合跑分。
 网关层做路由，但只依据维护层观测到的渠道状态，从不依赖表的新鲜度。
 
+## 贡献
+
+欢迎贡献。贡献要求（产品底线、测试、PR 流程）与贡献者能得到什么，见
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。
+
+## 贡献者
+
+感谢为本项目提交过代码、文档、数据修正与问题报告的每一位贡献者。
+（外部贡献随版本发布说明更新，重大贡献者在此列出。）
+
 ## 治理
 
-MIT 许可。贡献须接受 [docs/CLA.md](docs/CLA.md) 中的协议，流程见
-[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。
+Apache-2.0 许可（[LICENSE](LICENSE) 为英文法律文本；Apache 官方未发布官方中文版，
+任何中文译文仅供参考，以英文原文为法律效力）。简要说：允许自由使用、修改、
+再分发（含商用），须保留版权与许可声明，修改过的文件须标记变更；
+软件按「现状」提供，不含担保。贡献须接受 [docs/CLA.md](docs/CLA.md)
+（中文），流程与贡献者权益见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。

@@ -1,51 +1,52 @@
-# Contributor License Agreement (Individual)
+# 贡献者许可协议（个人版，CLA）
 
-Thank you for contributing to Facet. By signing off your commits (`git commit -s`)
-or commenting `/cla` on your first pull request, you accept this agreement.
+感谢你为 Facet 做贡献。以下任意一种方式即表示你接受本协议：
 
-## 1. Definitions
+- 提交时签核（`git commit -s`，每个 commit 都签）；
+- 在你的首个 Pull Request 下评论 `/cla`。
 
-"You" means the individual contributing. "Contribution" means any work
-submitted to the Facet project (code, data pipeline changes, documentation,
-and annotations to the model registry table).
+## 1. 定义
 
-## 2. Grant of Copyright License
+- 「你」指做出贡献的个人。
+- 「贡献」指提交给 Facet 项目的任何作品，包括代码、数据管线变更、文档，
+  以及对模型事实表（model registry）的注解。
+- 「维护者」指有权合并代码进入项目主干的人。
 
-You grant the Facet project maintainers and recipients of software distributed
-by the project a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
-irrevocable copyright license to use, reproduce, prepare derivative works of,
-publicly display, sublicense, and distribute your Contributions under the
-project license (MIT).
+## 2. 版权授权
 
-## 3. Grant of Patent License
+你向 Facet 项目维护者，以及项目所分发软件的接收方，授予一项**永久、全球、
+非独占、免费、免版税、不可撤销**的版权许可，允许其使用、复制、制作衍生作品、
+公开展示、再许可，并依据项目许可（Apache-2.0）分发你的贡献。
 
-You grant a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
-irrevocable patent license to make, have made, use, sell, offer to sell,
-import, and otherwise transfer your Contributions, where such claims are
-necessarily infringed by your Contribution(s) alone or by combination of your
-Contribution(s) with the project.
+## 3. 专利授权
 
-## 4. Representations
+你授予一项**永久、全球、非独占、免费、免版税、不可撤销**的专利许可，允许
+制造、已制造、使用、销售、许诺销售、进口及以其他方式转让你的贡献。该许可
+仅覆盖「仅由你的贡献本身、或你的贡献与项目的组合必然侵犯」的专利权利要求。
 
-You represent that:
+## 4. 陈述与保证
 
-- you are legally entitled to grant the above licenses;
-- each Contribution is your original work, or you have sufficient rights to
-  submit it under this agreement;
-- your Contribution does not knowingly include third-party material whose
-  license is incompatible with the project license;
-- if your employer has rights to your work, you have received permission to
-  make Contributions on behalf of that employer, or your employer has waived
-  such rights for the Contribution.
+你声明并保证：
 
-## 5. Data Contributions
+- 你依法有权授予上述许可；
+- 每项贡献均为你的原创作品，或你拥有依本协议提交它的充分权利；
+- 你的贡献不包含你所知的、许可条款与本协议不兼容的第三方材料；
+- 若你的雇主对你的工作成果享有权利，你已获得雇主许可代为提交，或雇主已
+  放弃对该贡献的权利。
 
-For contributions to `registry/model-registry.json` and the sync tooling, you
-represent that the data is derived from the project's declared upstream
-sources (currently models.dev) or independently verifiable public facts, and
-you are not knowingly introducing fabricated values. The table's hard rules
-(absent == null, facts-only, USD per MTok) apply to every Contribution.
+## 5. 数据贡献
 
-## 6. No Obligation
+对 `registry/model-registry.json` 及同步工具的贡献，你声明：
 
-You are not obligated to provide support, updates, or future Contributions.
+- 数据来自项目声明的上游源（当前为 models.dev），或可独立核实的公开事实；
+- 你没有故意引入捏造的数值；
+- 事实表的硬规则（缺失字段即未知、只存事实、成本统一为美元每百万 token）
+  适用于你的每项贡献。
+
+## 6. 无义务
+
+你没有义务为本项目提供支持、更新或未来的贡献。
+
+## 7. 协议文本
+
+本协议为项目唯一有效的贡献者协议文本，以中文写成。

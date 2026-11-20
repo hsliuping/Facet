@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Self-maintaining LLM gateway over free-tier quotas, with a bundled model facts table. Zero runtime dependencies. / 自维护的免费额度聚合网关，内置模型事实表，零运行时依赖。"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "Apache-2.0"
 authors = [{ name = "Facet contributors" }]
 keywords = ["llm", "model-registry", "model-selection", "ai", "facts", "gateway", "free-tier", "router"]
 classifiers = [
