@@ -37,3 +37,5 @@ data/
 
 # Software-copyright application material: private paperwork, kept on disk only
 docs/software-copyright/
+# Demo-video production notes: working doc, kept on disk only
+docs/demo-video-plan.md
