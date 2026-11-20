@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -78,6 +80,15 @@ class Upstream(BaseHTTPRequestHandler):
             content_type = "application/json"
         else:
             self.send_response(200)
+            if mode == "truncated":
+                # Content-Length promises a huge body, then the socket closes:
+                # http.client raises IncompleteRead at the gateway.
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(32 * 1024 * 1024))
+                self.end_headers()
+                self.wfile.write(b'{"choices":[{"message":{"content":"partial"')
+                self.close_connection = True
+                return
             if mode == "stream":
                 data = b"".join(TEXT_SSE)
                 content_type = "text/event-stream"
@@ -359,6 +370,114 @@ class ResponsesGatewayTests(unittest.TestCase):
         self.assertEqual(len(entries), 2)
         self.assertTrue(all(e["api"] == "responses" for e in entries))
         self.assertTrue(all(e["status"] == "upstream_error" for e in entries))
+
+    def test_bad_request_is_reported_without_failover(self):
+        # A payload the gateway cannot prepare for a channel (protocol
+        # conversion blowing up) must come back as a 400 at once, without
+        # failover or cooldown — a client error is not a channel outage.
+        def fake_forward(h, protocol, channel, wire, body, attempt, handoff,
+                         audit=None, delivery=None):
+            return (400, "bad_request", 0.0)
+
+        with mock.patch.object(self.httpd.app, "_forward",
+                               side_effect=fake_forward):
+            status, raw_body = self.request(
+                "POST", "/v1/chat/completions",
+                {"model": "wire-a", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 400)
+        body = raw_body.decode()
+        self.assertIn("cannot prepare", body)
+        self.assertIn("plan-a", body)
+        entries = self.audit()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "bad_request")
+        self.assertEqual(self.upstream.seen, [])
+
+    def test_truncated_upstream_fails_over_then_reports_relay_error(self):
+        self.upstream.mode = "truncated"
+        status, _ = self.request(
+            "POST", "/v1/chat/completions",
+            {"model": "wire-a", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 503)
+        entries = self.audit()
+        self.assertEqual(len(entries), 2)  # both channels were tried
+        self.assertTrue(all(e["reason"] == "relay_error" for e in entries))
+        self.assertTrue(all(e["http_status"] == 502 for e in entries))
+        self.assertEqual(len(self.upstream.seen), 2)
+
+    def test_mid_stream_relay_failure_closes_the_connection(self):
+        self.upstream.mode = "stream"
+
+        class Boom:
+            def feed(self, chunk):
+                raise RuntimeError("converter exploded")
+
+            def finish(self):
+                return b""
+
+        with mock.patch("facet.gateway.server.stream_converter",
+                        return_value=Boom()):
+            status, raw_body = self.request(
+                "POST", "/v1/chat/completions",
+                {"model": "wire-a", "messages": [{"role": "user", "content": "hi"}],
+                 "stream": True})
+        self.assertEqual(status, 200)  # headers were already on the wire
+        self.assertEqual(raw_body, b"")  # the truncated body was closed out
+        entries = self.audit()
+        self.assertEqual(len(entries), 1)  # no failover once headers went out
+        self.assertEqual(entries[0]["status"], "relay_error")
+        self.assertEqual(entries[0]["http_status"], 200)
+
+    def _raw_post(self, headers_blob: bytes) -> bytes:
+        with socket.create_connection(("127.0.0.1",
+                                       self.httpd.server_address[1]),
+                                      timeout=5) as sock:
+            sock.sendall(headers_blob)
+            chunks = []
+            while True:
+                try:
+                    piece = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not piece:
+                    break
+                chunks.append(piece)
+            return b"".join(chunks)
+
+    def test_oversized_body_gets_413_and_connection_close(self):
+        # Under keep-alive the unread body would otherwise be parsed as the
+        # next request; the gateway must reject and close in one move.
+        blob = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: 999999999\r\n\r\n")
+        raw = self._raw_post(blob)
+        self.assertTrue(raw.startswith(b"HTTP/1.1 413"))
+        self.assertIn(b"connection: close", raw.lower())
+        # after the reject the server closed, not parse the next request
+        blob += (b'{"model":"wire-a","messages":[{"role":"user",'
+                 b'"content":"hi"}]}')
+        raw = self._raw_post(blob)
+        self.assertTrue(raw.startswith(b"HTTP/1.1 413"))
+        self.assertNotIn(b"400 Bad Request", raw)
+
+    def test_invalid_content_length_gets_400_and_connection_close(self):
+        blob = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: abc\r\n\r\n")
+        raw = self._raw_post(blob)
+        self.assertTrue(raw.startswith(b"HTTP/1.1 400"))
+        self.assertIn(b"connection: close", raw.lower())
+
+    def test_slow_body_gets_408_request_timeout(self):
+        # The half-open client sends headers and never the body: the socket
+        # timeout must free the handler thread with a 408.
+        with mock.patch.object(Handler, "timeout", 0.5):
+            blob = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Content-Type: application/json\r\n"
+                    b"Content-Length: 100\r\n\r\n")
+            raw = self._raw_post(blob)
+        self.assertTrue(raw.startswith(b"HTTP/1.1 408"))
+        self.assertIn(b"connection: close", raw.lower())
 
     def test_compaction_endpoint_is_explicitly_unsupported(self):
         status, raw = self.request("POST", "/v1/responses/compact", {})

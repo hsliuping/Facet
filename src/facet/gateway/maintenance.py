@@ -17,6 +17,7 @@ things really break:
 """
 from __future__ import annotations
 
+import copy
 import gzip
 import hashlib
 import html
@@ -188,9 +189,21 @@ def analyze(config, catalogs: dict, states: dict,
             if replacement:
                 mapping[AUTO_MODEL] = replacement
                 touched = True
+                # Verification order after the pick: same trust tiers (mapped
+                # survivors first, then any catalog model), longest common
+                # prefix inside a tier. verify_repoints walks this list when
+                # the primary pick fails its ping.
+                alternatives: list[str] = []
+                for tier in (mapped_survivors, pool):
+                    for model in sorted(tier, key=lambda m: (
+                            _common_prefix_len(auto_target, m), -len(m), m),
+                            reverse=True):
+                        if model != replacement and model not in alternatives:
+                            alternatives.append(model)
                 applied.append({
                     "channel": channel.name, "action": "repoint_auto",
                     "from": auto_target, "to": replacement,
+                    "alternatives": alternatives,
                     "reason": "auto 目标模型已被上游下架，自动切换到最接近的存活模型",
                 })
             else:
@@ -1349,7 +1362,7 @@ def verify_free_models(app, pairs=None) -> dict:
         row = {"channel": channel.name, "model": wire}
         try:
             reply = app._maintenance_direct_call(channel, wire,
-                                                 VERIFY_FREE_PROMPT)
+                                                 VERIFY_FREE_PROMPT, max_tokens=16)
         except Exception as exc:  # noqa: BLE001 - upstream errors vary
             text = str(exc)[:160]
             row.update({"ok": False, "dead": _failure_marks_dead(text),
@@ -1389,14 +1402,39 @@ def verify_free_models(app, pairs=None) -> dict:
     }
 
 
+def _ping_model(app, channel, model: str) -> tuple[bool, str]:
+    """(ok, error) of one tiny-budget VERIFY_FREE_PROMPT call on the channel."""
+    try:
+        reply = app._maintenance_direct_call(channel, model, VERIFY_FREE_PROMPT,
+                                             max_tokens=16)
+        ok = bool(str(reply or "").strip())
+        return ok, "" if ok else "空回复（无法判定）"
+    except Exception as exc:  # noqa: BLE001 - upstream errors vary
+        return False, str(exc)[:160]
+
+
+def _apply_models_patch(app, patch: dict) -> None:
+    """Push channel model mappings through the normal config pipeline."""
+    raw = copy.deepcopy(app.raw)
+    for channel in raw.get("channels") or []:
+        if isinstance(channel, dict) and channel.get("name") in patch:
+            channel["models"] = patch[channel["name"]]
+    app.apply_config(raw)
+
+
 def verify_repoints(app, report: dict) -> None:
     """Ping every auto target a just-applied repoint switched to.
 
     analyze() picks the replacement from trusted candidate tiers, but only an
-    upstream call proves it answers. The ping is the safety net for every
-    channel — paid ones included, where a wrong pick would otherwise bill
-    through a broken mapping until the next sweep. An unverified pick is
-    marked on its applied entry and raised as an alert in the same report.
+    upstream call proves it answers. Candidates are tried in recorded order
+    (primary pick, then alternatives): the first one whose ping answers
+    becomes the auto mapping — re-applied through the config pipeline when it
+    differs from the original pick — and definitively failed candidates are
+    dead-labelled in the maintenance pool so the console and the free-pool
+    selection avoid them. When no candidate answers, the auto mapping is
+    dropped entirely (a paid channel would otherwise keep billing through a
+    broken mapping until the next sweep) and an auto_target_gone alert
+    escalates to a human.
     """
     channels = {c.name: c for c in app.config.channels}
     for entry in report.get("applied") or []:
@@ -1405,20 +1443,48 @@ def verify_repoints(app, report: dict) -> None:
         channel = channels.get(entry.get("channel"))
         if channel is None:
             continue
-        try:
-            reply = app._maintenance_direct_call(channel, entry.get("to"),
-                                                 VERIFY_FREE_PROMPT)
-            ok = bool(str(reply or "").strip())
-            error = "" if ok else "空回复（无法判定）"
-        except Exception as exc:  # noqa: BLE001 - upstream errors vary
-            ok = False
-            error = str(exc)[:160]
-        entry["verified"] = ok
-        if not ok:
+        candidates = [entry.get("to"), *(entry.get("alternatives") or [])]
+        chosen, error = None, ""
+        for candidate in candidates:
+            ok, error = _ping_model(app, channel, candidate)
+            if ok or _failure_marks_dead(error):
+                # A pass clears a stale dead label; a definitive "this model
+                # id is gone" verdict records one. Transient ping failures
+                # (rate limits, network) label nothing.
+                with app.maintenance_pool_lock:
+                    _label_locked(app.maintenance_pool, channel.name,
+                                  candidate, ok, error)
+                save_maintenance_pool(app)
+            if ok:
+                chosen = candidate
+                break
+        entry["verified"] = chosen is not None
+        if chosen is None:
+            entry["error"] = error
             report.setdefault("alerts", []).append({
-                "channel": entry.get("channel"), "kind": "repoint_unverified",
-                "message": f"auto 已重指到 {entry.get('to')}，但验证调用失败：{error}",
+                "channel": entry.get("channel"), "kind": "auto_target_gone",
+                "message": (f"auto 重指候选全部验证失败（{error}），"
+                            "已移除 auto 映射，需人工处理"),
             })
+            try:
+                _apply_models_patch(app, {entry.get("channel"): {
+                    key: wire for key, wire in channel.models.items()
+                    if key != AUTO_MODEL}})
+            except (ValueError, OSError) as exc:
+                report.setdefault("alerts", []).append({
+                    "channel": entry.get("channel"), "kind": "apply_failed",
+                    "message": f"移除 auto 映射失败：{exc}",
+                })
+        elif chosen != entry.get("to"):
+            entry["to"] = chosen
+            try:
+                _apply_models_patch(app, {entry.get("channel"): {
+                    **channel.models, AUTO_MODEL: chosen}})
+            except (ValueError, OSError) as exc:
+                report.setdefault("alerts", []).append({
+                    "channel": entry.get("channel"), "kind": "apply_failed",
+                    "message": f"验证后改指 {chosen} 失败：{exc}",
+                })
 
 
 def probe_maintenance_models(app, candidates=None) -> dict:

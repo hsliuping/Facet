@@ -296,11 +296,16 @@ def _log_inbound_shape(body: dict, raw_len: int) -> None:
         pass  # logging must never break the request
 
 
-def _json(h: BaseHTTPRequestHandler, status: int, payload: dict, extra: dict | None = None) -> None:
+def _json(h: BaseHTTPRequestHandler, status: int, payload: dict, extra: dict | None = None,
+          close: bool = False) -> None:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     h.send_response(status)
     h.send_header("Content-Type", "application/json; charset=utf-8")
     h.send_header("Content-Length", str(len(data)))
+    if close:
+        # send_header("Connection", "close") also flips h.close_connection so
+        # the server stops reading further requests from this socket.
+        h.send_header("Connection", "close")
     for key, value in (extra or {}).items():
         h.send_header(key, str(value))
     h.end_headers()
@@ -3174,18 +3179,25 @@ class App:
             parts.append(f"Retry-After {retry_after}")
         return ": ".join(parts)
 
-    def _maintenance_direct_call(self, channel, model: str, prompt: str) -> str:
-        """One non-streaming chat turn straight against the owning channel."""
+    def _maintenance_direct_call(self, channel, model: str, prompt: str,
+                                 max_tokens: int = 6000) -> str:
+        """One non-streaming chat turn straight against the owning channel.
+
+        The 6000-token default leaves room for the LLM maintenance analysis;
+        verify/ping probes pass a tiny budget instead — a reasoning model
+        allowed its full thinking budget would burn thousands of grant tokens
+        just to say "OK".
+        """
         if self.free_quota_exhausted(channel, model):
             raise RuntimeError(
                 f"free quota exhausted for {model} on {channel.name}; "
                 "maintenance call blocked to avoid billed usage")
         protocol = channel.protocol
         if protocol == ANTHROPIC:
-            payload = {"model": model, "max_tokens": 6000,
+            payload = {"model": model, "max_tokens": max_tokens,
                        "messages": [{"role": "user", "content": prompt}]}
         else:
-            payload = {"model": model, "max_tokens": 6000, "temperature": 0,
+            payload = {"model": model, "max_tokens": max_tokens, "temperature": 0,
                        "messages": [{"role": "user", "content": prompt}]}
         normalize_kimi_temperature(payload)
         headers = {"Content-Type": "application/json"}
@@ -3236,7 +3248,7 @@ class App:
             if not model:
                 return False
             try:
-                self._maintenance_direct_call(channel, model, "ping")
+                self._maintenance_direct_call(channel, model, "ping", max_tokens=16)
                 return True
             except Exception:
                 return False
@@ -4382,7 +4394,10 @@ class App:
         # member keys above keep their own independent lifecycle.
         if not self.config.listen.api_key_enabled:
             return False
-        return hmac.compare_digest(provided, expected)
+        # compare_digest raises TypeError on non-ASCII str arguments (a Bearer
+        # token is arbitrary client bytes): compare the encoded forms instead.
+        return hmac.compare_digest(
+            (provided or "").encode("utf-8"), (expected or "").encode("utf-8"))
 
     def _authorized_admin(self, h: BaseHTTPRequestHandler) -> bool:
         """Management endpoints use listen.admin_key and nothing else.
@@ -4410,15 +4425,17 @@ class App:
         """(status, message) when an inference call would break a member cap.
 
         Caps are per key: rpm uses an in-memory sliding window, request/token
-        quotas read the usage recorder (today / this month). The RPM timestamp
-        is appended only after every check passes, so a rejected call does not
-        eat a slot. No limits -> None, exactly as before.
+        quotas read the usage recorder (today / this month). The RPM slot is
+        reserved in the same critical section as the cap check, so two
+        concurrent calls cannot both pass a full window; a call later rejected
+        by a usage quota releases its reservation. No limits -> None.
         """
         limits = (record or {}).get("limits") or {}
         if not member or not limits:
             return None
         now = time.time()
         rpm = int(limits.get("rpm") or 0)
+        reserved = None
         if rpm:
             with self._member_rpm_lock:
                 stamps = self.member_rpm.setdefault(member, [])
@@ -4427,31 +4444,41 @@ class App:
                     stamps.pop(0)
                 if len(stamps) >= rpm:
                     return (429, f"成员 {member} 已达到每分钟 {rpm} 次请求上限")
+                stamps.append(now)
+                reserved = stamps
         if self.usage:
             today = date.today()
             day_requests = int(limits.get("daily_requests") or 0)
             day_tokens = int(limits.get("daily_tokens") or 0)
             month_requests = int(limits.get("monthly_requests") or 0)
             month_tokens = int(limits.get("monthly_tokens") or 0)
+            rejected = None
             if day_requests or day_tokens:
                 used = self.usage.member_totals(member, today)
                 if day_requests and used["requests"] >= day_requests:
-                    return (429, f"成员 {member} 今日请求数配额已用完"
-                                 f"（已用 {used['requests']} / 上限 {day_requests}）")
-                if day_tokens and used["tokens"] >= day_tokens:
-                    return (429, f"成员 {member} 今日 token 配额已用完"
-                                 f"（已用 {used['tokens']} / 上限 {day_tokens}）")
-            if month_requests or month_tokens:
+                    rejected = (429, f"成员 {member} 今日请求数配额已用完"
+                                     f"（已用 {used['requests']} / 上限 {day_requests}）")
+                elif day_tokens and used["tokens"] >= day_tokens:
+                    rejected = (429, f"成员 {member} 今日 token 配额已用完"
+                                     f"（已用 {used['tokens']} / 上限 {day_tokens}）")
+            if rejected is None and (month_requests or month_tokens):
                 used = self.usage.member_totals(member, today.replace(day=1))
                 if month_requests and used["requests"] >= month_requests:
-                    return (429, f"成员 {member} 本月请求数配额已用完"
-                                 f"（已用 {used['requests']} / 上限 {month_requests}）")
-                if month_tokens and used["tokens"] >= month_tokens:
-                    return (429, f"成员 {member} 本月 token 配额已用完"
-                                 f"（已用 {used['tokens']} / 上限 {month_tokens}）")
-        if rpm:
-            with self._member_rpm_lock:
-                self.member_rpm.setdefault(member, []).append(now)
+                    rejected = (429, f"成员 {member} 本月请求数配额已用完"
+                                     f"（已用 {used['requests']} / 上限 {month_requests}）")
+                elif month_tokens and used["tokens"] >= month_tokens:
+                    rejected = (429, f"成员 {member} 本月 token 配额已用完"
+                                     f"（已用 {used['tokens']} / 上限 {month_tokens}）")
+            if rejected is not None:
+                # The call never reaches inference: give the RPM slot back so
+                # a quota-blocked caller cannot lock itself out of the window.
+                if reserved is not None:
+                    with self._member_rpm_lock:
+                        try:
+                            reserved.remove(now)
+                        except ValueError:
+                            pass
+                return rejected
         return None
 
     def update_key_limits(self, key: str, limits) -> dict:
@@ -6041,11 +6068,35 @@ class App:
                     if handoff:
                         with self.store.lock:
                             self.store.states[channel.name].handoffs += 1
-                    self.log_request(**entry, status="ok", http_status=200,
+                    # A mid-response relay failure already sent headers to the
+                    # client: audit it as relay_error instead of a clean ok.
+                    relay_error = delivery.get("relay_error")
+                    if relay_error:
+                        entry["reason"] = relay_error
+                    self.log_request(**entry,
+                                     status="relay_error" if relay_error else "ok",
+                                     http_status=200,
                                      tokens=delivery.get("tokens", 0),
                                      input_tokens=delivery.get("input_tokens", 0),
                                      cached_tokens=delivery.get("cached_tokens", 0))
                     self.store.bind_session(session, channel.name, time.time())
+                    return
+
+                if error[1] == "bad_request":
+                    # The request never left the gateway (conversion failed on
+                    # a malformed payload): no failover, no cooldown — just the
+                    # client's own mistake spelled out.
+                    message = (delivery.get("bad_request")
+                               or "request could not be prepared for the upstream")
+                    entry["reason"] = "bad_request"
+                    self.log_request(**entry, status="bad_request", http_status=400)
+                    _json(h, 400, {
+                        "error": {
+                            "message": (f"gateway cannot prepare this request for "
+                                        f"channel {channel.name}: {message}"),
+                            "channel": channel.name,
+                        },
+                    }, audit)
                     return
 
                 reason = error[1]
@@ -6080,43 +6131,52 @@ class App:
         audit = audit or {}
         if delivery is None:
             delivery = {}
-        payload = dict(body)
-        payload["model"] = wire
-        normalize_kimi_temperature(payload)
-        stream = bool(payload.get("stream"))
-        # The channel speaks its own wire protocol; when that differs from the
-        # client's, the payload is converted right here at the boundary (P1-3).
-        wire_proto = channel.protocol
-        if wire_proto != protocol:
-            payload = convert_request(payload, protocol, wire_proto)
-        if (stream and wire_proto == OPENAI and self.config.defaults.track_stream_usage
-                and "stream_options" not in payload):
-            payload["stream_options"] = {"include_usage": True}
-        upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, wire_proto)
-        headers = {"Content-Type": "application/json"}
-        if channel.api_key:
-            if wire_proto == OPENAI:
-                headers["Authorization"] = f"Bearer {channel.api_key}"
-            else:
-                headers["x-api-key"] = channel.api_key
-        if wire_proto == ANTHROPIC:
-            headers["anthropic-version"] = (
-                h.headers.get("anthropic-version") if h is not None else None
-            ) or "2023-06-01"
-        client_session = ""
-        if h is not None:
-            client_session = (h.headers.get("x-opencode-session")
-                              or h.headers.get("x-session-id") or "")
-        apply_upstream_headers(headers, channel.base_url,
-            body=body, api_key=channel.api_key or "",
-            client_session=client_session)
-        req = Request(
-            channel.base_url + upstream_path,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         now = time.time()
+        try:
+            payload = dict(body)
+            payload["model"] = wire
+            normalize_kimi_temperature(payload)
+            stream = bool(payload.get("stream"))
+            # The channel speaks its own wire protocol; when that differs from the
+            # client's, the payload is converted right here at the boundary (P1-3).
+            wire_proto = channel.protocol
+            if wire_proto != protocol:
+                payload = convert_request(payload, protocol, wire_proto)
+            if (stream and wire_proto == OPENAI and self.config.defaults.track_stream_usage
+                    and "stream_options" not in payload):
+                payload["stream_options"] = {"include_usage": True}
+            upstream_path = upstream_path_for(channel.base_url, channel.upstream_path, wire_proto)
+            headers = {"Content-Type": "application/json"}
+            if channel.api_key:
+                if wire_proto == OPENAI:
+                    headers["Authorization"] = f"Bearer {channel.api_key}"
+                else:
+                    headers["x-api-key"] = channel.api_key
+            if wire_proto == ANTHROPIC:
+                headers["anthropic-version"] = (
+                    h.headers.get("anthropic-version") if h is not None else None
+                ) or "2023-06-01"
+            client_session = ""
+            if h is not None:
+                client_session = (h.headers.get("x-opencode-session")
+                                  or h.headers.get("x-session-id") or "")
+            apply_upstream_headers(headers, channel.base_url,
+                body=body, api_key=channel.api_key or "",
+                client_session=client_session)
+            req = Request(
+                channel.base_url + upstream_path,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+        except Exception as exc:
+            # A malformed-but-JSON client payload (e.g. max_tokens:"1000"
+            # rejected by the protocol conversion) is the caller's fault, not
+            # the channel's: answer 400 without cooling down a healthy channel
+            # or burning failover attempts on every sibling.
+            if delivery is not None:
+                delivery["bad_request"] = repr(exc)[:300]
+            return (400, "bad_request", 0.0)
         try:
             resp = open_with_proxy(req, channel.timeout, channel.proxy)
         except HTTPError as exc:
@@ -6185,8 +6245,23 @@ class App:
                 self.store.record_score(channel.name, wire, 1)
                 return None
             except Exception as exc:
+                # A relay failure after the upstream answered is the gateway's
+                # own post-processing (usage parse, adapter), not channel
+                # health: no cooldown, no score. While no byte has reached the
+                # client an honest failover is still possible; mid-response
+                # there is nothing left to send but the audit trail.
+                detail = repr(exc)[:300]
                 with self.store.lock:
-                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                    self.store.states[channel.name].last_error = detail
+                if delivery is not None:
+                    delivery["relay_error"] = detail
+                    if not delivery.get("headers_sent"):
+                        return (502, "relay_error", 0.0)
+                if h is not None:
+                    # Mid-response failure: the client already holds truncated
+                    # headers/body on a keep-alive socket. Close it so the
+                    # client sees EOF instead of hanging on a dead stream.
+                    h.close_connection = True
                 return None
 
     def _relay(self, h, resp, protocol, channel, wire, attempt, handoff, stream,
@@ -6205,6 +6280,8 @@ class App:
         if (getattr(resp, "status", 0) or 200) >= 400:
             data = resp.read()
             self.record_usage(channel.name, False, model=wire, h=h)
+            if delivery is not None:
+                delivery["headers_sent"] = True
             h.send_response(resp.status)
             ctype = resp.headers.get("Content-Type")
             if ctype:
@@ -6227,6 +6304,8 @@ class App:
             buffer = b""
             stopped = False
             try:
+                if delivery is not None:
+                    delivery["headers_sent"] = True
                 h.send_response(200)
                 h.send_header("Content-Type", resp.headers.get("Content-Type") or "text/event-stream")
                 h.send_header("Cache-Control", "no-cache")
@@ -6321,6 +6400,8 @@ class App:
             extra["X-Cached-Tokens"] = str(cached_tokens)
         if adapter is not None:
             data = adapter.finish(data)
+        if delivery is not None:
+            delivery["headers_sent"] = True
         h.send_response(200)
         h.send_header("Content-Type", resp.headers.get("Content-Type") or "application/json")
         h.send_header("Content-Length", str(len(data)))
@@ -6334,6 +6415,11 @@ class App:
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "PlanRouter/0.1"
+    # StreamRequestHandler socket timeout: bounds rfile reads (a half-open
+    # client stalling mid-body used to pin a thread forever) and reaps idle
+    # keep-alive sockets. Relays write small chunks as upstream data arrives,
+    # so a healthy stream never blocks a single write for this long.
+    timeout = 120
 
     def do_GET(self):  # noqa: N802
         self._run("GET")
@@ -6348,12 +6434,24 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            _json(self, 400, {"error": {"message": "invalid Content-Length"}})
+            # The body is left unread on the socket: under keep-alive those
+            # bytes would be parsed as the next request, so close instead.
+            _json(self, 400, {"error": {"message": "invalid Content-Length"}}, close=True)
             return
         if length > MAX_BODY_BYTES:
-            _json(self, 413, {"error": {"message": "request body too large"}})
+            # Same as above: the oversize body is never consumed, so the
+            # connection must end here (send_header also sets close_connection).
+            _json(self, 413, {"error": {"message": "request body too large"}}, close=True)
             return
-        raw = self.rfile.read(length) if length else b""
+        try:
+            raw = self.rfile.read(length) if length else b""
+        except TimeoutError:
+            # The socket timeout (Handler.timeout) fired mid-body: answer and
+            # drop the connection instead of leaving the client hanging.
+            self.close_connection = True
+            _json(self, 408, {"error": {"message": "request body read timed out"}},
+                  close=True)
+            return
         self.server.app.dispatch(self, method, urlsplit(self.path).path, raw)
 
     def log_message(self, fmt: str, *args) -> None:

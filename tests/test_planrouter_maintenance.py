@@ -492,7 +492,8 @@ class RunMaintenanceTests(unittest.TestCase):
                     "endpoint": "http://upstream/v1"}
 
         app._fetch_catalog = fake_probe  # no network in tests
-        app._maintenance_direct_call = lambda channel, model, prompt: "OK"
+        app._maintenance_direct_call = (
+            lambda channel, model, prompt, max_tokens=6000: "OK")
         report = app.run_maintenance("manual")
 
         self.assertEqual(report["trigger"], "manual")
@@ -519,7 +520,7 @@ class RunMaintenanceTests(unittest.TestCase):
              "endpoint": "http://upstream/v1"})
         pings = []
 
-        def direct_call(channel, model, prompt):
+        def direct_call(channel, model, prompt, max_tokens=6000):
             pings.append((channel.name, model))
             return "OK"
 
@@ -531,22 +532,67 @@ class RunMaintenanceTests(unittest.TestCase):
         self.assertNotIn("repoint_unverified",
                          [a["kind"] for a in report["alerts"]])
 
-    def test_repoint_ping_failure_raises_an_alert(self):
+    def test_repoint_all_candidates_dead_removes_auto_and_alerts(self):
         app = self.app
         app.store.record_catalog("a", ["gpt-old", "gpt-keep"], "http://upstream/v1")
         app._fetch_catalog = lambda payload: (
             {"ok": True, "name": payload.get("name"), "models": ["gpt-keep"],
              "endpoint": "http://upstream/v1"})
 
-        def boom(channel, model, prompt):
+        def boom(channel, model, prompt, max_tokens=6000):
             raise RuntimeError("HTTP Error 404: model not found")
 
         app._maintenance_direct_call = boom
         report = app.run_maintenance("manual")
         repoint = next(e for e in report["applied"] if e["action"] == "repoint_auto")
         self.assertFalse(repoint["verified"])
-        self.assertIn("repoint_unverified",
-                      [a["kind"] for a in report["alerts"]])
+        kinds = [a["kind"] for a in report["alerts"]]
+        self.assertIn("auto_target_gone", kinds)
+        self.assertNotIn("repoint_unverified", kinds)
+        # a paid channel must not keep billing through a broken auto mapping
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        models = next(c["models"] for c in raw["channels"] if c["name"] == "a")
+        self.assertEqual(models, {"gpt-keep": "gpt-keep"})  # auto dropped
+        self.assertIn(("a", "gpt-keep"), maint.dead_model_set(app))
+
+    def test_repoint_falls_back_to_next_candidate_when_pick_is_dead(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                          encoding="utf-8")
+        tmp.close()
+        path = Path(tmp.name)
+        cfg = maintenance_config()
+        cfg["channels"][0]["models"] = {"gpt-old": "gpt-old", "auto": "gpt-old"}
+        path.write_text(json.dumps(cfg), encoding="utf-8")
+        app = App(load_config(path), config_path=path)
+        app.providers = []
+        try:
+            app.store.record_catalog(
+                "a", ["gpt-old", "gpt-a1", "gpt-a2"], "http://upstream/v1")
+            app._fetch_catalog = lambda payload: (
+                {"ok": True, "name": payload.get("name"),
+                 "models": ["gpt-a1", "gpt-a2"], "endpoint": "http://upstream/v1"})
+
+            def flaky(channel, model, prompt, max_tokens=6000):
+                if model == "gpt-a2":  # the closest-prefix pick died upstream
+                    raise RuntimeError("HTTP Error 404: model gone")
+                return "OK"
+
+            app._maintenance_direct_call = flaky
+            report = app.run_maintenance("manual")
+            repoint = next(e for e in report["applied"]
+                           if e["action"] == "repoint_auto")
+            self.assertTrue(repoint["verified"])
+            self.assertEqual(repoint["to"], "gpt-a1")  # fell back to next
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            models = next(c["models"] for c in raw["channels"]
+                          if c["name"] == "a")
+            self.assertEqual(models.get("auto"), "gpt-a1")
+            self.assertIn(("a", "gpt-a2"), maint.dead_model_set(app))
+        finally:
+            path.unlink(missing_ok=True)
+            Path(str(path) + ".maintenance.bak").unlink(missing_ok=True)
+            (path.parent / "maintenance.jsonl").unlink(missing_ok=True)
+            (path.parent / "maintenance_models.json").unlink(missing_ok=True)
 
     def test_run_records_jsonl_log(self):
         app = self.app
@@ -1593,7 +1639,7 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         channel.models.update({m: m for m in
                                ["alive", "gone", "busy", "broken"]})
 
-        def fake(ch, model, prompt):
+        def fake(ch, model, prompt, max_tokens=6000):
             if model == "alive":
                 return "OK"
             if model == "gone":
@@ -1617,7 +1663,8 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                                "HTTP Error 404: model not found")
         self.assertIn(("a", wire), maint.dead_model_set(self.app))
         # A later verification that succeeds removes the label immediately.
-        self.app._maintenance_direct_call = lambda ch, model, prompt: "OK"
+        self.app._maintenance_direct_call = (
+            lambda ch, model, prompt, max_tokens=6000: "OK")
         maint.verify_free_models(self.app)
         self.assertEqual(maint.dead_model_labels(self.app), {})
         # A label nobody rechecks disappears on its own after the TTL.
@@ -2066,6 +2113,32 @@ class MaintenanceModelPoolTests(unittest.TestCase):
         self.assertIn(channel.api_key, captured["auth"])
         self.assertEqual(captured["timeout"],
                          max(60, self.app.config.defaults.timeout))
+
+    def test_maintenance_direct_call_max_tokens_budget(self):
+        """分析调用默认 6000；探测 ping 传显式小预算，不烧思考 token。"""
+        channel = self.app.config.channels[1]  # "b", openai
+        captured: list[int] = []
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def fake_open(req, timeout, proxy=""):
+            captured.append(json.loads(req.data.decode())["max_tokens"])
+            return FakeResp()
+
+        with mock.patch("facet.gateway.server.open_with_proxy", fake_open):
+            self.app._maintenance_direct_call(channel, "gpt-x", "prompt")
+            self.app._maintenance_direct_call(channel, "gpt-x", "ping",
+                                              max_tokens=16)
+        self.assertEqual(captured, [6000, 16])
 
 
 class SystemCallUsageTests(unittest.TestCase):

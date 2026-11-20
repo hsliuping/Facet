@@ -5,6 +5,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -841,6 +842,14 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(self.check(app, "wrong"), (False, ""))
         self.assertEqual(self.check(app, ""), (False, ""))
 
+    def test_auth_compares_non_ascii_keys_without_crashing(self):
+        # hmac.compare_digest raises TypeError on non-ASCII str inputs;
+        # the gateway must encode both sides before comparing.
+        app = self.app(api_key="主密钥-甲")
+        self.assertEqual(self.check(app, "主密钥-甲"), (True, ""))
+        self.assertEqual(self.check(app, "主密钥-乙"), (False, ""))
+        self.assertEqual(self.check(app, "master-key"), (False, ""))
+
     def test_member_key_is_a_valid_credential_and_attributes(self):
         app = self.app()
         record = app.keys.create("alice")
@@ -974,6 +983,46 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(len(app.member_rpm["carol"]), 2)
         app.member_rpm["carol"] = [time.time() - 120]
         self.assertIsNone(app._member_limited(h.user_key, h.member_record))
+
+    def test_rpm_reservation_is_atomic_under_concurrency(self):
+        # A thundering herd must not squeeze extra calls past the cap: the
+        # check and the window append happen in one critical section.
+        app = self.app()
+        record = app.keys.create("dana", limits={"rpm": 5})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        ready = threading.Barrier(40)
+        results: list = []
+        lock = threading.Lock()
+
+        def probe():
+            ready.wait()
+            verdict = app._member_limited(h.user_key, h.member_record)
+            with lock:
+                results.append(verdict)
+
+        workers = [threading.Thread(target=probe) for _ in range(40)]
+        for t in workers:
+            t.start()
+        for t in workers:
+            t.join()
+        passed = [r for r in results if r is None]
+        self.assertEqual(len(passed), 5)
+        self.assertEqual(len(app.member_rpm["dana"]), 5)
+
+    def test_quota_rejection_releases_the_rpm_reservation(self):
+        # A call blocked by a usage quota never reaches inference; keeping its
+        # rpm slot would let repeated rejects lock the member out entirely.
+        app = self.app()
+        record = app.keys.create("erin", limits={"rpm": 3, "daily_requests": 1})
+        h = _FakeHandler({"Authorization": "Bearer " + record["key"]})
+        self.assertTrue(app._authorized(h))
+        app.record_usage("plan-a", True, 0, h=h)  # daily quota spent up front
+        for _ in range(4):
+            status, message = app._member_limited(h.user_key, h.member_record)
+            self.assertEqual(status, 429)
+            self.assertIn("今日请求数配额已用完", message)
+        self.assertEqual(len(app.member_rpm["erin"]), 0)
 
     def test_member_usage_tracks_channels_and_totals(self):
         app = self.app()
