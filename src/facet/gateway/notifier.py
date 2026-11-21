@@ -348,7 +348,12 @@ class ReminderService:
                 entry = runtime.setdefault(key, {"active": False, "last_sent": 0.0, "title": ""})
                 fresh = not entry.get("active")
                 entry["title"] = str(cond.get("title") or key)
-                if not fresh and now - float(entry.get("last_sent") or 0) < RUNTIME_THROTTLE_SECONDS:
+                # The window fences on last_sent, not on `active`: an alert
+                # that resolves and re-arms within the window (a counter
+                # flapping around its threshold) resets `active`, so gating
+                # on `fresh` would push every 60s loop pass all over again.
+                if now - float(entry.get("last_sent") or 0) < RUNTIME_THROTTLE_SECONDS:
+                    entry["active"] = True
                     continue  # same cause already alarmed inside the window
                 entry["active"] = True
                 entry["last_sent"] = now

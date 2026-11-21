@@ -484,17 +484,20 @@ class RunMaintenanceTests(unittest.TestCase):
         app = self.app
         app.store.record_catalog("a", ["gpt-old", "gpt-keep"], "http://upstream/v1")
         app.store.record_catalog("b", ["gpt-x"], "http://upstream/v1")
+        # the catalog refresher swept first and its second record diffed the
+        # upstream change into the stored catalog; the maintenance pass
+        # minutes later reuses that fresh sweep (catalogs_reused) and must
+        # still apply the catalog-confirmed mapping changes
+        app.store.record_catalog("a", ["gpt-keep"], "http://upstream/v1")
 
-        def fake_probe(payload):
-            name = payload.get("name") if isinstance(payload, dict) else payload
-            models = ["gpt-keep"] if name == "a" else ["gpt-x"]
-            return {"ok": True, "name": name, "models": models,
-                    "endpoint": "http://upstream/v1"}
+        def no_refetch(payload):
+            raise AssertionError("catalogs fresh enough: no refetch expected")
 
-        app._fetch_catalog = fake_probe  # no network in tests
+        app._fetch_catalog = no_refetch
         app._maintenance_direct_call = (
             lambda channel, model, prompt, max_tokens=6000: "OK")
         report = app.run_maintenance("manual")
+        self.assertTrue(report["catalogs_reused"])
 
         self.assertEqual(report["trigger"], "manual")
         actions = [(e["channel"], e["action"]) for e in report["applied"]]

@@ -333,6 +333,35 @@ class NotifierTests(OpsFixture):
         self.assertFalse(service.status()["runtime"]["route:openai:cheap"]["active"])
         self.assertTrue(service.status()["history"][0]["resolved"])
 
+    def test_runtime_alert_flap_stays_inside_the_window(self):
+        sent = []
+
+        def sender(request):
+            sent.append(json.loads(request.data.decode("utf-8"))["text"]["content"])
+
+        conditions: list[dict] = [{
+            "kind": "probe_failing", "key": "probe:plan-a",
+            "title": "渠道连续失败：plan-a", "message": "x",
+        }]
+        service = ReminderService(
+            self.subs_path, self.root / "notifications.json",
+            lambda: [],
+            lambda: {"notify_enabled": True, "webhook_url": "https://example.com/hook",
+                     "interval_minutes": 60},
+            sender=sender, get_health=lambda: list(conditions),
+        )
+        self.assertEqual(service.check_runtime()["sent"], 1)
+        # the alert resolves, then re-arms within the throttle window (a
+        # counter flapping around its threshold): the re-arm must not bypass
+        # the window, or every 60s loop pass would push the alert again
+        conditions.clear()
+        self.assertEqual(service.check_runtime()["resolved"], 1)
+        conditions.append({"kind": "probe_failing", "key": "probe:plan-a",
+                           "title": "渠道连续失败：plan-a", "message": "x"})
+        self.assertEqual(service.check_runtime()["sent"], 0)
+        self.assertEqual(len(sent), 2)  # initial alert + resolved, no re-push
+        self.assertTrue(service.status()["runtime"]["probe:plan-a"]["active"])
+
     def test_runtime_alert_records_history_without_webhook(self):
         def sender(request):
             raise AssertionError("should not send")

@@ -13,6 +13,7 @@ import shutil
 import sys
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -119,12 +120,23 @@ RUNTIME_ALERT_ERROR_THRESHOLD = 3
 # Consecutive failed cycles of one scheduled sweep before it raises a runtime
 # alert (self-maintenance breaking must be visible without watching the console).
 TASK_FAIL_ALERT_THRESHOLD = 2
+# A sweep gate queues a contender for this long before giving up with the
+# busy reply: the console button (and any other contender) waits out the
+# running sweep instead of vanishing into a busy skip.
+GATE_QUEUE_WAIT = 600.0
+# A maintenance pass re-uses catalog results this fresh instead of fetching
+# every upstream /models endpoint a second time: the catalog refresher's
+# sweep runs minutes before the maintenance pass on every schedule, and the
+# two sweeps hitting the same endpoints back to back doubled the traffic
+# without learning anything new.
+CATALOG_REUSE_WINDOW = 900.0
 # The freshness freeze trips a little past one sweep interval, not exactly at
-# it: the task loop schedules the next sweep from the previous one's
-# completion, so a healthy stamp-to-stamp gap is interval + vendor-command
-# time (capped by freealign.CMD_TIMEOUT). Tripping at the bare interval would
-# flap the channel frozen for that tail window every cycle even when nothing
-# is wrong; the grace only defers real staleness by two minutes.
+# it: the task loop anchors the next sweep on the previous cycle's start, so
+# a healthy stamp-to-stamp gap is exactly one interval, but a cycle that
+# runs long (vendor commands are capped by freealign.CMD_TIMEOUT) delays its
+# successor past that anchor. Tripping at the bare interval would flap the
+# channel frozen for that tail window every cycle even when nothing is
+# wrong; the grace only defers real staleness by two minutes.
 STALE_FREEZE_GRACE = 120.0
 # Human names for the persisted artefacts whose failed writes runtime_alerts
 # reports (see App._note_write_failure / usage / notifier write callbacks).
@@ -630,6 +642,66 @@ def _row_better(old: dict, new: dict) -> bool:
     return rank(new) < rank(old)
 
 
+class SerialGate:
+    """One-at-a-time execution where contenders queue instead of being dropped.
+
+    The scheduled sweep and the console button share one gate per concern
+    (config-apply, free verify, source watch). A plain lock with a
+    non-blocking acquire answered a manual click with a busy reply whenever
+    a scheduled sweep was in its minutes-long cycle, and the operator had to
+    know to click again later. Queueing instead: contenders wait up to
+    GATE_QUEUE_WAIT for the holder to release, then run in arrival order.
+    Ownership transfers directly from the releaser to the head of the queue
+    (no thundering herd, no unfair re-acquire race against other waiters).
+    """
+
+    def __init__(self, wait: float = GATE_QUEUE_WAIT):
+        self._wait = wait
+        self._lock = threading.Lock()
+        self._waiters: deque[threading.Event] = deque()
+        self._held = False
+
+    def acquire(self, timeout: float | None = None) -> bool:
+        timeout = self._wait if timeout is None else timeout
+        with self._lock:
+            if not self._held:
+                self._held = True
+                return True
+            if timeout <= 0:
+                return False
+            waiter = threading.Event()
+            self._waiters.append(waiter)
+        if waiter.wait(timeout):
+            return True
+        # Timed out — unless ownership was handed over in between, in which
+        # case this caller does hold the gate and must release it.
+        with self._lock:
+            if waiter in self._waiters:
+                self._waiters.remove(waiter)
+                return False
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            waiter = self._waiters.popleft() if self._waiters else None
+            if waiter is None:
+                self._held = False
+        if waiter is not None:
+            waiter.set()  # _held stays True: ownership moved to the waiter
+
+    def __enter__(self):
+        # Unlike threading.Lock, acquire can time out; callers that must be
+        # certain they hold the gate should pass a short wait instead of
+        # relying on the protocol (a False acquire here means the body runs
+        # unguarded — do not use `with` across the busy path).
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
 class ScheduledTask:
     """Shared loop and status bookkeeping for the periodic sweeps.
 
@@ -685,10 +757,15 @@ class ScheduledTask:
         if self._stop.wait(self.FIRST_DELAY):
             return
         while True:
+            started = time.time()
             self._run()
             delay = self.next_delay()
-            self.next_run_at = time.time() + delay
-            if self._stop.wait(delay):
+            # Anchor the next cycle on this cycle's START, not its
+            # completion: completion-anchoring adds the cycle's own duration
+            # to every interval, so the beat drifts forward by however long
+            # a sweep takes, indefinitely.
+            self.next_run_at = started + delay
+            if self._stop.wait(max(0.0, self.next_run_at - time.time())):
                 return
 
     def next_delay(self) -> float:
@@ -1175,13 +1252,14 @@ class App:
         # free-quota alignment sweep both rewrite channel mappings through
         # apply_config (read self.raw -> write file -> swap), so a second pass
         # would silently drop the other's mapping. Scheduled runners and the
-        # console buttons share this lock; a manual click during a run backs
-        # off instead of interleaving patches and duplicating reports.
-        self.config_apply_lock = threading.Lock()
+        # console buttons share this gate; a contender arriving mid-run
+        # queues and runs when the holder releases, instead of being dropped
+        # with a busy reply while a sweep runs for minutes.
+        self.config_apply_lock = SerialGate()
         # Same for the free-pool verification sweep (scheduled + button).
-        self.free_verify_lock = threading.Lock()
+        self.free_verify_lock = SerialGate()
         # Same for the source-watch sweep (scheduled + button).
-        self.watch_lock = threading.Lock()
+        self.watch_lock = SerialGate()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
         self.maintenance_pool = maint.load_maintenance_pool(self)
         self.maintenance_pool_lock = threading.Lock()
@@ -3055,23 +3133,51 @@ class App:
         config backup); LLM output and quota heuristics become suggestions
         for the console. Never raises: failures land in the report.
         """
-        if not self.config_apply_lock.acquire(blocking=False):
+        if not self.config_apply_lock.acquire():
             # The scheduled runner and the console button must not interleave:
-            # both patch channel mappings and write reports.
+            # both patch channel mappings and write reports. The contender
+            # queues on the gate; only a sweep running past GATE_QUEUE_WAIT
+            # still lands here.
             return {"busy": True, "trigger": trigger, "patch": {},
                     "applied": [], "suggestions": [], "alerts": [],
-                    "message": "上一次自维护仍在运行，本次已跳过"}
+                    "message": f"上一次自维护仍在运行（已排队等待"
+                               f"{int(GATE_QUEUE_WAIT)}秒），本次已跳过"}
         try:
             return self._run_maintenance(trigger)
         finally:
             self.config_apply_lock.release()
 
+    def _catalogs_fresh(self, window: float) -> bool:
+        """True when every refreshable channel's catalog was fetched lately.
+
+        Mirrors refresh_all_catalogs' channel filter (enabled + api_key), so
+        "fresh" means exactly "a recent sweep covered everything this pass
+        would fetch".
+        """
+        now = time.time()
+        for channel in self.config.channels:
+            if not channel.enabled or not channel.api_key:
+                continue
+            with self.store.lock:
+                catalog = self.store.catalogs.get(channel.name) or {}
+                fetched = float(catalog.get("fetched_at") or 0)
+            if not fetched or now - fetched > window:
+                return False
+        return True
+
     def _run_maintenance(self, trigger: str) -> dict:
-        refresh = self.refresh_all_catalogs()
+        # The catalog refresher's sweep runs minutes ahead of this pass and
+        # fetches exactly the same endpoints; re-fetching them all again
+        # doubled the traffic without learning anything new. Reuse when
+        # fresh enough, sweep otherwise.
+        reuse = self._catalogs_fresh(CATALOG_REUSE_WINDOW)
+        refresh = [] if reuse else self.refresh_all_catalogs()
         with self.store.lock:
             catalogs = {name: dict(entry) for name, entry in self.store.catalogs.items()}
             states = self.store.snapshot()["channels"]
         report = maint.analyze(self.config, catalogs, states, refresh)
+        if reuse:
+            report["catalogs_reused"] = True
 
         if report["patch"]:
             self._backup_config("maintenance")
@@ -3338,11 +3444,14 @@ class App:
         channels narrows the sweep to the named free channels, so checking
         one tier does not wait on every other tier's mappings.
 
-        The scheduled sweep and the console button share one lock: with a
+        The scheduled sweep and the console button share one gate: with a
         full pool a sweep takes minutes, and two overlapping sweeps would
-        double the upstream calls and race on the pool labels.
+        double the upstream calls and race on the pool labels. A contender
+        arriving mid-sweep queues instead of being dropped.
         """
-        if not self.free_verify_lock.acquire(blocking=False):
+        if not self.free_verify_lock.acquire():
+            # The contender queues on the gate; this branch only fires when
+            # a sweep runs past GATE_QUEUE_WAIT.
             return {"skipped": "running", "trigger": trigger, "checked": 0,
                     "alive": 0, "dead": 0, "inconclusive": 0,
                     "scanned_at": 0, "results": [], "dead_models": []}
@@ -3363,7 +3472,9 @@ class App:
         both fetch the same dozens of URLs, and two overlapping sweeps would
         race on change-snapshots.json and duplicate events.
         """
-        if not self.watch_lock.acquire(blocking=False):
+        if not self.watch_lock.acquire():
+            # The contender queues on the gate; this branch only fires when
+            # a sweep runs past GATE_QUEUE_WAIT.
             return {"busy": True, "trigger": trigger, "sources": 0,
                     "appended": 0, "events": [], "summary": ""}
         try:
@@ -3549,12 +3660,16 @@ class App:
 
         Shares App.config_apply_lock with run_maintenance: both passes rewrite
         channel mappings through apply_config, so a manual click during a
-        scheduled run (either direction) backs off instead of interleaving.
+        scheduled run (either direction) queues behind it instead of
+        interleaving.
         """
-        if not self.config_apply_lock.acquire(blocking=False):
+        if not self.config_apply_lock.acquire():
+            # The contender queues on the gate; this branch only fires when
+            # a pass runs past GATE_QUEUE_WAIT.
             return {"busy": True, "trigger": trigger, "aligned": [],
                     "patch": {}, "alerts": [], "quota": {},
-                    "message": "上一次自维护仍在运行，本次对齐已跳过"}
+                    "message": f"上一次自维护仍在运行（已排队等待"
+                               f"{int(GATE_QUEUE_WAIT)}秒），本次对齐已跳过"}
         try:
             return self._run_free_align(trigger)
         finally:

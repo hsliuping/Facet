@@ -19,7 +19,7 @@ from facet.gateway import watch as watch_mod
 from facet.gateway.core import load_config, parse_config
 from facet.gateway.notifier import (ReminderService, change_digest,
                                     webhook_kind, webhook_payload)
-from facet.gateway.server import App, PERSIST_KIND_LABELS
+from facet.gateway.server import App, PERSIST_KIND_LABELS, SerialGate
 
 
 def watch_config() -> dict:
@@ -545,6 +545,9 @@ class RunnerWiringTests(unittest.TestCase):
         self.assertEqual(self.app.watch_runner.next_run_at, 0)
 
     def test_manual_run_uses_lock_and_reports_busy(self):
+        # a short wait keeps the busy path testable; with the default gate
+        # wait the contender would queue for minutes instead
+        self.app.watch_lock = SerialGate(wait=0.2)
         with self.app.watch_lock:
             report = self.app.run_change_watch("manual")
         self.assertTrue(report["busy"])
