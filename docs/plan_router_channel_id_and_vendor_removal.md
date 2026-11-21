@@ -17,11 +17,11 @@ Solution:
 3. Subscriptions loaded from legacy data (name-based channels) are auto-migrated on first startup: match each subscription channel name → channel name → id; persist the new id; henceforth the subscription stores channel ids.
 
 Files to modify (critical path, not exhaustive):
-- src/planrouter/core.py: Channel id field; parse_config auto-generate; merge_secrets id-first.
-- src/planrouter/subscriptions.py: normalize vendor optional; helper _resolve_channel(ref) -> Channel; plan kept as primary name.
-- src/planrouter/server.py: channel_tier/model_tier/id-aware; _plan_creds_for from channels.provider; subscription load-time name→id migration; blocked_channels/id-aware.
-- src/planrouter/static/app.js: subscription editor remove vendor field; channel picker id-value+name display; table vendor column derived from channels provider; banner/report derived vendor.
-- src/planrouter/static/index.html: updated sub-note text about score decay / tie-breaking (already completed in prior work; unchanged here).
+- src/facet/gateway/core.py: Channel id field; parse_config auto-generate; merge_secrets id-first.
+- src/facet/gateway/subscriptions.py: normalize vendor optional; helper _resolve_channel(ref) -> Channel; plan kept as primary name.
+- src/facet/gateway/server.py: channel_tier/model_tier/id-aware; _plan_creds_for from channels.provider; subscription load-time name→id migration; blocked_channels/id-aware.
+- src/facet/gateway/static/app.js: subscription editor remove vendor field; channel picker id-value+name display; table vendor column derived from channels provider; banner/report derived vendor.
+- src/facet/gateway/static/index.html: updated sub-note text about score decay / tie-breaking (already completed in prior work; unchanged here).
 - data/subscriptions.json: one-time migration executed by server on startup.
 
 Approach rationale:

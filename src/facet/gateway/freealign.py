@@ -303,6 +303,14 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
                     "message": f"免费额度命令执行失败（{str(exc)[:160]}），保留原映射",
                 })
                 continue
+        if results[key] is None:
+            # A sibling channel on the same (cmd, creds) already failed and
+            # alerted. Aligning to rows=[] would wipe this channel's mapping
+            # (auto -> paid fallback) — the opposite of the promise above.
+            report["skipped"].append({
+                "channel": channel.name,
+                "missing": "共享凭据的免费额度命令失败，保留原映射"})
+            continue
         rows = results[key] or []
         # Per-model safety margin: a model sitting inside the reserve is
         # treated as spent here too, or auto would keep pointing at a model

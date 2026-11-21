@@ -508,7 +508,7 @@ def run_watch(app) -> dict:
         legacy = (old or {}).get("last_event_key")
         if isinstance(legacy, str) and legacy and legacy not in keys:
             keys.append(legacy)
-        entry["last_event_keys"] = keys
+        entry["last_event_keys"] = keys[-EVENT_KEY_KEEP:]
         if not result["ok"]:
             error_count += 1
             entry.update({"ok": False, "error": result["error"],

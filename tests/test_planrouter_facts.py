@@ -214,7 +214,7 @@ class FactsEndpointTests(unittest.TestCase):
             self.assertEqual(data["record"]["provider"], "zhipuai")
             status, data = self.call(base, "/api/facts/resolve/no-such-model")
             self.assertEqual(status, 404)
-            self.assertIn("unresolved", data["error"])
+            self.assertIn("unresolved", data["error"]["message"])
 
 
 if __name__ == "__main__":

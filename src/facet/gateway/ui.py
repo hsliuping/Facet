@@ -181,7 +181,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         facts = facts_mod.snapshot()
         key = facts.resolve(name)
         if not key:
-            return _json(h, 404, {"error": f"unresolved: {name}"})
+            return _json(h, 404, {"error": {"message": f"unresolved: {name}"}})
         return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
     if path == "/api/models/compare" and method == "GET":
         _json(h, 200, benchmarks_mod.payload())
@@ -612,12 +612,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         return True
 
     if path == "/api/changes/run" and method == "POST":
-        # One watch sweep now; a busy sweep answers with busy: true (409).
+        # One watch sweep now. A busy sweep answers 200 with busy: true —
+        # the console api() helper throws on any non-2xx status, and the
+        # busy toast is an expected outcome, not an error.
         report = app.run_change_watch("manual")
-        if report.get("busy"):
-            _json(h, 409, report)
-        else:
-            _json(h, 200, report)
+        _json(h, 200, report)
         return True
 
     if path == "/api/changes/read" and method == "POST":
@@ -826,7 +825,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": "invalid channel name"}})
             return True
         ok = app.reset_channel(name)
-        _json(h, 200 if ok else 404, {"ok": ok, "channel": name})
+        if ok:
+            _json(h, 200, {"ok": True, "channel": name})
+        else:
+            _json(h, 404, {"ok": False, "channel": name,
+                           "error": {"message": f"渠道不存在：{name}"}})
         return True
 
     if path == "/api/score/reset" and method == "POST":
@@ -863,17 +866,33 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         router_path = Path(app.config_path or "router.json")
         router_path.parent.mkdir(parents=True, exist_ok=True)
         if router_path.exists():
-            existing = json.loads(router_path.read_text(encoding="utf-8"))
+            # A corrupted config must abort the save, never be overwritten
+            # from this half-known state (the request only carries wizard
+            # state — rewriting router.json with it would drop the user's
+            # channels and routes).
+            try:
+                existing = json.loads(router_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                existing = None
+            if not isinstance(existing, dict):
+                _json(h, 500, {"ok": False, "error": {
+                    "message": "配置文件损坏：无法保存向导状态，请先在「配置」页修复 router.json"}})
+                return True
         else:
             existing = {}
         # Ensure setup dict exists and mark wizard_done
         existing.setdefault("setup", {})
         if done is True:
             existing["setup"]["wizard_done"] = True
-        router_path.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        try:
+            router_path.write_text(
+                json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            _json(h, 500, {"ok": False,
+                           "error": {"message": f"无法写入配置文件：{exc}"}})
+            return True
         _json(h, 200, {"ok": True, "wizard_done": existing["setup"].get("wizard_done")})
         return True
 

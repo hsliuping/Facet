@@ -77,7 +77,7 @@ class KeyStore:
     def create(self, name: str, limits=None) -> dict:
         name = str(name or "").strip()[:60]
         if not name:
-            raise ValueError("name is required")
+            raise ValueError("名称不能为空")
         record = {
             "key": KEY_PREFIX + secrets.token_hex(16),
             "name": name,

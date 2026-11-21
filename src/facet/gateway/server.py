@@ -401,7 +401,7 @@ def _parse_multipart(headers: dict, body: bytes) -> dict:
 
     content_type = headers.get("Content-Type") or headers.get("content-type") or ""
     if "multipart/form-data" not in content_type.lower():
-        raise ValueError("not multipart/form-data")
+        raise ValueError("请求体不是 multipart/form-data 格式")
 
     # Use email.parser to parse multipart data.
     # The parser needs the Content-Type header to know the boundary.
@@ -2642,7 +2642,7 @@ class App:
     def reload_from_disk(self) -> Config:
         raw = self._read_raw()
         if not raw:
-            raise ValueError("config file not found or unreadable")
+            raise ValueError("配置文件不存在或无法读取")
         return self.apply_config(raw, persist=False)
 
     def _swap(self, config: Config) -> None:
@@ -3005,7 +3005,9 @@ class App:
                     "error": f"免费额度命令执行失败：{str(exc)[:200]}",
                     "hint": "确认厂家 CLI 已安装、AK/SK 属于该厂家账号，"
                             "且子账号有免费额度查询权限"}
-        models = freealign_mod.free_models_from_rows(rows)
+        reserve = FREE_RESERVE_TOKENS.get(
+            str(channel.get("provider") or ""), FREE_RESERVE_DEFAULT_TOKENS)
+        models = freealign_mod.free_models_from_rows(rows, reserve=reserve)
         result = {"ok": True, "name": name, "source": "free-quota",
                   "endpoint": "cmd:" + " ".join(cmd),
                   "models": models, "count": len(models)}
@@ -3118,7 +3120,7 @@ class App:
             try:
                 return self._fetch_catalog(payload)
             except Exception as exc:  # one broken channel must not stop the sweep
-                return {"ok": False, "name": name, "error": repr(exc)[:200]}
+                return {"ok": False, "name": name, "error": str(exc)[:200]}
 
         results = []
         if payloads:
@@ -4133,7 +4135,7 @@ class App:
         if not isinstance(payload, dict) or not payload.get("kind"):
             raise ValueError("body 必须携带建议（kind）")
         if not self.config_path:
-            raise ValueError("config path unknown")
+            raise ValueError("配置路径未知")
         sig = maint.suggestion_signature(payload)
         path = self.config_path.with_name("maintenance-ignored.json")
         sigs = self._load_ignored_suggestions()
@@ -4157,7 +4159,7 @@ class App:
         ``<config>.<tag>.bak`` next to the config, never an arbitrary path.
         """
         if not self.config_path:
-            raise ValueError("config path unknown")
+            raise ValueError("配置路径未知")
         tag = str(tag or "")
         if not re.fullmatch(r"[A-Za-z0-9_-]+", tag):
             raise ValueError("无效的备份标签")
@@ -4790,7 +4792,8 @@ class App:
                 elif name in blocked:
                     status_map[name] = "blocked"
                 else:
-                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    with self.store.lock:
+                        ok, why = self.store.states[name].available(time.time(), channel.rate)
                     status_map[name] = "ok" if ok else why
             message = "no healthy channel for this route/model"
             if status_map and all(
@@ -5061,7 +5064,8 @@ class App:
                 elif name in blocked:
                     status_map[name] = "blocked"
                 else:
-                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    with self.store.lock:
+                        ok, why = self.store.states[name].available(time.time(), channel.rate)
                     status_map[name] = "ok" if ok else why
             message = "no healthy channel with rerank capability for this route/model"
             if status_map and all(
@@ -5359,7 +5363,8 @@ class App:
                 elif name in blocked:
                     status_map[name] = "blocked"
                 else:
-                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    with self.store.lock:
+                        ok, why = self.store.states[name].available(time.time(), channel.rate)
                     status_map[name] = "ok" if ok else why
             message = "no healthy channel with TTS capability for this route/model"
             if status_map and all(
@@ -5684,7 +5689,8 @@ class App:
                 elif name in blocked:
                     status_map[name] = "blocked"
                 else:
-                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    with self.store.lock:
+                        ok, why = self.store.states[name].available(time.time(), channel.rate)
                     status_map[name] = "ok" if ok else why
             message = f"no healthy channel with {endpoint} capability for this route/model"
             if status_map and all(
@@ -6120,7 +6126,8 @@ class App:
                 elif name in blocked:
                     status_map[name] = "blocked"
                 else:
-                    ok, why = self.store.states[name].available(time.time(), channel.rate)
+                    with self.store.lock:
+                        ok, why = self.store.states[name].available(time.time(), channel.rate)
                     status_map[name] = "ok" if ok else why
             message = "no healthy channel for this route/model"
             if status_map and all(
@@ -6153,7 +6160,8 @@ class App:
             }, {**audit, "X-Routed-Via": "none", "X-Failover-Count": "0"})
             return
 
-        sticky = self.store.session_channel(session, time.time())
+        with self.store.lock:
+            sticky = self.store.session_channel(session, time.time())
         failures: list[dict] = []
         attempt = 0
         queue = list(candidates[: self.config.defaults.max_failover + 1])
@@ -6326,7 +6334,7 @@ class App:
                     seconds, reason, now, per_model=per_model, wire=wire,
                     half_open=not quota,
                 )
-            self.record_usage(channel.name, False, model=wire)
+            self.record_usage(channel.name, False, model=wire, h=h)
             # Quota exhaustion is the plan running out, not instability:
             # it cools the channel but never touches the stability score.
             if not quota:

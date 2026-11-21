@@ -5,7 +5,7 @@
 ## 背景（两个问题）
 
 1. **Docker 容器首启丢预设**。普通运行（`facet serve` 无配置）首次启动会由
-   [seed.py](../src/planrouter/seed.py) 生成带厂家标注的预设渠道
+   [seed.py](src/facet/gateway/seed.py) 生成带厂家标注的预设渠道
    （pollinations / nvidia-nim / google-ai-studio / z-ai-glm / anthropic-template，均含
    `provider` + `mode`）。而 [docker/entrypoint.py](../docker/entrypoint.py) 首启拷贝的是
    `router.example.json` —— 一个指向 mock 上游的联调测试配置，完全没有厂家预设。
@@ -15,7 +15,7 @@
 
 2. **渠道创建缺少厂家强关联判断**。`cd527d1` 只做了三件事：种子渠道打标、旧编辑页
    保存时继承 provider/mode、编辑器 UI 前端必选校验。后端 `POST /api/config`
-   （[server.py](../src/planrouter/server.py) `apply_config`）从不校验厂家：
+   （[server.py](src/facet/gateway/server.py) `apply_config`）从不校验厂家：
    不选厂家、或写一个不存在的厂家/模式，都能保存成功。
 
 ## 设计

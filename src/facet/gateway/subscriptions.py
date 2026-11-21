@@ -151,11 +151,15 @@ def enrich(record: dict, on: date | None = None) -> dict:
     on = on or date.today()
     expires = _date(record.get("expires_at"), "expires_at")
     days_left = (expires - on).days if expires else None
+    # remind_days=0 means "remind on the last day"; only a missing field
+    # falls back to the default — `or` here would swallow the legal 0.
+    remind = record.get("remind_days")
+    remind = DEFAULT_REMIND_DAYS if remind is None else int(remind)
     if days_left is None:
         status = "unknown"
     elif days_left < 0:
         status = "expired"
-    elif days_left <= int(record.get("remind_days") or DEFAULT_REMIND_DAYS):
+    elif days_left <= remind:
         status = "expiring"
     else:
         status = "active"

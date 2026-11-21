@@ -17,8 +17,7 @@ STATE_FIELDS = (
 WINDOW_SECONDS = 86400
 
 
-def capture(store, now: float | None = None) -> dict:
-    now = time.time() if now is None else now
+def _snapshot(store, now: float) -> dict:
     channels = {}
     for name, state in store.states.items():
         entry = {field: getattr(state, field) for field in STATE_FIELDS}
@@ -38,6 +37,20 @@ def capture(store, now: float | None = None) -> dict:
     }
     return {"saved_at": now, "channels": channels, "catalogs": catalogs,
             "rr_cursor": rr_cursor, "scores": scores}
+
+
+def capture(store, now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    # capture() iterates the live dicts that serving threads mutate under
+    # the store lock; taking the same lock keeps the snapshot atomic (the
+    # lock is reentrant, so a capture from a thread already inside the
+    # store's critical section stays safe). Stores without a lock attribute
+    # (tests, plain dict-like stand-ins) still work.
+    lock = getattr(store, "lock", None)
+    if lock is None:
+        return _snapshot(store, now)
+    with lock:
+        return _snapshot(store, now)
 
 
 def restore(store, data: dict, now: float | None = None) -> int:
@@ -155,8 +168,16 @@ class StatePersistence:
 
     def flush(self) -> None:
         with self._lock:
-            snapshot = capture(self._get_store())
-            compare = json.dumps(self._fingerprint(snapshot), sort_keys=True)
+            try:
+                snapshot = capture(self._get_store())
+                compare = json.dumps(self._fingerprint(snapshot), sort_keys=True)
+            except Exception as exc:
+                # A capture that explodes (store mutated mid-iteration, a
+                # broken field) must not kill the persistence thread: report
+                # it through the runtime-alert channel and keep looping.
+                if self._on_error:
+                    self._on_error("state", exc)
+                return
             if compare == self._last:
                 return
             tmp = self.path.with_name(self.path.name + ".tmp")

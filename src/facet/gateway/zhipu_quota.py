@@ -190,6 +190,7 @@ def fetch_coding_plan(api_key: str, timeout: float = 30.0,
         result["end_time"] = end_time
     if summary_parts:
         result["summary"] = " · ".join(summary_parts)
-    if auto_renew:
-        result["auto_renew"] = auto_renew
+    # Always report the bool: the subscriptions table renders a 开关 state,
+    # and a missing key would render as "unknown" instead of "off".
+    result["auto_renew"] = auto_renew
     return result

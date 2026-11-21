@@ -16,7 +16,7 @@ from . import facts as facts_mod
 DATA = Path(__file__).resolve().parent.parent / "data"
 # Repo checkout: same files, source of truth under registry/ (data/ is a
 # build-time snapshot directory and is gitignored).
-REPO_DATA = DATA.parent.parent.parent.parent / "registry"
+REPO_DATA = DATA.parent.parent.parent / "registry"
 
 
 def _load(name: str, fallback: dict) -> dict:
@@ -132,7 +132,12 @@ def payload() -> dict:
     for grp in coverage:
         entries = []
         for item in grp.get("models", []):
-            mid = item["id"]
+            # Coverage feeds are hand-maintained; a stray entry without an
+            # id (or a bare string) must be skipped, not crash the compare
+            # table for every model.
+            mid = item.get("id") if isinstance(item, dict) else None
+            if not mid:
+                continue
             mdl = scores.get(mid, {})
             raw_scores = mdl.get("scores", [])
             enriched = []

@@ -540,7 +540,7 @@ function renderSummary() {
     ['渠道总数', kw ? `${rows.length} / ${s.channels.length}` : rows.length, ''],
     ['可用渠道', rows.length - cooling, 'ok'],
     ['冷却中', cooling, cooling ? 'warn' : ''],
-    ['累计请求', requests, ''],
+    ['累计请求', requests.toLocaleString(), ''],
     ['累计 Tokens', tokens.toLocaleString(), ''],
     ['监听地址', listen, ''],
   ];
@@ -575,7 +575,7 @@ function renderStatus() {
       <td>${remain}</td>
       <td>${Number(c.total_requests).toLocaleString()} / ${Number(c.served_requests).toLocaleString()} / ${Number(c.failed_requests).toLocaleString()}</td>
       <td>${c.total_tokens.toLocaleString()}</td>
-      <td>${c.handoffs}</td>
+      <td>${Number(c.handoffs || 0).toLocaleString()}</td>
       <td><span class="err" title="${esc(c.last_error)}">${esc(c.last_error) || '—'}</span></td>
       <td><button class="btn small ghost" data-action="reset" data-name="${esc(c.name)}">解除冷却</button></td>
     </tr>`;
@@ -1191,7 +1191,7 @@ function renderDashboard() {
   const req = usage.days.map((d) => d.requests);
   const tok = usage.days.map((d) => d.tokens);
   el.innerHTML = `<div class="chart-grid">
-    <div class="chart-block"><h4>每日请求数（合计 ${req.reduce((a, b) => a + b, 0)}）</h4>${bars(req, '#5b9dff')}</div>
+    <div class="chart-block"><h4>每日请求数（合计 ${req.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${bars(req, '#5b9dff')}</div>
     <div class="chart-block"><h4>每日 Tokens（合计 ${tok.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${sparkline(tok, '#8a6cff')}</div>
   </div>`;
 }
@@ -2102,7 +2102,7 @@ function renderUsage() {
   const cacheRows = (usage.channels || []).filter((c) => c.input_tokens);
   el.innerHTML = `
     <div class="chart-grid">
-      <div class="chart-block"><h4>每日请求数（合计 ${totalRequests}）</h4>${bars(requests, '#5b9dff')}</div>
+      <div class="chart-block"><h4>每日请求数（合计 ${totalRequests.toLocaleString()}）</h4>${bars(requests, '#5b9dff')}</div>
       <div class="chart-block"><h4>每日 Tokens（合计 ${totalTokens.toLocaleString()}）</h4>${sparkline(tokens, '#8a6cff')}</div>
     </div>
     <div class="chart-block" style="margin-top:14px">
@@ -2110,7 +2110,7 @@ function renderUsage() {
       ${distribution.length ? distribution.map((c) => `<div class="dist-row">
         <span>${esc(c.name)}</span>
         <div class="dist-bar"><span style="width:${(c.requests / largest * 100).toFixed(1)}%"></span></div>
-        <span class="dist-value">${c.requests} 次</span>
+        <span class="dist-value">${Number(c.requests).toLocaleString()} 次</span>
       </div>`).join('') : '<div class="chart-empty">暂无渠道用量</div>'}
     </div>
     <div class="chart-block" style="margin-top:14px">
@@ -2166,7 +2166,7 @@ function renderUsageModels(usage) {
       <td><code>${esc(r.model)}</code></td>
       <td>${esc(r.channel)}</td>
       <td>${tierBadge(r.tier) || '<span class="sub-note">未标注</span>'}</td>
-      <td>${r.requests} / ${r.failed}</td>
+      <td>${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
       <td>${Number(r.tokens || 0).toLocaleString()}</td>
       <td>${cacheRate}</td>
       <td>${last}</td>
@@ -2187,6 +2187,8 @@ async function loadMembers(range) {
   const usage = await api('/api/usage/users/' + state.memberRange);
   document.querySelectorAll('[data-member-range]').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.memberRange) === state.memberRange));
+  const note = $('member-usage-note');
+  if (note) note.textContent = `按成员 key 归属统计最近 ${state.memberRange} 天用量；不带 key 的调用记入「所有人」`;
   renderMemberUsage(usage);
 }
 
@@ -2426,7 +2428,7 @@ function renderMemberUsage(usage) {
     const paused = r.enabled === false ? '<span class="tag unknown">已暂停</span>' : '';
     return `<tr>
       <td>${esc(r.name || '匿名')} ${spike} ${paused}</td>
-      <td>${r.requests} / ${r.failed}</td>
+      <td>${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
       <td>${Number(r.tokens || 0).toLocaleString()}</td>
       <td>${rate}</td>
       <td>${esc(quotaProgress(r))}</td>
@@ -4171,7 +4173,7 @@ function renderReport() {
   $('report-note').textContent = `${r.month} · ${r.active_days} 天有用量 · ${r.note}`;
   $('report-metrics').innerHTML = [
     ['月等效成本', cost, ''],
-    ['请求 / 成功 / 失败', `${r.total.requests} / ${r.total.success} / ${r.total.failed}`, ''],
+    ['请求 / 成功 / 失败', `${Number(r.total.requests).toLocaleString()} / ${Number(r.total.success).toLocaleString()} / ${Number(r.total.failed).toLocaleString()}`, ''],
     ['Tokens', r.total.tokens.toLocaleString(), ''],
     ['渠道数', r.channels.length, ''],
   ].map(([label, value, cls]) =>
@@ -4181,13 +4183,13 @@ function renderReport() {
         <td><strong>${esc(s.vendor)}</strong><br><span class="sub-note">${esc(s.account) || '—'}</span></td>
         <td>${esc(s.plan)}<br><span class="sub-note">${esc(s.tier) || '未填档位'}</span></td>
         <td>${esc(s.monthly_equivalent?.amount ?? '—')} ${esc(s.currency)}</td>
-        <td>${s.usage.requests} / ${s.usage.failed}</td>
+        <td>${Number(s.usage.requests).toLocaleString()} / ${Number(s.usage.failed).toLocaleString()}</td>
         <td>${s.usage.tokens.toLocaleString()}</td>
         <td class="${s.quota_ratio !== null && s.quota_ratio !== undefined && s.quota_ratio <= 0.15 ? 'quota-low' : 'sub-note'}">${s.quota_remaining === null || s.quota_remaining === undefined ? '—' : esc(s.quota_remaining + ' ' + (s.quota_unit || ''))}</td>
       </tr>`).join('')
     : '<tr><td colspan="6" class="sub-note">还没有订阅记录</td></tr>';
   $('report-channels').textContent = '渠道用量：' + (r.channels.map((c) =>
-    `${c.name} ${c.requests} 次 / ${c.tokens} tokens${c.linked ? '' : '（未关联订阅）'}`).join(' · ') || '暂无');
+    `${c.name} ${Number(c.requests).toLocaleString()} 次 / ${c.tokens} tokens${c.linked ? '' : '（未关联订阅）'}`).join(' · ') || '暂无');
 }
 
 $('btn-load-report').onclick = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));

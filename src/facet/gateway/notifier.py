@@ -381,20 +381,22 @@ class ReminderService:
             # give the server a moment to come up, then check once
             if self._stop.wait(10):
                 return
-            self.check()
-            self.check_runtime()
-            last_full = time.time()
+            last_full = 0.0
             while True:
-                # runtime conditions are cheap to scan and deserve a quick
-                # verdict; renewal checks keep their configurable cadence and
-                # pick up interval changes without restarting the router
+                # A crashing check (bad settings value, sender outage) must
+                # not silently kill the reminder thread: report through the
+                # same write-error channel the recorders use, keep looping.
+                try:
+                    self.check_runtime()
+                    interval = max(1, int(self.get_settings()["interval_minutes"])) * 60
+                    if time.time() - last_full >= interval:
+                        self.check()
+                        last_full = time.time()
+                except Exception as exc:
+                    if self._on_write_error:
+                        self._on_write_error("notifier", exc)
                 if self._stop.wait(60):
                     return
-                self.check_runtime()
-                interval = max(1, int(self.get_settings()["interval_minutes"])) * 60
-                if time.time() - last_full >= interval:
-                    self.check()
-                    last_full = time.time()
 
         self._thread = threading.Thread(target=loop, daemon=True, name="planrouter-reminder")
         self._thread.start()

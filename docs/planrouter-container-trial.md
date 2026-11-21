@@ -66,7 +66,7 @@
 
 | # | 问题 | 根因 | 修复 |
 | --- | --- | --- | --- |
-| 1 | 容器 crash loop：`FileNotFoundError .../planrouter/providers.json` | 内置厂家注册表 [src/planrouter/providers.json](../src/planrouter/providers.json) 被宽泛的 `providers.json` gitignore 规则覆盖，且 pyproject package-data 未包含 → wheel 缺文件 | [pyproject.toml](../pyproject.toml) package-data 增 `planrouter = ["static/*", "providers.json"]`，重建镜像 |
+| 1 | 容器 crash loop：`FileNotFoundError .../planrouter/providers.json` | 内置厂家注册表 [src/facet/gateway/providers.json](src/facet/gateway/providers.json) 被宽泛的 `providers.json` gitignore 规则覆盖，且 pyproject package-data 未包含 → wheel 缺文件 | [pyproject.toml](../pyproject.toml) package-data 增 `planrouter = ["static/*", "providers.json"]`，重建镜像 |
 | 2 | 首启播种路径不存在 | entrypoint 写的模板名（router.template.json）与 Dockerfile COPY 目标（router.example.json）不一致 | entrypoint 对齐为 `/opt/planrouter/router.example.json` |
 | 3 | 宿主访问容器 HTTP 全部空响应（TCP 可握手、HTTP 无数据） | `data/router.json` 沿用宿主配置 `listen.host: "127.0.0.1"`——在容器内只绑容器回环，端口发布成死路 | 容器实配改 `listen.host: "0.0.0.0"`（密钥仍 `env:` 引用，安全性不变） |
 

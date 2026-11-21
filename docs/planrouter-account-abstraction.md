@@ -14,11 +14,11 @@ OpenRouter / DeepSeek / 匿名免费站这类「单账号单 Key」厂家不建�
 
 | 位置 | 现在承担的职责 | 问题 |
 | --- | --- | --- |
-| [`Channel`](../src/planrouter/core.py#L258-L291) | 请求路径（base_url + api_key + models）+ 账号身份 + 管理面凭据 `creds` | 一个对象三种语义；同账号三条业务线要重复填三份 AK/SK |
+| [`Channel`](src/facet/gateway/core.py#L258-L291) | 请求路径（base_url + api_key + models）+ 账号身份 + 管理面凭据 `creds` | 一个对象三种语义；同账号三条业务线要重复填三份 AK/SK |
 | `Subscription.account` | 自由字符串标签 | 只是展示文本，改字即失联；无法按账号聚合 |
 | `config.credentials[provider]` | 厂家级共享凭据 | 与 `channel.creds` 语义重叠，形成两套「账号」 |
-| [`_plan_creds_for`](../src/planrouter/server.py#L671-L703) | 用订阅里第一个渠道名反查 AK/SK，`"agentplan" in vendor` 猜业务线 | 文本约定脆弱；无渠道时只能回落到固定的 `volcengine` 槽 |
-| [`_creds_for`](../src/planrouter/freealign.py#L135-L147) | 「渠道即账号」 | 同账号多渠道各自复制一份凭据，改一处漏两处 |
+| [`_plan_creds_for`](src/facet/gateway/server.py#L671-L703) | 用订阅里第一个渠道名反查 AK/SK，`"agentplan" in vendor` 猜业务线 | 文本约定脆弱；无渠道时只能回落到固定的 `volcengine` 槽 |
+| [`_creds_for`](src/facet/gateway/freealign.py#L135-L147) | 「渠道即账号」 | 同账号多渠道各自复制一份凭据，改一处漏两处 |
 
 真实厂家结构：
 
@@ -119,7 +119,7 @@ Subscription（套餐）──account_id──> Account
 
 `channel.creds` 保留不动：既是旧配置的兼容载体，也是「本渠道借用其他账号凭据」的显式覆盖。
 
-### 4.3 `Subscription` 增量（[subscriptions.py](../src/planrouter/subscriptions.py) `normalize`）
+### 4.3 `Subscription` 增量（[subscriptions.py](src/facet/gateway/subscriptions.py) `normalize`）
 
 | 字段 | 说明 |
 | --- | --- |
@@ -128,7 +128,7 @@ Subscription（套餐）──account_id──> Account
 
 `account` 字符串保留，作为展示与旧数据兼容字段，不再参与凭据查找。
 
-### 4.4 `Config`（[core.py](../src/planrouter/core.py)）
+### 4.4 `Config`（[core.py](src/facet/gateway/core.py)）
 
 新增 `accounts: tuple[Account, ...]`（`Account` 为 frozen dataclass），
 `parse_config` 在解析 `channels` 之前先解析 `accounts`，供渠道引用校验。
@@ -137,9 +137,9 @@ Subscription（套餐）──account_id──> Account
 
 ## 五、凭据解析：统一入口
 
-新增单函数 `resolve_creds(channel, config)`（放在新的 `src/planrouter/accounts.py`，
-与 `subscriptions.py` 同级），替换 [freealign.py](../src/planrouter/freealign.py#L135-L147)
-与 [server.py](../src/planrouter/server.py#L671-L703) 里的散装逻辑：
+新增单函数 `resolve_creds(channel, config)`（放在新的 `src/facet/gateway/accounts.py`，
+与 `subscriptions.py` 同级），替换 [freealign.py](src/facet/gateway/freealign.py#L135-L147)
+与 [server.py](src/facet/gateway/server.py#L671-L703) 里的散装逻辑：
 
 ```python
 def resolve_creds(channel, config) -> dict[str, str]:
@@ -171,7 +171,7 @@ channel.creds（显式覆盖）
 
 ## 六、校验规则
 
-解析与保存所有配置的必经点是 `parse_config` + [`apply_config`](../src/planrouter/server.py#L968-L978)。
+解析与保存所有配置的必经点是 `parse_config` + [`apply_config`](src/facet/gateway/server.py#L968-L978)。
 新增校验（错误消息中文、指名对象与修复方法）：
 
 | 对象 | 规则 |
@@ -210,7 +210,7 @@ channel.creds（显式覆盖）
 - `volcengine`：`coding` → `plan_api: "coding"`，`agent` → `plan_api: "agent"`，`payg` 不声明。
 - 其它厂家暂不声明，行为与今天一致（不查余量、不报错）。
 
-`plan_api` 加入 [`INHERIT_IF_EMPTY`](../src/planrouter/providers.py#L44)，旧 overlay 模式条目
+`plan_api` 加入 [`INHERIT_IF_EMPTY`](src/facet/gateway/providers.py#L44)，旧 overlay 模式条目
 不会因缺字段而抹掉新能力。`kind` 的最终解析顺位：
 `business_line` → 关联渠道 `mode` 的 `plan_api` → 账号 `provider` 对应模式下唯一的 `plan_api`。
 
@@ -277,14 +277,14 @@ channel.creds（显式覆盖）
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/planrouter/accounts.py`（新） | `Account` 校验工具、`resolve_creds`、凭据键校验、合并候选扫描 |
-| `src/planrouter/core.py` | `Config.accounts`、`Account` dataclass、`parse_config` 解析与校验、`Config.account(id)` 查询 |
-| `src/planrouter/server.py` | `public_config` 掩码、`merge_secrets` 回填、`apply_config` 引用校验、`_plan_creds_for` 重写 |
-| `src/planrouter/freealign.py` | `_creds_for` 改调 `resolve_creds`，去重键带账号 |
-| `src/planrouter/subscriptions.py` | `normalize` 增加 `account_id` / `business_line`，保留 `account` |
-| `src/planrouter/providers.json` | 模式新增可选 `plan_api`（仅火山声明） |
-| `src/planrouter/providers.py` | `INHERIT_IF_EMPTY` 增加 `plan_api` |
-| `src/planrouter/static/app.js` / `style.css` | 厂家页账号列表、渠道编辑器「所属账号」、订阅表单账号 / 业务线、合并动作 |
+| `src/facet/gateway/accounts.py`（新） | `Account` 校验工具、`resolve_creds`、凭据键校验、合并候选扫描 |
+| `src/facet/gateway/core.py` | `Config.accounts`、`Account` dataclass、`parse_config` 解析与校验、`Config.account(id)` 查询 |
+| `src/facet/gateway/server.py` | `public_config` 掩码、`merge_secrets` 回填、`apply_config` 引用校验、`_plan_creds_for` 重写 |
+| `src/facet/gateway/freealign.py` | `_creds_for` 改调 `resolve_creds`，去重键带账号 |
+| `src/facet/gateway/subscriptions.py` | `normalize` 增加 `account_id` / `business_line`，保留 `account` |
+| `src/facet/gateway/providers.json` | 模式新增可选 `plan_api`（仅火山声明） |
+| `src/facet/gateway/providers.py` | `INHERIT_IF_EMPTY` 增加 `plan_api` |
+| `src/facet/gateway/static/app.js` / `style.css` | 厂家页账号列表、渠道编辑器「所属账号」、订阅表单账号 / 业务线、合并动作 |
 | `tests/` | 见 §十三 |
 
 请求转发路径零改动，风险集中在配置读写与 UI。
