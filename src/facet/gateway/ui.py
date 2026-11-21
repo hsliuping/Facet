@@ -128,6 +128,10 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.request_log_payload(limit))
         return True
 
+    if path == "/api/diagnostics" and method == "GET":
+        _json(h, 200, app.diagnostics_payload())
+        return True
+
     if path == "/api/config" and method == "GET":
         _json(h, 200, app.public_config())
         return True

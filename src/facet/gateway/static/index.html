@@ -1027,10 +1027,33 @@
           <div class="panel-head">
             <div>
               <h2>请求日志</h2>
-              <p>最近请求与转发的完整审计。只记录选路元数据，不含 prompt、密钥与模型输出。</p>
+              <p>最近请求与转发的完整审计。只记录选路元数据，不含 prompt、密钥与模型输出。点击任意一行可查看该次请求的完整尝试时间线与排障建议。</p>
             </div>
             <div class="actions">
+              <button class="btn ghost" id="btn-export-diagnostics" title="导出脱敏诊断包：含掩码后的配置、渠道状态与最近请求记录，可安全附在问题反馈里">导出诊断包</button>
               <button class="btn ghost" id="btn-refresh-requests">刷新</button>
+            </div>
+          </div>
+          <div class="free-toolbar">
+            <div class="filter-row">
+              <select id="requests-status-filter" class="filter-input" aria-label="按结果筛选">
+                <option value="">全部结果</option>
+                <option value="ok">成功</option>
+                <option value="local">本地估算</option>
+                <option value="upstream_error">上游错误</option>
+                <option value="network_error">网络错误</option>
+                <option value="no_candidate">无可用渠道</option>
+                <option value="rejected">模型被拒绝</option>
+                <option value="cooldown">额度冷却</option>
+              </select>
+              <select id="requests-range-filter" class="filter-input" aria-label="按时间筛选">
+                <option value="all">全部时间</option>
+                <option value="1h">最近 1 小时</option>
+                <option value="24h">最近 24 小时</option>
+                <option value="7d">最近 7 天</option>
+              </select>
+              <input type="search" id="requests-query" class="filter-input"
+                placeholder="筛选：模型 / 渠道 / 上游模型…" aria-label="搜索请求日志">
             </div>
           </div>
           <div class="table-wrap">

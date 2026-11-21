@@ -59,6 +59,7 @@ const state = {
   backups: null,
   dashUsage: null,
   channelUsage: null,
+  requestFilter: { status: '', query: '', range: 'all' },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -3133,17 +3134,37 @@ function renderRequests() {
     $('requests-note').textContent = (data && data.note) || '请求审计未启用';
     return;
   }
-  $('requests-note').textContent = `${data.note} · 最近 ${data.entries.length} 条 · ${(data.size / 1024).toFixed(1)} KB`;
+  const f = state.requestFilter;
+  const entries = data.entries.filter((e) => {
+    if (f.status && e.status !== f.status) return false;
+    if (f.range !== 'all') {
+      const ts = new Date(e.ts).getTime();
+      if (!isFinite(ts)) return false;
+      const spans = { '1h': 3600e3, '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
+      if (Date.now() - ts > (spans[f.range] || 0)) return false;
+    }
+    if (f.query) {
+      const hay = `${e.model || ''} ${e.channel || ''} ${e.wire_model || ''} ${e.route || ''}`.toLowerCase();
+      if (!hay.includes(f.query.toLowerCase())) return false;
+    }
+    return true;
+  });
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">没有符合筛选条件的请求。</td></tr>';
+    $('requests-note').textContent = `${data.note} · 共 ${data.entries.length} 条，筛选后 0 条 · ${(data.size / 1024).toFixed(1)} KB`;
+    return;
+  }
+  $('requests-note').textContent = `${data.note} · 共 ${data.entries.length} 条，筛选后 ${entries.length} 条 · ${(data.size / 1024).toFixed(1)} KB · 点击行查看详情`;
   const labels = {
     ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
     no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
     cooldown: '额度冷却',
   };
-  tbody.innerHTML = data.entries.map((e) => {
+  tbody.innerHTML = entries.map((e, i) => {
     const cls = e.status === 'ok' || e.status === 'local' ? 'active'
       : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
     const at = logTime(e.ts);
-    return `<tr>
+    return `<tr data-rid="${esc(e.rid || '')}" data-idx="${i}" style="cursor:pointer" title="点击查看详情与排障建议">
       <td>${esc(at.time)}${at.date ? `<br><span class="sub-note">${esc(at.date)}</span>` : ''}</td>
       <td><code>${esc(e.model || '—')}</code></td>
       <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(reasonText(e.reason))}</span></td>
@@ -3170,7 +3191,147 @@ function cacheCell(e) {
   return `${rate}%<br><span class="sub-note">${Number(cached).toLocaleString()} / ${Number(input).toLocaleString()} tok</span>`;
 }
 
+// Human-readable cooldown length for the diagnosis block: 7200 -> "2 小时".
+function fmtCooldown(seconds) {
+  const s = Number(seconds) || 0;
+  if (s >= 3600) return `${parseFloat((s / 3600).toFixed(1))} 小时`;
+  if (s >= 60) return `${Math.round(s / 60)} 分钟`;
+  return `${Math.round(s)} 秒`;
+}
+
+// Translate one audit entry (routing metadata only) into a diagnosis the
+// operator can act on. The audit does not store upstream error text, so the
+// mapping keys off status / reason marker / HTTP status observed by the relay.
+function translateRequest(e) {
+  const http = Number(e.http_status || 0);
+  const reason = String(e.reason || '');
+  const cd = Number(e.cooldown_seconds || 0);
+  if (e.status === 'ok') {
+    return { title: '请求成功', detail: '渠道按预期返回了响应。', fixes: [] };
+  }
+  if (e.status === 'local') {
+    return { title: '本地估算', detail: '这次调用没有经过上游，由网关本地完成。', fixes: [] };
+  }
+  if (e.status === 'rejected') {
+    return { title: '模型名未映射', detail: '请求的模型不在任何渠道的映射里，且未知模型的内部调度被关闭。把模型加进渠道映射，或改用 facet-auto 等内置模型名。', fixes: [{ label: '去模型接入', tab: 'models' }] };
+  }
+  if (e.status === 'no_candidate') {
+    return { title: '无可用渠道', detail: '该路由下没有可用候选：渠道可能被停用、正在冷却，或免费额度已耗尽（防止悄悄转成付费）。', fixes: [{ label: '查看渠道', tab: 'channels' }, { label: '查看路由链', tab: 'routes' }, { label: '查看免费模型', tab: 'free' }] };
+  }
+  if (e.status === 'cooldown') {
+    return { title: '渠道冷却中', detail: `渠道因为额度或故障正在冷却（约 ${fmtCooldown(cd)}），冷却结束自动恢复。`, fixes: [{ label: '查看运行状态', tab: 'status' }] };
+  }
+  if (e.status === 'network_error') {
+    return { title: '连不上上游', detail: '网关无法建立到上游的连接：检查渠道端点地址、出站代理与本机网络，国内直连不通的上游可配置渠道代理。', fixes: [{ label: '检查渠道配置', tab: 'channels' }] };
+  }
+  // upstream_error and everything else, split by the observed HTTP status.
+  if (http === 401 || http === 403) {
+    return { title: '密钥无效或无权限', detail: `上游返回 ${http}：渠道密钥可能填错、过期，或没有调用该模型的权限。`, fixes: [{ label: '更新渠道密钥', tab: 'channels' }] };
+  }
+  if (http === 404) {
+    return { title: '模型不存在', detail: '上游返回 404：渠道映射的上游模型名可能已下线或拼写有误。', fixes: [{ label: '检查模型映射', tab: 'channels' }] };
+  }
+  if (http === 429 || http === 529) {
+    return { title: '限速或额度耗尽', detail: `上游返回 ${http}` + (cd ? `，渠道已冷却约 ${fmtCooldown(cd)} 后自动恢复` : '') + '。免费额度耗尽不会自动转付费。', fixes: [{ label: '查看免费模型', tab: 'free' }, { label: '查看渠道', tab: 'channels' }] };
+  }
+  if (http >= 500) {
+    return { title: '上游服务错误', detail: `上游返回 ${http}：厂家服务端临时故障，网关已自动重试并切换到下一渠道。`, fixes: [{ label: '查看渠道状态', tab: 'channels' }] };
+  }
+  if (reason === 'relay_error') {
+    return { title: '网关转发处理出错', detail: '上游已响应，但网关在转换响应时出错。升级渠道协议设置或反馈此问题。', fixes: [{ label: '检查渠道配置', tab: 'channels' }] };
+  }
+  if (reason === 'bad_request') {
+    return { title: '请求格式被拒', detail: '请求体在协议转换时被判定非法（如 max_tokens 类型错误），网关直接返回 400，不消耗渠道。', fixes: [] };
+  }
+  if (reason.startsWith('transient_http_')) {
+    return { title: '上游暂时性错误', detail: `上游返回 ${reason.replace('transient_http_', '')}：短暂故障，网关已短暂冷却该渠道并自动切换。`, fixes: [{ label: '查看渠道状态', tab: 'channels' }] };
+  }
+  return { title: `上游错误${http ? `（HTTP ${http}）` : ''}`, detail: reason ? `上游拒绝了这次请求，原因标记：${reason}。` : '上游拒绝了这次请求。', fixes: [{ label: '查看渠道状态', tab: 'channels' }] };
+}
+
+// One logical request = every audit entry sharing its rid (all attempts).
+// Legacy entries written before rid existed fall back to the single row.
+function openRequestDetail(rid, idx) {
+  const all = (state.requests && state.requests.entries) || [];
+  let attempts = rid ? all.filter((e) => e.rid === rid) : [];
+  if (!attempts.length) attempts = [all[Number(idx)]].filter(Boolean);
+  if (!attempts.length) return;
+  attempts = attempts.slice().sort((a, b) => (a.attempt ?? 0) - (b.attempt ?? 0));
+  const last = attempts[attempts.length - 1];
+  const at = logTime(last.ts);
+  const labels = {
+    ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
+    no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+    cooldown: '额度冷却',
+  };
+  const timeline = attempts.map((e) => {
+    const t = logTime(e.ts);
+    const cls = e.status === 'ok' || e.status === 'local' ? 'active'
+      : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
+    return `<li>
+      <div><strong>第 ${(Number(e.attempt ?? 0)) + 1} 次</strong> · ${esc(t.time)}${t.date ? ` <span class="sub-note">${esc(t.date)}</span>` : ''}</div>
+      <div class="sub-note">${esc(e.channel || '—')}${e.billing && BILLING_LABELS[e.billing] ? `（${BILLING_LABELS[e.billing]}）` : ''} · ${esc(e.wire_model || '')} · <span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span>${e.http_status ? ` HTTP ${esc(e.http_status)}` : ''} · ${esc(e.ms ?? 0)} ms${e.cooldown_seconds ? ` · 冷却 ${fmtCooldown(e.cooldown_seconds)}` : ''}</div>
+    </li>`;
+  }).join('');
+  const diag = translateRequest(last);
+  const fixes = diag.fixes.length ? `<div class="actions" style="margin-top:10px">${
+    diag.fixes.map((fx) => `<button class="btn small" data-detail-goto="${fx.tab}">${esc(fx.label)}</button>`).join('')
+  }</div>` : '';
+  const tokens = attempts.reduce((sum, e) => sum + (Number(e.tokens) || 0), 0);
+  openModal('请求详情' + (rid ? ` · ${esc(rid)}` : ''), `
+    <p class="hint">模型 <code>${esc(last.model || '—')}</code> · 路由 ${esc(last.route || '—')} · ${esc(last.mode || '—')} · ${esc(at.time)}${at.date ? ` ${esc(at.date)}` : ''} · 共 ${attempts.length} 次尝试 · 合计 ${tokens.toLocaleString()} tokens</p>
+    <h3>尝试时间线</h3>
+    <ol class="req-timeline">${timeline}</ol>
+    <h3>诊断</h3>
+    <p><strong>${esc(diag.title)}</strong></p>
+    <p class="hint">${esc(diag.detail)}</p>
+    ${fixes}
+  `);
+  document.querySelectorAll('[data-detail-goto]').forEach((btn) => {
+    btn.onclick = () => { closeModal(); switchPage(btn.dataset.detailGoto); };
+  });
+}
+
+// Download the sanitized troubleshooting bundle produced by the backend
+// (masked config + channel states + recent audit entries) as a JSON file.
+async function exportDiagnostics() {
+  try {
+    const payload = await api('/api/diagnostics');
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `facet-diagnostics-${stamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('诊断包已导出（密钥已掩码，可安全外发）');
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}
+
 $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));
+$('btn-export-diagnostics').onclick = exportDiagnostics;
+$('requests-status-filter').addEventListener('change', (e) => {
+  state.requestFilter.status = e.target.value;
+  renderRequests();
+});
+$('requests-range-filter').addEventListener('change', (e) => {
+  state.requestFilter.range = e.target.value;
+  renderRequests();
+});
+$('requests-query').addEventListener('input', (e) => {
+  state.requestFilter.query = e.target.value.trim();
+  renderRequests();
+});
+// Click a row to open that request's attempt timeline (delegated: the tbody
+// is rebuilt on every render/filter).
+$('requests-body').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-rid], tr[data-idx]');
+  if (!tr) return;
+  openRequestDetail(tr.dataset.rid, tr.dataset.idx);
+});
 
 async function loadMaintenance() {
   state.maintenance = await api('/api/maintenance');

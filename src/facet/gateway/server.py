@@ -222,6 +222,15 @@ def _audit_headers(decision) -> dict:
     }
 
 
+def _rid() -> str:
+    """Short per-request id for the audit trail.
+
+    Every attempt of one logical request shares it, so the console can group
+    the audit entries into a single timeline without any extra plumbing.
+    """
+    return secrets.token_hex(4)
+
+
 def _burn_ratio(record: dict, stamp: datetime) -> float:
     """Remaining quota fraction per remaining day of one subscription.
 
@@ -1283,6 +1292,19 @@ class App:
             "path": str(self.audit.path),
             "size": self.audit.size(),
             "note": "仅记录选路元数据，不含 prompt、密钥与模型输出",
+        }
+
+    def diagnostics_payload(self) -> dict:
+        """Sanitized troubleshooting bundle for the console's export button.
+
+        Every source is already masked (public_config, store snapshot, audit
+        metadata), so the bundle is safe to attach to a bug report.
+        """
+        return {
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "config": self.public_config(),
+            "channels": self.store.snapshot()["channels"],
+            "requests": self.request_log_payload(200),
         }
 
     def start_background(self) -> None:
@@ -5038,6 +5060,7 @@ class App:
             "route": decision.hint,
             "stream": False,
             "sticky": False,
+            "rid": _rid(),
         }
 
         if decision.mode == "rejected":
@@ -5311,6 +5334,7 @@ class App:
             "route": decision.hint,
             "stream": False,
             "sticky": False,
+            "rid": _rid(),
         }
 
         if decision.mode == "rejected":
@@ -5613,6 +5637,7 @@ class App:
             "route": decision.hint,
             "stream": False,
             "sticky": False,
+            "rid": _rid(),
         }
 
         if decision.mode == "rejected":
@@ -5941,6 +5966,7 @@ class App:
             "route": decision.hint,
             "stream": False,
             "sticky": False,
+            "rid": _rid(),
         }
 
         if decision.mode == "rejected":
@@ -6353,6 +6379,7 @@ class App:
             "route": decision.hint,
             "stream": bool(body.get("stream")),
             "sticky": bool(session),
+            "rid": _rid(),
         }
         if decision.mode == "rejected":
             self.log_request(**log_base, status="rejected", http_status=400, attempt=0)
