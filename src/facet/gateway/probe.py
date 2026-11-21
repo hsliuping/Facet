@@ -262,7 +262,8 @@ def probe_channel(raw, model: str | None = None,
         result["debug"]["response"] = {"transport_error": str(exc)[:200]}
     except Exception as exc:  # keep the console alive on unexpected upstream shapes
         result.update(latency_ms=round((time.monotonic() - started) * 1000),
-                      error=repr(exc)[:200], hint="探测失败")
+                      error=str(exc)[:200],
+                      hint="探测出现未预期的异常：检查 base_url 是否可达、代理是否可用，或调大超时时间")
         result["debug"]["response"] = {"exception": repr(exc)[:200]}
     return result
 

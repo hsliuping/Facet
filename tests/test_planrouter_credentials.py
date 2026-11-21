@@ -101,7 +101,7 @@ class ChannelCredsParseTests(unittest.TestCase):
     def test_non_dict_rejected(self):
         raw = base_config()
         raw["channels"][0]["creds"] = "ak"
-        with self.assertRaisesRegex(ValueError, "creds must be an object"):
+        with self.assertRaisesRegex(ValueError, "creds 必须是对象"):
             parse_config(raw)
 
 

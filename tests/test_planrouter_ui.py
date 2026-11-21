@@ -200,7 +200,7 @@ class ConsoleTests(unittest.TestCase):
         config["routes"][0]["channels"].append("no-such-channel")  # unknown channel
         status, _, body = self.call(base, "POST", "/api/config", config)
         self.assertEqual(status, 400)
-        self.assertIn(b"unknown channel", body)
+        self.assertIn("未知渠道".encode("utf-8"), body)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_reset_cooldown_and_reload_from_disk(self):

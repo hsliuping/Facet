@@ -130,17 +130,17 @@ class ModelPolicyTests(unittest.TestCase):
     def test_policy_validation(self):
         raw = config_for("http://127.0.0.1:9000")
         raw["models"]["branded"] = {"auto:custom": "default"}
-        with self.assertRaisesRegex(ValueError, "reserved"):
+        with self.assertRaisesRegex(ValueError, "保留"):
             parse_config(raw)
         raw["models"]["branded"] = {"task-model": "default"}
-        with self.assertRaisesRegex(ValueError, "clashes"):
+        with self.assertRaisesRegex(ValueError, "冲突"):
             parse_config(raw)
         raw["models"]["branded"] = {}
         raw["models"]["fallback_unknown"] = "yes"
         with self.assertRaisesRegex(ValueError, "fallback_unknown"):
             parse_config(raw)
         raw["models"] = "nope"
-        with self.assertRaisesRegex(ValueError, "models policy"):
+        with self.assertRaisesRegex(ValueError, "models 策略"):
             parse_config(raw)
 
 

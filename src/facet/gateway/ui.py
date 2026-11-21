@@ -735,7 +735,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         try:
             result = app.start_dsh_web(port)
         except dsh_mod.DshError as exc:
-            _json(h, 503, {"ok": False, "error": str(exc)})
+            _json(h, 503, {"ok": False, "error": {"message": str(exc)}})
             return True
         except ValueError as exc:
             _json(h, 400, {"error": {"message": str(exc)}})

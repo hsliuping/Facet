@@ -733,7 +733,7 @@ class FreeQuotaParseTests(unittest.TestCase):
                     {"tokens": 1, "period": "year"}, {}):
             with self.assertRaises(ValueError):
                 parse_free_quota(bad)
-        with self.assertRaisesRegex(ValueError, "free_quota must be an object"):
+        with self.assertRaisesRegex(ValueError, "free_quota 必须是对象"):
             parse_free_quota([1])
 
     def test_parser_reads_one_time_pack_expiry(self):
@@ -782,7 +782,7 @@ class FreeQuotaParseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model_quota"):
             parse_config(raw)
         raw["channels"][0]["model_quota"] = []
-        with self.assertRaisesRegex(ValueError, "model_quota must be an object"):
+        with self.assertRaisesRegex(ValueError, "model_quota 必须是对象"):
             parse_config(raw)
 
     def test_builtin_baselines_per_vendor_model(self):

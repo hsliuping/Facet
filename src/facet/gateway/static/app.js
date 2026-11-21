@@ -174,8 +174,8 @@ async function api(path, opts = {}) {
       return api(path, { ...opts, retried: true });
     }
     throw new Error(isApi
-      ? '未授权：请点右上角「管理密钥」填入 admin_key 后重试'
-      : '未授权：请点右上角「API Key」填入 api_key 后重试');
+      ? '未授权：请从左侧菜单打开「管理密钥」页填入 admin_key 后重试'
+      : '未授权：请从左侧菜单打开「API Keys」页填入 api_key 后重试');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
@@ -573,7 +573,7 @@ function renderStatus() {
       <td><span class="dot ${kind}"></span><strong>${esc(c.name)}</strong> ${channelTierBadge(c.name, c.tier)}<br><span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span></td>
       <td>${label}${reason ? '<br><small>' + esc(reason) + '</small>' : ''}${quotaText ? `<br><span class="sub-note ${quotaLow ? 'quota-low' : ''}">${esc(quotaText)}</span>` : ''}</td>
       <td>${remain}</td>
-      <td>${c.total_requests} / ${c.served_requests} / ${c.failed_requests}</td>
+      <td>${Number(c.total_requests).toLocaleString()} / ${Number(c.served_requests).toLocaleString()} / ${Number(c.failed_requests).toLocaleString()}</td>
       <td>${c.total_tokens.toLocaleString()}</td>
       <td>${c.handoffs}</td>
       <td><span class="err" title="${esc(c.last_error)}">${esc(c.last_error) || '—'}</span></td>
@@ -2490,7 +2490,23 @@ const FREE_CHANNEL_MACRO = '$free';
 const REQUEST_LABELS = {
   ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
   no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+  cooldown: '额度冷却',
 };
+
+// Machine-readable reason codes written by the relay/failover loop; shown in
+// the 请求日志 reason column. Unknown values fall through to the raw code.
+const REASON_LABELS = {
+  bad_request: '请求格式被上游拒绝',
+  relay_error: '转发响应时出错',
+  transient_internal: '内部错误',
+  transient_network: '网络异常',
+  daily_quota_reset: '日额度用尽，等待重置',
+  http_404_not_found: '模型不存在（404）',
+  local_token_estimate: '本地令牌估算',
+  'upstream-quota-exhausted': '上游额度已用尽',
+  'quota-preempted': '上游额度用尽，预占切换',
+};
+const reasonText = (r) => REASON_LABELS[r] || r || '';
 
 function requestTag(status) {
   const cls = status === 'ok' || status === 'local' ? 'active'
@@ -3003,6 +3019,7 @@ function renderRequests() {
   const labels = {
     ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
     no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+    cooldown: '额度冷却',
   };
   tbody.innerHTML = data.entries.map((e) => {
     const cls = e.status === 'ok' || e.status === 'local' ? 'active'
@@ -3011,7 +3028,7 @@ function renderRequests() {
     return `<tr>
       <td>${esc(at.time)}${at.date ? `<br><span class="sub-note">${esc(at.date)}</span>` : ''}</td>
       <td><code>${esc(e.model || '—')}</code></td>
-      <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(e.reason || '')}</span></td>
+      <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(reasonText(e.reason))}</span></td>
       <td>${esc(e.channel || '—')}<br><span class="sub-note">${esc(e.wire_model || '')}</span></td>
       <td><span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span><br><span class="sub-note">${esc(e.http_status ?? '')}</span></td>
       <td>${esc(e.attempt ?? 0)}</td>
@@ -4293,7 +4310,7 @@ async function runProbe(button, channels, model) {
     toast(data.ok ? '测试通过' : '测试未通过，查看详情', data.ok ? 'ok' : 'bad');
   } catch (err) {
     const hint = /未授权|401/.test(err.message)
-      ? '请点右上角「管理密钥」填入 listen.admin_key（管理密码）后重试'
+      ? '请从左侧菜单打开「管理密钥」页填入 listen.admin_key（管理密码）后重试'
       : '';
     showTestResult([{ ok: false, name: '请求失败', error: err.message, hint }], null);
     toast(err.message, 'bad');

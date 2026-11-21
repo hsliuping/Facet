@@ -393,21 +393,21 @@ def parse_expires(value) -> datetime | None:
         return None
     if not isinstance(value, str):
         raise ValueError(
-            "free_quota.expires must be a date (YYYY-MM-DD) or datetime")
+            "free_quota.expires 必须是日期（YYYY-MM-DD）或 datetime")
     text = value.strip()
     if len(text) == 10:
         try:
             day = date.fromisoformat(text)
         except ValueError:
             raise ValueError(
-                "free_quota.expires must be a date (YYYY-MM-DD) or datetime"
+                "free_quota.expires 必须是日期（YYYY-MM-DD）或 datetime"
             ) from None
         return datetime(day.year, day.month, day.day, 23, 59, 59)
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         raise ValueError(
-            "free_quota.expires must be a date (YYYY-MM-DD) or datetime"
+            "free_quota.expires 必须是日期（YYYY-MM-DD）或 datetime"
         ) from None
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone().replace(tzinfo=None)
@@ -418,19 +418,19 @@ def parse_free_quota(raw) -> FreeQuota | None:
     if raw in (None, ""):
         return None
     if not isinstance(raw, dict):
-        raise ValueError("free_quota must be an object")
+        raise ValueError("free_quota 必须是对象")
     tokens = raw.get("tokens")
     requests = raw.get("requests")
     for label, value in (("tokens", tokens), ("requests", requests)):
         if value is None:
             continue
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"free_quota.{label} must be a non-negative integer")
+            raise ValueError(f"free_quota.{label} 必须是非负整数")
     period = str(raw.get("period") or "total").strip().lower()
     if period not in ("total", "month", "day"):
-        raise ValueError('free_quota.period must be "total", "month" or "day"')
+        raise ValueError('free_quota.period 必须是 "total"、"month" 或 "day"')
     if tokens is None and requests is None:
-        raise ValueError("free_quota needs at least one of tokens / requests")
+        raise ValueError("free_quota 至少要填 tokens 或 requests 之一")
     expires = parse_expires(raw.get("expires"))
     return FreeQuota(tokens=tokens, requests=requests, period=period,
                      expires=expires)
@@ -446,18 +446,18 @@ def parse_model_quota(name: str, raw) -> dict[str, FreeQuota] | None:
     if raw in (None, ""):
         return None
     if not isinstance(raw, dict):
-        raise ValueError(f"channel {name}: model_quota must be an object")
+        raise ValueError(f"channel {name}：model_quota 必须是对象")
     packs: dict[str, FreeQuota] = {}
     for model_name, spec in raw.items():
         key = str(model_name).strip()
         if not key:
             raise ValueError(
-                f"channel {name}: model_quota keys must be model names")
+                f"channel {name}：model_quota 的键必须是模型名")
         try:
             quota = parse_free_quota(spec)
         except ValueError as exc:
             raise ValueError(
-                f"channel {name}: model_quota.{key}: {exc}") from None
+                f"channel {name}：model_quota.{key}：{exc}") from None
         if quota is not None:
             packs[key] = quota
     return packs or None
@@ -642,25 +642,25 @@ def parse_model_policy(raw) -> ModelPolicy:
     if raw is None:
         return ModelPolicy()
     if not isinstance(raw, dict):
-        raise ValueError("models policy must be a JSON object")
+        raise ValueError("models 策略必须是 JSON 对象")
     branded = dict(DEFAULT_BRANDED_MODELS)
     extra = raw.get("branded") or {}
     if not isinstance(extra, dict):
-        raise ValueError("models.branded must be an object")
+        raise ValueError("models.branded 必须是对象")
     for name, hint in extra.items():
         if (not isinstance(name, str) or not name.strip()
                 or not isinstance(hint, str) or not hint.strip()):
-            raise ValueError("models.branded entries must be non-empty name -> route pairs")
+            raise ValueError("models.branded 的每项必须是非空的 模型名 -> 路由名 映射")
         key = name.strip()
         if key in (AUTO_MODEL, "facet") or key.startswith(INTERNAL_MODEL_PREFIXES):
-            raise ValueError(f"models.branded: {key!r} is a reserved internal model name")
+            raise ValueError(f"models.branded：{key!r} 是保留的内部模型名")
         branded[key] = hint.strip()
     fallback_unknown = raw.get("fallback_unknown", True)
     if not isinstance(fallback_unknown, bool):
-        raise ValueError("models.fallback_unknown must be true or false")
+        raise ValueError("models.fallback_unknown 必须是 true 或 false")
     fallback_route = raw.get("fallback_route") or "default"
     if not isinstance(fallback_route, str) or not fallback_route.strip():
-        raise ValueError("models.fallback_route must be a route name")
+        raise ValueError("models.fallback_route 必须是路由名")
     return ModelPolicy(branded, fallback_unknown, fallback_route.strip())
 
 
@@ -853,7 +853,7 @@ def resolve_model(
 def parse_config(raw: dict) -> Config:
     """Validate an in-memory config dict (used by the editor's hot reload)."""
     if not isinstance(raw, dict):
-        raise ValueError("config must be a JSON object")
+        raise ValueError("config 必须是 JSON 对象")
 
     listen_raw = raw.get("listen") or {}
     listen = Listen(
@@ -864,21 +864,21 @@ def parse_config(raw: dict) -> Config:
         api_key_enabled=bool(listen_raw.get("api_key_enabled", True)),
     )
     if listen.host not in LOOPBACK and not listen.api_key:
-        raise ValueError("non-loopback listen requires listen.api_key (use env:VAR)")
+        raise ValueError("非环回地址监听必须设置 listen.api_key（可用 env:VAR）")
 
     d = raw.get("defaults") or {}
     track_stream_usage = d.get("track_stream_usage", True)
     if not isinstance(track_stream_usage, bool):
-        raise ValueError("defaults.track_stream_usage must be true or false")
+        raise ValueError("defaults.track_stream_usage 必须是 true 或 false")
     preempt_quota = d.get("preempt_quota", True)
     if not isinstance(preempt_quota, bool):
-        raise ValueError("defaults.preempt_quota must be true or false")
+        raise ValueError("defaults.preempt_quota 必须是 true 或 false")
     lb_strategy = str(d.get("lb_strategy") or "order").strip().lower()
     if lb_strategy not in ("order", "weighted"):
-        raise ValueError("defaults.lb_strategy must be 'order' or 'weighted'")
+        raise ValueError("defaults.lb_strategy 必须是 'order' 或 'weighted'")
     probe_mode = str(d.get("probe_mode") or "models").strip().lower()
     if probe_mode not in ("models", "chat"):
-        raise ValueError("defaults.probe_mode must be 'models' or 'chat'")
+        raise ValueError("defaults.probe_mode 必须是 'models' 或 'chat'")
     defaults = Defaults(
         cooldown_minutes=int(d.get("cooldown_minutes", 300)),
         max_failover=int(d.get("max_failover", 3)),
@@ -958,51 +958,51 @@ def parse_config(raw: dict) -> Config:
     for item in raw.get("channels") or []:
         name = item.get("name")
         if not name or name in seen:
-            raise ValueError(f"duplicate or missing channel name: {name!r}")
+            raise ValueError(f"渠道名重复或缺失：{name!r}")
         seen.add(name)
         protocol = item.get("protocol", OPENAI)
         if protocol not in PROTOCOLS:
-            raise ValueError(f"channel {name}: protocol must be one of {PROTOCOLS}")
+            raise ValueError(f"channel {name}：protocol 必须是 {PROTOCOLS} 之一")
         base_url = (item.get("base_url") or "").rstrip("/")
         if not base_url.startswith(("http://", "https://")):
-            raise ValueError(f"channel {name}: base_url must be an http(s) URL")
+            raise ValueError(f"channel {name}：base_url 必须是 http(s) URL")
         upstream_path = item.get("upstream_path")
         if upstream_path is not None:
             if (not isinstance(upstream_path, str) or not upstream_path.startswith("/")
                     or "://" in upstream_path):
                 raise ValueError(
-                    f"channel {name}: upstream_path must be a path starting with /"
+                    f"channel {name}：upstream_path 必须是以 / 开头的路径"
                 )
             upstream_path = upstream_path.rstrip("/") or "/"
         proxy = resolve_secret(str(item.get("proxy") or "").strip()) or ""
         if proxy and not proxy.lower().startswith(("http://", "https://")):
-            raise ValueError(f"channel {name}: proxy must be an http(s):// URL")
+            raise ValueError(f"channel {name}：proxy 必须是 http(s):// URL")
         creds_raw = item.get("creds") or {}
         if not isinstance(creds_raw, dict):
-            raise ValueError(f"channel {name}: creds must be an object")
+            raise ValueError(f"channel {name}：creds 必须是对象")
         creds = {str(k): str(v).strip() for k, v in creds_raw.items()
                  if isinstance(v, (str, int, float)) and str(v).strip()}
         tier = str(item.get("tier") or "").strip().lower()
         if tier not in ("", "free", "paid"):
-            raise ValueError(f'channel {name}: tier must be "", "free" or "paid"')
+            raise ValueError(f'channel {name}：tier 必须是 ""、"free" 或 "paid"')
         tiers_raw = item.get("tiers") or {}
         if not isinstance(tiers_raw, dict):
-            raise ValueError(f"channel {name}: tiers must be an object")
+            raise ValueError(f"channel {name}：tiers 必须是对象")
         tiers = {}
         for model_name, mark in tiers_raw.items():
             key = str(model_name).strip()
             mark = str(mark or "").strip().lower()
             if not key:
-                raise ValueError(f"channel {name}: tiers keys must be model names")
+                raise ValueError(f"channel {name}：tiers 的键必须是模型名")
             if mark not in ("", "free", "paid"):
                 raise ValueError(
-                    f'channel {name}: tiers values must be "", "free" or "paid"'
+                    f'channel {name}：tiers 的值必须是 ""、"free" 或 "paid"'
                 )
             if mark:
                 tiers[key] = mark
         models = item.get("models") or {}
         if not models:
-            raise ValueError(f"channel {name}: models mapping is required")
+            raise ValueError(f"channel {name}：必须提供 models 映射")
         rate_raw = item.get("rate") or {}
         rate = Rate(
             rpm=rate_raw.get("rpm"), rpd=rate_raw.get("rpd"),
@@ -1011,7 +1011,7 @@ def parse_config(raw: dict) -> Config:
         try:
             free_quota = parse_free_quota(item.get("free_quota"))
         except ValueError as exc:
-            raise ValueError(f"channel {name}: {exc}") from None
+            raise ValueError(f"channel {name}：{exc}") from None
         model_quota = parse_model_quota(name, item.get("model_quota"))
         vision_raw = item.get("vision")
         vision: bool | tuple[str, ...] | None = None
@@ -1022,13 +1022,13 @@ def parse_config(raw: dict) -> Config:
                 vision = tuple(dict.fromkeys(
                     str(entry).strip() for entry in vision_raw if str(entry).strip()))
                 if not vision:
-                    raise ValueError(f"channel {name}: vision list cannot be empty")
+                    raise ValueError(f"channel {name}：vision 列表不能为空")
             else:
                 raise ValueError(
-                    f'channel {name}: vision must be true, false or a list of model names')
+                    f'channel {name}：vision 必须是 true、false 或模型名列表')
         vision_model = str(item.get("vision_model") or "").strip()
         if vision_model and vision is False:
-            raise ValueError(f"channel {name}: vision_model conflicts with vision: false")
+            raise ValueError(f"channel {name}：vision_model 与 vision: false 冲突")
         channels.append(Channel(
             name=name,
             protocol=protocol,
@@ -1057,7 +1057,7 @@ def parse_config(raw: dict) -> Config:
             vision_model=vision_model,
         ))
     if not channels:
-        raise ValueError("at least one channel is required")
+        raise ValueError("至少需要一个渠道")
     channels.sort(key=lambda c: (c.priority, c.name))
 
     routes: dict[str, Route] = {}
@@ -1069,11 +1069,11 @@ def parse_config(raw: dict) -> Config:
         lb = str(item.get("lb") or "").strip().lower()
         if lb and lb not in ("order", "weighted"):
             raise ValueError(
-                f"route {name}: lb must be '', 'order' or 'weighted'")
+                f"route {name}：lb 必须是 ''、'order' 或 'weighted'")
         if protocol not in PROTOCOLS:
-            raise ValueError(f"route {name}: protocol must be one of {PROTOCOLS}")
+            raise ValueError(f"route {name}：protocol 必须是 {PROTOCOLS} 之一")
         if not names:
-            raise ValueError(f"route {name}: channels list is empty")
+            raise ValueError(f"route {name}：channels 列表为空")
         # "$free" is resolved against the already-sorted channel table, so
         # the expansion order doubles as the attempt order inside the macro.
         # A channel listed explicitly keeps its exact position, wherever it
@@ -1092,29 +1092,29 @@ def parse_config(raw: dict) -> Config:
         names = tuple(dict.fromkeys(expanded))
         if not expanded:
             raise ValueError(
-                f"route {name}: '{FREE_CHANNEL_MACRO}' matched no enabled "
-                f"free-tier channel speaking {protocol}")
+                f"route {name}：'{FREE_CHANNEL_MACRO}' 没有匹配到"
+                f"支持 {protocol} 且已启用的免费渠道")
         for channel_name in names:
             channel = next((c for c in channels if c.name == channel_name), None)
             if channel is None:
-                raise ValueError(f"route {name}: unknown channel {channel_name!r}")
+                raise ValueError(f"route {name}：未知渠道 {channel_name!r}")
         # An explicit cross-protocol name is accepted here, but the scheduler
         # skips such channels at pick time (Router.pick): a route only ever
         # dispatches channels speaking its own protocol.
         key = f"{protocol}:{name}"
         if key in routes:
-            raise ValueError(f"duplicate route {key!r}")
+            raise ValueError(f"路由重复：{key!r}")
         routes[key] = Route(name=name, protocol=protocol, channels=names,
                             system_prompt=system_prompt, lb=lb)
     for protocol in PROTOCOLS:
         if f"{protocol}:default" not in routes:
-            raise ValueError(f"missing {protocol}:default route")
+            raise ValueError(f"缺少 {protocol}:default 路由")
     model_policy = parse_model_policy(raw.get("models"))
     declared = set().union(*(explicit_models(c) for c in channels))
     for name in model_policy.branded:
         if name in declared:
             raise ValueError(
-                f"models.branded: {name!r} clashes with a channel's explicit model name"
+                f"models.branded：{name!r} 与渠道显式模型名冲突"
             )
     return Config(
         listen=listen, defaults=defaults, channels=tuple(channels),

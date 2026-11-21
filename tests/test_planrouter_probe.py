@@ -473,7 +473,7 @@ class ConsoleAssetsTests(unittest.TestCase):
         self.assertIn("ask-backdrop", css)
         self.assertIn("readStoredKey('admin')", js)
         self.assertIn("在本机记住", js)
-        self.assertIn("请点右上角「管理密钥」", js)
+        self.assertIn("请从左侧菜单打开「管理密钥」", js)
         self.assertIn("await restoreDrafts()", js)
 
 

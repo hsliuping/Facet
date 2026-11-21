@@ -4934,7 +4934,7 @@ class App:
         except Exception as exc:
             with self.store.lock:
                 state = self.store.states[channel.name]
-                state.last_error = repr(exc)[:300]
+                state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
@@ -4950,7 +4950,7 @@ class App:
                 return None
             except Exception as exc:
                 with self.store.lock:
-                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                    self.store.states[channel.name].last_error = str(exc)[:300]
                 return None
 
     def _relay_embeddings(self, h, resp, channel, wire, attempt, audit):
@@ -5206,7 +5206,7 @@ class App:
         except Exception as exc:
             with self.store.lock:
                 state = self.store.states[channel.name]
-                state.last_error = repr(exc)[:300]
+                state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
@@ -5251,7 +5251,7 @@ class App:
                 return None
             except Exception as exc:
                 with self.store.lock:
-                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                    self.store.states[channel.name].last_error = str(exc)[:300]
                 return None
 
     def _relay_rerank(self, h, resp, channel, wire, attempt, audit):
@@ -5504,7 +5504,7 @@ class App:
         except Exception as exc:
             with self.store.lock:
                 state = self.store.states[channel.name]
-                state.last_error = repr(exc)[:300]
+                state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
@@ -5548,7 +5548,7 @@ class App:
                 return None
             except Exception as exc:
                 with self.store.lock:
-                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                    self.store.states[channel.name].last_error = str(exc)[:300]
                 return None
 
     def _relay_audio_binary(self, h, resp, channel, wire, attempt, audit):
@@ -5851,7 +5851,7 @@ class App:
         except Exception as exc:
             with self.store.lock:
                 state = self.store.states[channel.name]
-                state.last_error = repr(exc)[:300]
+                state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
@@ -5895,7 +5895,7 @@ class App:
                 return None
             except Exception as exc:
                 with self.store.lock:
-                    self.store.states[channel.name].last_error = repr(exc)[:300]
+                    self.store.states[channel.name].last_error = str(exc)[:300]
                 return None
 
     def _relay_audio_json(self, h, resp, channel, wire, attempt, audit):
@@ -6291,7 +6291,7 @@ class App:
             # the channel's: answer 400 without cooling down a healthy channel
             # or burning failover attempts on every sibling.
             if delivery is not None:
-                delivery["bad_request"] = repr(exc)[:300]
+                delivery["bad_request"] = str(exc)[:300]
             return (400, "bad_request", 0.0)
         try:
             resp = open_with_proxy(req, channel.timeout, channel.proxy)
@@ -6340,7 +6340,7 @@ class App:
         except Exception as exc:  # keep the gateway alive on unexpected upstream shapes
             with self.store.lock:
                 state = self.store.states[channel.name]
-                state.last_error = repr(exc)[:300]
+                state.last_error = str(exc)[:300]
                 state.mark_cooldown(30.0, "transient_internal", now, half_open=True)
             self.record_usage(channel.name, False, model=wire, h=h)
             self.store.record_score(channel.name, wire, -5)
@@ -6366,7 +6366,7 @@ class App:
                 # health: no cooldown, no score. While no byte has reached the
                 # client an honest failover is still possible; mid-response
                 # there is nothing left to send but the audit trail.
-                detail = repr(exc)[:300]
+                detail = str(exc)[:300]
                 with self.store.lock:
                     self.store.states[channel.name].last_error = detail
                 if delivery is not None:

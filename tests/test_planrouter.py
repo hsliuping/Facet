@@ -207,7 +207,7 @@ class ConfigTests(unittest.TestCase):
     def test_non_loopback_requires_gateway_key(self):
         data = json.loads(json.dumps(BASE))
         data["listen"] = {"host": "0.0.0.0", "port": 8787}
-        with self.assertRaisesRegex(ValueError, "requires listen.api_key"):
+        with self.assertRaisesRegex(ValueError, "listen.api_key"):
             load_config(write_config(data))
 
     def test_missing_default_route_rejected(self):
@@ -713,11 +713,11 @@ class VisionRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "vision"):
             load_config(write_config(data))
         data["channels"][0]["vision"] = []
-        with self.assertRaisesRegex(ValueError, "vision list"):
+        with self.assertRaisesRegex(ValueError, "vision 列表"):
             load_config(write_config(data))
         data["channels"][0]["vision"] = False
         data["channels"][0]["vision_model"] = "vl"
-        with self.assertRaisesRegex(ValueError, "conflicts"):
+        with self.assertRaisesRegex(ValueError, "冲突"):
             load_config(write_config(data))
 
 
