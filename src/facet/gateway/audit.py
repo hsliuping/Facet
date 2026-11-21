@@ -46,6 +46,46 @@ class RequestLog:
             except OSError:
                 return
 
+    def offset_snapshot(self) -> int:
+        """Byte length of the active file; pass the value to entries_since().
+
+        Lets a caller bracket one request ("entries appended while I was in
+        flight") without any request-id plumbing: snapshot before, read the
+        increment after.
+        """
+        with self.lock:
+            try:
+                return self.path.stat().st_size
+            except OSError:
+                return 0
+
+    def entries_since(self, offset: int) -> list[dict]:
+        """Entries appended after the given byte offset, in file order.
+
+        A trailing partial line (a concurrent append cut mid-write) is
+        ignored until the write completes; if the file rotated between the
+        snapshot and this read the increment is empty — acceptable for the
+        verify-call trace, which brackets a single request by construction.
+        """
+        try:
+            with self.path.open("rb") as fh:
+                fh.seek(max(0, int(offset)))
+                data = fh.read()
+        except OSError:
+            return []
+        entries: list[dict] = []
+        for line in data.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict):
+                entries.append(item)
+        return entries
+
     def _slot(self, index: int) -> Path:
         return self.path.with_name(f"{self.path.name}.{index}")
 

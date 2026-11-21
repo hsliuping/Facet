@@ -463,6 +463,25 @@ const WIZARD_STEPS = [
     },
   },
   {
+    id: 'verify',
+    title: '端到端验收',
+    description: '用刚生成的调用密钥走真实路由链发起一次最小调用——单渠道测试通过不代表整条链可用，这一步才算数。',
+    async render() {
+      return `
+        <div class="wizard-step-content">
+          <div id="wizard-verify" class="hint">正在通过路由链发起真实调用，请稍候…</div>
+        </div>
+      `;
+    },
+    async onEnter() {
+      wizardVerify();
+    },
+    async onNext() {
+      // 验收失败不阻塞完成：失败面板已给出修复入口，用户可选择先跳过。
+      return true;
+    },
+  },
+  {
     id: 'finish',
     title: '一切就绪',
     description: '配置完成！复制下面的信息到您的工具里即可开始使用。',
@@ -624,6 +643,85 @@ async function wizardSaveChannel(draft) {
     throw new Error('渠道已测试通过，但保存失败：' + e.message);
   }
 }
+
+// 端到端验收：用刚生成的网关 Key 走真实路由链发起一次最小调用。
+// 成功展示命中的厂家/模型与 attempt 轨迹；失败展示错误译文、
+// 修复建议与修复入口（渠道配置 / 路由链 / 原地重试）。
+function wizardBindVerifyRetry() {
+  const retry = $('wizard-verify-retry');
+  if (retry) retry.onclick = () => wizardVerify();
+}
+
+function wizardVerify() {
+  const box = $('wizard-verify');
+  if (!box) return;
+  box.className = 'hint';
+  box.innerHTML = '正在通过路由链发起真实调用，请稍候…（可能产生极少量上游费用）';
+  api('/api/setup/verify-call', {
+    method: 'POST',
+    body: { key: wizardState.generatedKey || readStoredKey('gateway') },
+  }).then((r) => wizardRenderVerify(r)).catch((e) => {
+    box.className = 'wizard-test-result bad';
+    box.innerHTML = `验收请求失败：${esc(e.message)}`
+      + '<div class="actions"><button class="btn ghost" id="wizard-verify-retry">重新验收</button></div>';
+    wizardBindVerifyRetry();
+  });
+}
+
+function wizardRenderVerify(r) {
+  const box = $('wizard-verify');
+  if (!box) return;
+  const retryBtn = '<div class="actions"><button class="btn ghost" id="wizard-verify-retry">重新验收</button></div>';
+  const attempts = Array.isArray(r.attempts) ? r.attempts : [];
+  if (r.ok) {
+    const hit = r.hit || {};
+    const hitText = [hit.channel, hit.wire_model].filter(Boolean).join(' / ');
+    const rows = attempts.map((a) => {
+      const parts = [a.channel, a.wire_model, WIZARD_ATTEMPT_LABELS[a.status] || a.status]
+        .filter(Boolean).join(' · ');
+      return `<div class="hint">· ${esc(parts || '（无轨迹）')}${a.ms != null ? `（${a.ms}ms）` : ''}</div>`;
+    }).join('');
+    box.className = 'wizard-test-result ok';
+    box.innerHTML = `<p>端到端验收通过${hitText ? `：命中 <strong>${esc(hitText)}</strong>` : ''}`
+      + `${r.latency_ms != null ? `（耗时 ${r.latency_ms}ms）` : ''}。您的调用密钥已可正常使用。</p>`
+      + (rows ? `<p class="hint">本次调用轨迹（真实路由链）：</p>${rows}` : '')
+      + retryBtn;
+  } else {
+    const err = r.error || {};
+    const status = r.channel_status && typeof r.channel_status === 'object'
+      ? Object.entries(r.channel_status).map(([name, st]) =>
+        `<div class="hint">· ${esc(name)}：${esc(WIZARD_ATTEMPT_LABELS[st] || st)}</div>`).join('')
+      : '';
+    const hints = (r.hints || []).map((t) => `<p class="hint">建议：${esc(t)}</p>`).join('');
+    box.className = 'wizard-test-result bad';
+    box.innerHTML = `<p>验收未通过：${esc(err.message || r.note || '未知原因')}`
+      + `${err.http_status ? `（HTTP ${esc(err.http_status)}）` : ''}</p>`
+      + `${status}${hints}`
+      + `<div class="actions">
+           <button class="btn ghost" id="wizard-verify-retry">重新验收</button>
+           <button class="btn ghost" id="wizard-verify-channels">去渠道配置</button>
+           <button class="btn ghost" id="wizard-verify-routes">查看路由链</button>
+         </div>`;
+    const go = (id, tab) => {
+      const btn = $(id);
+      if (btn) {
+        btn.onclick = () => {
+          closeWizard();
+          if (typeof switchPage === 'function') switchPage(tab);
+        };
+      }
+    };
+    go('wizard-verify-channels', 'channels');
+    go('wizard-verify-routes', 'routes');
+  }
+  wizardBindVerifyRetry();
+}
+
+// 端到端验收结果里出现的状态词 → 中文（未收录的原样展示）。
+const WIZARD_ATTEMPT_LABELS = {
+  ok: '成功', error: '失败', no_candidate: '无可用渠道', rejected: '被拒',
+  cooldown: '冷却中', disabled: '未启用', missing: '不存在', blocked: '套餐过期',
+};
 
 // 关闭向导弹窗：移除所有向导层（含重绘前的旧层）。
 function closeWizard() {

@@ -853,6 +853,27 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, {"ok": True, "removed": removed})
         return True
 
+    if path == "/api/setup/verify-call" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        try:
+            payload = app.verify_setup_call(model=incoming.get("model"),
+                                            key=incoming.get("key"))
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"verify failed: {exc}"}})
+            return True
+        _json(h, 200, payload)
+        return True
+
     if path == "/api/setup/wizard" and method == "POST":
         incoming = {}
         if raw:

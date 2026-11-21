@@ -2735,6 +2735,190 @@ class App:
                      on_error=self._note_write_failure,
                      on_ok=self._note_write_ok)
 
+    # ------------------------------------------------------ wizard verify
+    def _verify_route_status(self, protocol: str, route_name: str,
+                             blocked: dict) -> dict[str, str]:
+        """Per-channel schedulability for the wizard's verify endpoint.
+
+        Same vocabulary as the no-candidate gateway reply: missing/disabled/
+        blocked, or whatever the state machine reports (cooldown windows,
+        rate limits, free-quota freezes) — the console renders it verbatim.
+        """
+        route = self.config.route(protocol, route_name)
+        status: dict[str, str] = {}
+        now = time.time()
+        for name in (route.channels if route else []):
+            channel = self.config.channel(name)
+            if channel is None:
+                status[f"{protocol}:{name}"] = "missing"
+            elif not channel.enabled:
+                status[f"{protocol}:{name}"] = "disabled"
+            elif name in blocked:
+                status[f"{protocol}:{name}"] = "blocked"
+            else:
+                with self.store.lock:
+                    ok, why = self.store.states[name].available(now, channel.rate)
+                status[f"{protocol}:{name}"] = "ok" if ok else why
+        return status
+
+    @staticmethod
+    def _verify_hints(kind: str, http_status: int | None,
+                      detail: dict) -> list[str]:
+        """Chinese repair suggestions for the wizard's failure panel."""
+        if kind == "no_candidate":
+            return [
+                "没有可调度的渠道：在「渠道配置」页检查渠道是否启用、Key 是否填写完整。",
+                "确认路由链包含该渠道（向导保存的渠道会自动追加进 default 链）。",
+                "渠道处于冷却/限速/免费额度耗尽状态时同样不可调度，稍后点「重新验收」。",
+            ]
+        hints: list[str] = []
+        if http_status == 401:
+            hints.append("上游返回 401：厂家 API Key 无效或已过期——回「填写厂家 Key」更正，或在「渠道配置」页更新。")
+            hints.append("若报错来自网关本身（密钥不识别），请回「生成调用密钥」重新生成。")
+        elif http_status == 403:
+            hints.append("上游返回 403：Key 没有该模型的调用权限或被风控，检查厂家控制台的模型开通状态。")
+        elif http_status == 404:
+            hints.append("上游返回 404：模型名可能已下线或渠道映射错误——在「渠道配置」页修正模型映射。")
+        elif http_status == 429:
+            hints.append("上游返回 429：限速或额度耗尽——稍后重试、更换渠道，或在「渠道配置」页调整限速设置。")
+        elif http_status and http_status >= 500:
+            hints.append("上游服务异常（5xx）：通常是厂家临时故障，稍后点「重新验收」。")
+        else:
+            hints.append("调用失败：可结合「请求日志」页的失败详情进一步排查。")
+        status_map = (detail.get("error") or {}).get("channel_status")
+        if status_map:
+            bad = [f"{name}: {state}" for name, state in status_map.items()
+                   if state != "ok"]
+            if bad:
+                hints.append("网关侧渠道状态：" + "，".join(bad))
+        return hints
+
+    def verify_setup_call(self, model: str | None = None,
+                          key: str | None = None) -> dict:
+        """End-to-end acceptance for the setup wizard.
+
+        Plans the route without sending anything, then loops back one real
+        minimal call through this very gateway — so routing, failover and
+        the audit trail behave exactly like live traffic — and reports which
+        channel/wire model was hit plus the per-attempt trace. Never writes
+        config; the call may spend a tiny amount of upstream quota (the same
+        trade-off the channel test already makes, and the reply states it).
+        """
+        requested = str(model or "").strip() or "auto"
+        blocked = self.blocked_channels()
+        plans: dict[str, tuple] = {}
+        for protocol in (OPENAI, ANTHROPIC):
+            decision = resolve_model(self.config, protocol, requested, None,
+                                     blocked)
+            candidates: list = []
+            route_name = decision.hint or "default"
+            if decision.mode != "rejected":
+                candidates, route = self.store.pick(
+                    protocol, decision.hint, decision.exposed, None,
+                    decision=decision, blocked=set(blocked),
+                    agent_candidates=None)
+                if route is not None:
+                    route_name = route.name
+            plans[protocol] = (decision, list(candidates), route_name)
+
+        chosen = next((p for p in (OPENAI, ANTHROPIC) if plans[p][1]), None)
+        if chosen is None:
+            status: dict[str, str] = {}
+            for protocol in (OPENAI, ANTHROPIC):
+                status.update(self._verify_route_status(
+                    protocol, plans[protocol][2], blocked))
+            return {
+                "ok": False, "kind": "no_candidate", "model": requested,
+                "attempts": [],
+                "channel_status": status,
+                "hints": self._verify_hints("no_candidate", None, {}),
+                "note": "路由链上没有可调度的渠道，未发起上游调用",
+            }
+
+        decision, candidates, route_name = plans[chosen]
+        planned = [{"channel": ch.name, "wire_model": wire}
+                   for ch, wire in candidates]
+        listen = self.config.listen
+        host = "127.0.0.1" if listen.host in ("0.0.0.0", "::", "") else listen.host
+        if chosen == ANTHROPIC:
+            url = f"http://{host}:{listen.port}/v1/messages"
+            body = {"model": requested, "max_tokens": 16, "stream": False,
+                    "messages": [{"role": "user", "content": "ping"}]}
+        else:
+            url = f"http://{host}:{listen.port}/v1/chat/completions"
+            body = {"model": requested, "max_tokens": 16, "temperature": 0,
+                    "stream": False,
+                    "messages": [{"role": "user", "content": "ping"}]}
+        token = str(key or "").strip() or listen.api_key or ""
+        call_headers = {"Content-Type": "application/json"}
+        if token:
+            call_headers["Authorization"] = f"Bearer {token}"
+        offset = self.audit.offset_snapshot() if self.audit else None
+        started = time.perf_counter()
+        routed, failover, http_status, detail = "", None, None, {}
+        try:
+            req = Request(
+                url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                headers=call_headers, method="POST")
+            with urlopen(req, timeout=max(60, self.config.defaults.timeout)) as resp:
+                resp.read()
+                routed = resp.headers.get("X-Routed-Via") or ""
+                failover = resp.headers.get("X-Failover-Count")
+                http_status = getattr(resp, "status", 200)
+        except HTTPError as exc:
+            http_status = exc.code
+            try:
+                detail = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                detail = {}
+        except (URLError, OSError) as exc:
+            return {
+                "ok": False, "kind": "call_failed", "model": requested,
+                "protocol": chosen, "route": f"{chosen}:{route_name}",
+                "planned": planned, "hit": None,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "error": {"message": f"网关回环调用失败：{exc}", "http_status": None},
+                "hints": ["无法连接本机网关端口：确认服务仍在运行，再点「重新验收」。"],
+            }
+        ms = round((time.perf_counter() - started) * 1000, 1)
+
+        attempts: list[dict] = []
+        if self.audit and offset is not None:
+            # The serving thread appends audit rows after sending the
+            # response, so poll briefly instead of racing it.
+            for _ in range(10):
+                attempts = [e for e in self.audit.entries_since(offset)
+                            if e.get("protocol") == chosen]
+                if attempts:
+                    break
+                time.sleep(0.1)
+
+        ok = 200 <= (http_status or 0) < 300
+        hit = None
+        if routed and routed != "none" and "/" in routed:
+            channel, wire = routed.split("/", 1)
+            hit = {"channel": channel, "wire_model": wire}
+        result = {
+            "ok": ok,
+            "kind": "ok" if ok else "call_failed",
+            "model": requested,
+            "protocol": chosen,
+            "route": f"{chosen}:{route_name}",
+            "planned": planned,
+            "hit": hit,
+            "failover": int(failover) if failover and str(failover).isdigit()
+            else None,
+            "latency_ms": ms,
+            "attempts": attempts,
+        }
+        if ok:
+            return result
+        message = ((detail.get("error") or {}).get("message")
+                   or f"HTTP {http_status}")
+        result["error"] = {"message": message, "http_status": http_status}
+        result["hints"] = self._verify_hints("call_failed", http_status, detail)
+        return result
+
     def _registry_plan_models(self, channel: dict) -> tuple[str, list[str]] | None:
         """Curated plan-model list for a channel linked to a vendor mode.
 
