@@ -627,6 +627,11 @@ class Defaults:
     # Cooldowns longer than this many seconds are skipped by the prober
     # (Retry-After / daily-quota windows end on their own schedule).
     probe_max_cooldown_seconds: int = 600
+    # Monthly cap on tokens billed to pay-as-you-go/plan channels, enforced by
+    # the routing filters: once the current month's paid traffic crosses this
+    # line, paid candidates are skipped (free channels keep serving).
+    # 0 disables the budget.
+    paid_budget_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -904,6 +909,7 @@ def parse_config(raw: dict) -> Config:
         probe_interval_seconds=int(d.get("probe_interval_seconds", 0)),
         probe_mode=probe_mode,
         probe_max_cooldown_seconds=int(d.get("probe_max_cooldown_seconds", 600)),
+        paid_budget_tokens=int(d.get("paid_budget_tokens", 0)),
     )
 
     # Vendor management credentials: {provider: {ENV_NAME: value}}. Values

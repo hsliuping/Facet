@@ -519,6 +519,122 @@ function renderRoutes() {
   $('route-list').innerHTML = state.config.routes.length
     ? state.config.routes.map(routeCard).join('')
     : '<div class="card"><p class="hint">还没有路由链。</p></div>';
+  renderRoutePresets();
+}
+
+// ---- 免费/付费策略预设 ------------------------------------------------
+// 三种典型策略一键落到 default 链：只用免费、免费优先+付费兜底（二次
+// 确认）、固定渠道（把 $free 宏固化成当前免费渠道名单）。自定义链不动，
+// 「固定渠道」例外——它作用于所有含 $free 的链。预览实时反映当前链。
+const BILLING_LABELS = { free: '免费', plan: '套餐', payg: '按量' };
+
+function enabledChannelsOf(protocol, tier) {
+  return (state.config.channels || []).filter((c) => c.protocol === protocol
+    && c.enabled !== false && (tier === 'paid' ? c.tier !== 'free' : c.tier === 'free'));
+}
+
+function defaultRoutes() {
+  return (state.config.routes || []).filter((r) => r.name === 'default');
+}
+
+function routeChainPreview(route) {
+  const parts = (route.channels || []).map((name) => {
+    if (name === '$free') {
+      const free = enabledChannelsOf(route.protocol, 'free');
+      return free.length
+        ? `免费（${free.length} 家：${free.slice(0, 3).map((c) => c.name).join('、')}${free.length > 3 ? ' 等' : ''}），全部不可用再`
+        : '免费宏（当前没有可用免费渠道！）再';
+    }
+    const c = (state.config.channels || []).find((x) => x.name === name);
+    if (!c) return `${name}（缺失）`;
+    return c.tier === 'free' ? `${name}（免费）` : `${name}（可能产生费用）`;
+  });
+  return `${route.protocol}:${route.name}：${parts.join(' → ') || '（空链）'}`;
+}
+
+function renderRoutePresets() {
+  const box = $('route-preview');
+  if (!box) return;
+  const lines = (state.config.routes || [])
+    .filter((r) => r.name === 'default' || (r.channels || []).includes('$free'))
+    .map(routeChainPreview);
+  box.innerHTML = lines.length
+    ? lines.map((l) => esc(l)).join('<br>')
+    : '还没有路由链。';
+  const budget = $('paid-budget');
+  if (budget && document.activeElement !== budget) {
+    budget.value = (state.config.defaults && state.config.defaults.paid_budget_tokens) || 0;
+  }
+}
+
+async function applyRoutePreset(kind) {
+  const routes = state.config.routes || [];
+  if (kind === 'fixed') {
+    const backup = JSON.stringify(routes);
+    let changed = 0;
+    routes.forEach((r) => {
+      const out = [];
+      (r.channels || []).forEach((name) => {
+        if (name === '$free') {
+          changed += 1;
+          out.push(...enabledChannelsOf(r.protocol, 'free').map((c) => c.name));
+        } else {
+          out.push(name);
+        }
+      });
+      r.channels = out;
+    });
+    if (!changed) {
+      toast('当前路由链没有 $free 宏可固化', 'warn');
+      return;
+    }
+    if (routes.some((r) => !(r.channels || []).length)) {
+      state.config.routes = JSON.parse(backup);
+      toast('有协议没有可用免费渠道，固化后会得到空链，已取消', 'bad');
+      return;
+    }
+    const ok = await saveConfig();
+    if (ok) toast('已固化为固定渠道：新增免费渠道不再自动加入');
+    return;
+  }
+  if (kind === 'free-first') {
+    const paidList = defaultRoutes().flatMap((r) =>
+      enabledChannelsOf(r.protocol, 'paid').map((c) => `${r.protocol}:${c.name}`));
+    const okGo = await askConfirm('启用付费兜底？',
+      '免费渠道全部不可用时，请求会按顺序交给付费渠道（'
+      + (paidList.join('、') || '当前无付费渠道，仅写免费宏') + '），可能产生真实费用。');
+    if (!okGo) return;
+  }
+  const backup = JSON.stringify(routes);
+  const skipped = [];
+  defaultRoutes().forEach((r) => {
+    const free = enabledChannelsOf(r.protocol, 'free');
+    const paid = enabledChannelsOf(r.protocol, 'paid');
+    if (kind === 'free-only') {
+      if (free.length) r.channels = ['$free'];
+      else skipped.push(`${r.protocol}: 无免费渠道`);
+    } else if (free.length) {
+      r.channels = ['$free', ...paid.map((c) => c.name)];
+    } else if (paid.length) {
+      r.channels = paid.map((c) => c.name);
+      skipped.push(`${r.protocol}: 无免费渠道，仅保留付费链`);
+    } else {
+      skipped.push(`${r.protocol}: 无可用渠道`);
+    }
+  });
+  if ((defaultRoutes().some((r) => !(r.channels || []).length))) {
+    state.config.routes = JSON.parse(backup);
+    toast('预设会得到空链，已取消（先启用或配置渠道）', 'bad');
+    renderRoutes();
+    return;
+  }
+  const ok = await saveConfig();
+  if (ok) {
+    toast(kind === 'free-only'
+      ? '已切换为「只用免费」'
+      : '已切换为「免费优先+付费兜底」（免费不可用时才走付费）');
+    skipped.forEach((s) => toast(s, 'warn'));
+  }
 }
 
 function renderSummary() {
@@ -3031,7 +3147,7 @@ function renderRequests() {
       <td>${esc(at.time)}${at.date ? `<br><span class="sub-note">${esc(at.date)}</span>` : ''}</td>
       <td><code>${esc(e.model || '—')}</code></td>
       <td>${esc(e.mode || '—')}<br><span class="sub-note">${esc(e.api || '')} ${esc(reasonText(e.reason))}</span></td>
-      <td>${esc(e.channel || '—')}<br><span class="sub-note">${esc(e.wire_model || '')}</span></td>
+      <td>${esc(e.channel || '—')}${e.billing && BILLING_LABELS[e.billing] ? ` <span class="tag">${BILLING_LABELS[e.billing]}</span>` : ''}<br><span class="sub-note">${esc(e.wire_model || '')}</span></td>
       <td><span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span><br><span class="sub-note">${esc(e.http_status ?? '')}</span></td>
       <td>${esc(e.attempt ?? 0)}</td>
       <td>${esc(e.ms ?? 0)} ms</td>
@@ -5416,6 +5532,14 @@ function bindEvents() {
     renderVendors();
   });
   $('btn-add-route').onclick = openRouteModal;
+  document.querySelectorAll('[data-preset]').forEach((btn) => {
+    btn.onclick = () => applyRoutePreset(btn.dataset.preset);
+  });
+  $('paid-budget').addEventListener('change', (e) => {
+    state.config.defaults = state.config.defaults || {};
+    state.config.defaults.paid_budget_tokens = Math.max(0, Number(e.target.value) || 0);
+    markDirty();
+  });
   $('btn-refresh').onclick = () => loadState().catch((e) => toast(e.message, 'bad'));
   $('btn-reload').onclick = async () => {
     try {

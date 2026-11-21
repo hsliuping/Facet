@@ -229,6 +229,25 @@
               <button class="btn" id="btn-add-route">新增链</button>
             </div>
           </div>
+          <div class="card settings-card" id="route-presets">
+            <div class="card-top">
+              <div>
+                <h3>免费/付费策略预设</h3>
+                <p class="sub-note">一键把两条 default 链切换成典型策略，自定义链不受影响。当前策略会实时预览。</p>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn" data-preset="free-only">只用免费</button>
+              <button class="btn" data-preset="free-first">免费优先+付费兜底</button>
+              <button class="btn" data-preset="fixed">固定渠道</button>
+            </div>
+            <div class="field">
+              <label for="paid-budget">付费预算上限（本月 tokens，0 = 不限制）</label>
+              <input id="paid-budget" type="number" min="0" step="100000" placeholder="0">
+              <p class="hint">达到上限后网关自动跳过付费渠道（套餐与按量都算），只走免费渠道，并发通知提醒。</p>
+            </div>
+            <p class="hint" id="route-preview"></p>
+          </div>
           <div class="grid" id="route-list"></div>
         </section>
 

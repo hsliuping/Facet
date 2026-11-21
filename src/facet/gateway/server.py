@@ -1208,6 +1208,9 @@ class App:
         # instead, so they survive restarts without extra bookkeeping.
         self.member_rpm: dict[str, list[float]] = {}
         self._member_rpm_lock = threading.Lock()
+        # Billing bucket of the last served request (free/plan/payg) for the
+        # free→paid transition alert; in-memory by design, see _note_billing.
+        self._billing_state = {"billing": None, "prev": None, "at": 0.0}
         # Vendor-reported free quota from the last alignment sweep. Kept next
         # to the config so a restart keeps showing real numbers, and so the
         # free-quota gate can see consumption the gateway itself did not make.
@@ -2102,6 +2105,40 @@ class App:
                                     f"渠道：{channel.name}\n模型：{wire}\n"
                                     "已停止路由该模型以避免按量计费。"),
                     })
+        # Paid budget exhausted: once this month's plan/payg tokens cross the
+        # configured line, paid candidates are skipped and free channels keep
+        # serving — the operator should know before the next invoice does.
+        budget = self.config.defaults.paid_budget_tokens
+        if budget > 0:
+            spent = self._paid_month_tokens()
+            if spent >= budget:
+                paid = sorted({c.name for c in self.config.channels
+                               if c.enabled and self._billing_label(c) != "free"})
+                alerts.append({
+                    "kind": "paid_budget_exhausted",
+                    "key": "paid_budget",
+                    "title": f"付费预算已用尽：{spent:,}/{budget:,} tokens",
+                    "message": ("[PlanRouter 运行告警] 本月付费预算已用尽\n"
+                                f"预算：{budget:,} tokens/月\n"
+                                f"已用：{spent:,} tokens\n"
+                                f"付费渠道：{'、'.join(paid) or '（无）'}\n"
+                                "已停止调度付费渠道（免费渠道不受影响），"
+                                "可在控制台「路由链」页调高预算。"),
+                })
+        # Free→paid transition: the first paid request after free traffic
+        # costs real money, so surface it briefly (window-limited, one shot).
+        state = self._billing_state
+        if state.get("prev") == "free" and state.get("at") \
+                and time.time() - state["at"] < 900:
+            alerts.append({
+                "kind": "billing_switch",
+                "key": "billing_switch",
+                "title": "已切换到付费渠道",
+                "message": ("[PlanRouter 通知] 本次请求开始走付费渠道\n"
+                            f"当前计费方式：{state.get('billing')}\n"
+                            "免费渠道不可用时自动切换，可能产生费用；"
+                            "可在控制台「路由链」页查看策略预设。"),
+            })
         # Disk headroom: usage, notification state, maintenance reports and
         # config backups all fail once the data volume fills up. Warn while
         # writes still succeed so the operator has time to act. Every volume
@@ -4484,6 +4521,72 @@ class App:
             skipped.append(entry)
         return kept, skipped
 
+    # ---------------------------------------------------- billing policy
+    def _billing_label(self, channel) -> str:
+        """Free / plan / payg bucket for one channel, for audit + console.
+
+        tier="free" wins outright; a channel linked to a subscription record
+        bills against that plan; everything else is per-call pay-as-you-go.
+        Expired subscriptions never reach the attempt loop (blocked_channels),
+        so "plan" here always means an active one.
+        """
+        if channel.tier == "free":
+            return "free"
+        ref = channel_ref(channel)
+        for record in self.subscriptions:
+            refs = {str(r) for r in (record.get("channels") or [])}
+            if ref in refs or channel.name in refs:
+                return "plan"
+        return "payg"
+
+    def _paid_month_tokens(self) -> int:
+        """Tokens billed to plan/payg channels so far this calendar month."""
+        month = date.today().strftime("%Y-%m")
+        labels = {c.name: self._billing_label(c) for c in self.config.channels}
+        total = 0
+        with self.usage.lock:
+            for day, channels in self.usage.data.get("days", {}).items():
+                if not str(day).startswith(month):
+                    continue
+                for name, bucket in channels.items():
+                    if labels.get(name) in ("plan", "payg"):
+                        total += int(bucket.get("tokens") or 0)
+        return total
+
+    def _apply_paid_budget_filter(self, candidates) -> tuple[list, list]:
+        """Skip plan/payg candidates once the monthly paid budget is spent.
+
+        defaults.paid_budget_tokens = 0 disables the budget. Free candidates
+        always pass; an all-paid route with a spent budget comes back empty
+        and the no-candidate reply carries paid_budget_skipped.
+        """
+        budget = self.config.defaults.paid_budget_tokens
+        if budget <= 0 or not candidates:
+            return candidates, []
+        if self._paid_month_tokens() < budget:
+            return candidates, []
+        kept, skipped = [], []
+        for channel, wire in candidates:
+            if self._billing_label(channel) == "free":
+                kept.append((channel, wire))
+            else:
+                skipped.append({"channel": channel.name, "wire_model": wire,
+                                "reason": "paid_budget_exhausted"})
+        return kept, skipped
+
+    def _note_billing(self, billing: str) -> None:
+        """Remember the last served bucket; flag a free→paid transition.
+
+        In-memory only (a restart resets it): the transition alert fires in
+        a short window after the switch, so the runtime notifier reports it
+        once instead of nagging.
+        """
+        prev = self._billing_state.get("billing")
+        self._billing_state = {"billing": billing,
+                               "prev": prev if prev != billing else None,
+                               "at": time.time() if (
+                                   prev == "free" and billing != "free") else 0.0}
+
     def _apply_vision_filter(self, candidates) -> tuple[list, list]:
         """Keep only channels that can take an image/document/audio request.
 
@@ -4961,6 +5064,7 @@ class App:
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        candidates, budget_skipped = self._apply_paid_budget_filter(candidates)
         catalog_skipped = list(catalog_skipped) + dead_skipped
 
         if not candidates:
@@ -5024,6 +5128,7 @@ class App:
                 entry = {
                     **log_base, "channel": channel.name, "wire_model": wire,
                     "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "billing": self._billing_label(channel),
                 }
                 if error is None:
                     self.log_request(**entry, status="ok", http_status=200,
@@ -5233,6 +5338,7 @@ class App:
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        candidates, budget_skipped = self._apply_paid_budget_filter(candidates)
         catalog_skipped = list(catalog_skipped) + dead_skipped
 
         if not candidates:
@@ -5296,6 +5402,7 @@ class App:
                 entry = {
                     **log_base, "channel": channel.name, "wire_model": wire,
                     "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "billing": self._billing_label(channel),
                 }
                 if error is None:
                     self.log_request(**entry, status="ok", http_status=200,
@@ -5532,6 +5639,7 @@ class App:
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        candidates, budget_skipped = self._apply_paid_budget_filter(candidates)
         catalog_skipped = list(catalog_skipped) + dead_skipped
 
         if not candidates:
@@ -5595,6 +5703,7 @@ class App:
                 entry = {
                     **log_base, "channel": channel.name, "wire_model": wire,
                     "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "billing": self._billing_label(channel),
                 }
                 if error is None:
                     self.log_request(**entry, status="ok", http_status=200, tokens=0)
@@ -5858,6 +5967,7 @@ class App:
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        candidates, budget_skipped = self._apply_paid_budget_filter(candidates)
         catalog_skipped = list(catalog_skipped) + dead_skipped
 
         if not candidates:
@@ -5921,6 +6031,7 @@ class App:
                 entry = {
                     **log_base, "channel": channel.name, "wire_model": wire,
                     "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "billing": self._billing_label(channel),
                 }
                 if error is None:
                     self.log_request(**entry, status="ok", http_status=200, tokens=0)
@@ -6280,6 +6391,7 @@ class App:
         candidates, catalog_skipped = self._apply_catalog_filter(candidates, decision)
         candidates, dead_skipped = self._apply_dead_filter(candidates)
         candidates, quota_skipped = self._apply_free_quota_filter(candidates, decision)
+        candidates, budget_skipped = self._apply_paid_budget_filter(candidates)
         vision_skipped: list = []
         if needs_vision:
             candidates, vision_skipped = self._apply_vision_filter(candidates)
@@ -6325,6 +6437,10 @@ class App:
                 message = ("no image-capable channel for this route — every "
                            "candidate is text-only; give one channel a "
                            "'vision_model' or drop its 'vision': false")
+            if budget_skipped:
+                message = ("monthly paid budget exhausted — paid channels are "
+                           "skipped until the budget is raised or the month "
+                           "resets (free channels keep serving)")
             error = {
                 "message": message,
                 "route": f"{protocol}:{decision.hint}",
@@ -6338,6 +6454,8 @@ class App:
                 error["free_quota_skipped"] = quota_skipped
             if vision_skipped:
                 error["vision_skipped"] = vision_skipped
+            if budget_skipped:
+                error["paid_budget_skipped"] = budget_skipped
             _json(h, 503, {
                 "error": error,
                 "channels": self.store.snapshot()["channels"],
@@ -6373,6 +6491,7 @@ class App:
                 entry = {
                     **log_base, "channel": channel.name, "wire_model": wire,
                     "attempt": attempt, "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "billing": self._billing_label(channel),
                 }
                 if error is None:
                     if handoff:
@@ -6389,6 +6508,7 @@ class App:
                                      tokens=delivery.get("tokens", 0),
                                      input_tokens=delivery.get("input_tokens", 0),
                                      cached_tokens=delivery.get("cached_tokens", 0))
+                    self._note_billing(entry["billing"])
                     self.store.bind_session(session, channel.name, time.time())
                     return
 
