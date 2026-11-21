@@ -42,7 +42,7 @@ def _resolve_cmd(cmd: list[str]) -> list[str]:
     return cmd
 
 
-def parse_free_quota_output(text: str) -> list[dict]:
+def parse_free_quota_output_rows(text: str) -> list[dict]:
     """Parse a quota tool's ``--output json`` payload into row dicts.
 
     Accepts a bare array or an object wrapping one ({"data": [...]} etc.);
@@ -294,7 +294,7 @@ def run_free_align(app, trigger: str = "manual", _run_cmd=None) -> dict:
         key = (tuple(cmd), tuple(sorted(creds.items())))
         if key not in results:
             try:
-                results[key] = parse_free_quota_output(
+                results[key] = parse_free_quota_output_rows(
                     runner(list(cmd), extra_env=creds))
             except Exception as exc:
                 results[key] = None

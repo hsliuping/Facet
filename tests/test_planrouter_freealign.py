@@ -149,12 +149,12 @@ def volc_registry() -> list[dict]:
 class ParseTests(unittest.TestCase):
     def test_parses_bare_array_and_wrappers(self):
         rows = bl_rows()
-        self.assertEqual(freealign.parse_free_quota_output(json.dumps(rows)),
+        self.assertEqual(freealign.parse_free_quota_output_rows(json.dumps(rows)),
                          rows)
-        self.assertEqual(freealign.parse_free_quota_output(
+        self.assertEqual(freealign.parse_free_quota_output_rows(
             json.dumps({"data": rows})), rows)
-        self.assertEqual(freealign.parse_free_quota_output("not json"), [])
-        self.assertEqual(freealign.parse_free_quota_output('{"a": 1}'), [])
+        self.assertEqual(freealign.parse_free_quota_output_rows("not json"), [])
+        self.assertEqual(freealign.parse_free_quota_output_rows('{"a": 1}'), [])
 
     def test_filters_to_usable_free_text_models(self):
         self.assertEqual(freealign.free_models_from_rows(bl_rows()), FREE_MODELS)
@@ -567,10 +567,12 @@ class PlanQuotaTests(unittest.TestCase):
         tmp.close()
         self.path = Path(tmp.name)
         self.app = App(load_config(self.path), config_path=self.path)
+        # s1 的 expires_at 参与 vendor_plan 有效性判断，必须用相对日期；
+        # s2 仅展示（百炼不取套餐计划），日期冻结无碍。
         self.app.subscriptions = [
             {"id": "s1", "vendor": "火山引擎_6198_codingplan",
              "account": "6198", "plan": "coding plan", "tier": "Pro",
-             "expires_at": "2026-12-09", "channels": ["火山引擎0198"]},
+             "expires_at": FUTURE, "channels": ["火山引擎0198"]},
             {"id": "s2", "vendor": "百炼", "account": "main",
              "plan": "free tier", "tier": "free",
              "expires_at": "2026-12-31", "channels": ["百炼免费"]},

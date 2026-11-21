@@ -405,7 +405,7 @@ class CliTests(unittest.TestCase):
         rc, out, _ = self.run_main(list_items=lambda *a, **kw: ark_items())
         self.assertEqual(
             freealign.free_models_from_rows(
-                freealign.parse_free_quota_output(out)),
+                freealign.parse_free_quota_output_rows(out)),
             EXPECTED_MODELS)
 
     def test_missing_credentials_exit_2_with_stderr_hint(self):

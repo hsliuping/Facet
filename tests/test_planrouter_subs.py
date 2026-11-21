@@ -91,7 +91,9 @@ class SubscriptionMathTests(unittest.TestCase):
         records = subs.normalize_all([
             {"vendor": "v", "plan": "p", "price": 10, "expires_at": "2026-11-01"},
             {"vendor": "v", "plan": "p2", "price": 10},
-            {"vendor": "v", "plan": "p3", "price": 10, "expires_at": "2026-12-31", "remind_days": 0},
+            {"vendor": "v", "plan": "p3", "price": 10,
+             "expires_at": (date.today() + timedelta(days=30)).isoformat(),
+             "remind_days": 0},
         ])
         states = [subs.enrich(r, TODAY)["status"] for r in records]
         self.assertEqual(states, ["expired", "unknown", "active"])
@@ -288,9 +290,11 @@ class ChannelIdLinkTests(unittest.TestCase):
         data["channels"][0].update({"provider": "volcengine", "mode": "coding"})
         self.config_path.write_text(json.dumps(data), encoding="utf-8")
         self.subs_path = self.root / "subscriptions.json"
+        # 本夹只关心渠道关联，到期日期保持"仍在有效期内"即可（相对日期防腐烂）。
         subs.save_file(self.subs_path, subs.normalize_all([{
             "vendor": "火山引擎", "plan": "coding plan", "price": 199,
-            "channels": ["a"], "expires_at": "2026-12-31",
+            "channels": ["a"],
+            "expires_at": (date.today() + timedelta(days=90)).isoformat(),
         }]))
         self.app = App(load_config(self.config_path),
                        config_path=self.config_path,

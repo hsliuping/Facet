@@ -1,6 +1,8 @@
-"""体验批（E1/E2/E4/E5/E7/E8/E9）：错误信息口径统一与控制台文案修复."""
+"""体验批（E1/E2/E4/E5/E7/E8/E9）与清理批（C2/C4/C5）：口径统一与死代码清理."""
 import io
 import json
+import os
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -242,6 +244,40 @@ class ConsoleCopyTests(unittest.TestCase):
             "${Number(c.total_requests).toLocaleString()} / "
             "${Number(c.served_requests).toLocaleString()} / "
             "${Number(c.failed_requests).toLocaleString()}", self.js)
+
+
+# --------------------------------------------------------------- 清理批
+
+
+class CleanupTests(unittest.TestCase):
+    def test_no_dead_embedding_import_in_server(self):
+        # C2: server.py 不再引用 EMBEDDING_MODEL，死导入应删除。
+        src = (SRC / "server.py").read_text(encoding="utf-8")
+        self.assertNotIn("EMBEDDING_MODEL", src)
+
+    def test_freealign_output_parser_has_distinct_name(self):
+        # C4: 与 core.parse_free_quota 同名易混，freealign 侧改为 *_output_rows。
+        from facet.gateway import freealign
+        self.assertTrue(hasattr(freealign, "parse_free_quota_output_rows"))
+        self.assertFalse(hasattr(freealign, "parse_free_quota_output"))
+        self.assertEqual(freealign.parse_free_quota_output_rows('{"a": 1}'), [])
+        self.assertEqual(freealign.parse_free_quota_output_rows("not json"), [])
+
+    def test_inbound_shape_log_is_env_gated(self):
+        # C5: [inbound] 每请求一行改为 FACET_INBOUND_DEBUG 门控。
+        from facet.gateway import server
+        body = {"model": "m",
+                "messages": [{"role": "user", "content": "hi"}]}
+
+        def capture(env):
+            buf = io.StringIO()
+            with mock.patch.dict(os.environ, {"FACET_INBOUND_DEBUG": env}):
+                with mock.patch.object(sys, "stdout", buf):
+                    server._log_inbound_shape(body, 100)
+            return buf.getvalue()
+
+        self.assertEqual(capture(""), "")
+        self.assertIn("[inbound]", capture("1"))
 
 
 if __name__ == "__main__":

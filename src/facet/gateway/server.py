@@ -39,7 +39,7 @@ from .completions import CompletionsAdapter
 from .completions import to_chat_request as legacy_to_chat_request
 from .convert import convert_request, convert_response, inject_system, stream_converter
 from .core import (
-    ANTHROPIC, AUTO_MODEL, EMBEDDING_MODEL, FREE_RESERVE_DEFAULT_TOKENS,
+    ANTHROPIC, AUTO_MODEL, FREE_RESERVE_DEFAULT_TOKENS,
     FREE_RESERVE_TOKENS, OPENAI,
     QUOTA_MARKERS, Config,
     StateStore, channel_ref,
@@ -282,8 +282,11 @@ def _log_inbound_shape(body: dict, raw_len: int) -> None:
 
     Multimodal disputes (an IDE that strips images before sending) are
     settled by looking at this line — it shows whether any image part
-    actually reached the gateway and how large it was.
+    actually reached the gateway and how large it was. Printed only when
+    FACET_INBOUND_DEBUG is set; the per-request line is noise otherwise.
     """
+    if not os.environ.get("FACET_INBOUND_DEBUG", "").strip():
+        return
     try:
         messages = body.get("messages") or []
         tags = []
@@ -2995,7 +2998,7 @@ class App:
                              "（或设置环境变量 %s）；免费渠道的映射以免费额度为准，"
                              "上游全量清单不用于映射" % " / ".join(missing))}
         try:
-            rows = freealign_mod.parse_free_quota_output(
+            rows = freealign_mod.parse_free_quota_output_rows(
                 freealign_mod.run_vendor_cmd(list(cmd), extra_env=creds))
         except Exception as exc:
             return {"ok": False, "name": name,
