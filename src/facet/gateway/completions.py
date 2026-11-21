@@ -20,7 +20,10 @@ def to_chat_request(body: dict) -> dict:
     """Build a chat/completions payload from a legacy completions request."""
     prompt = body.get("prompt")
     if isinstance(prompt, list):
-        text = "\n".join(str(p) for p in prompt if isinstance(p, str))
+        # Every entry survives, coerced verbatim: dropping non-string items
+        # (legacy token ids, odd client payloads) silently rewrote the
+        # prompt into a different message.
+        text = "\n".join(str(p) for p in prompt)
     elif prompt is None:
         text = ""
     else:

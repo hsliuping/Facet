@@ -327,6 +327,63 @@ class StreamConverterTests(unittest.TestCase):
         self.assertEqual(json.loads(arguments), {"city": "Paris"})
         self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_arguments_before_name_defer_the_block_start(self):
+        # The block opens only once a name is in: a provider that streams
+        # arguments before the tool name must not emit a content_block_start
+        # with an empty name; the deltas buffer until the name lands.
+        upstream = (
+            b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":"{\\"a\\""}}]}}]}\n\n'
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call_1","function":{"name":"f"}}]}}]}\n\n'
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":":1}"}}]}}]}\n\n'
+            b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],'
+            b'"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n'
+            b"data: [DONE]\n\n"
+        )
+        converter = stream_converter(OPENAI, ANTHROPIC)
+        out = converter.feed(upstream) + converter.finish()
+        datas = [json.loads(line[6:]) for line in out.split(b"\n")
+                 if line.startswith(b"data: ")]
+        starts = [d for d in datas if d.get("type") == "content_block_start"
+                  and d["content_block"].get("type") == "tool_use"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["content_block"]["name"], "f")
+        self.assertEqual(starts[0]["content_block"]["id"], "call_1")
+        deltas = [d for d in datas if d.get("type") == "content_block_delta"
+                  and d["delta"].get("type") == "input_json_delta"]
+        self.assertEqual(deltas[0]["index"], starts[0]["index"])
+        self.assertEqual(json.loads("".join(
+            d["delta"]["partial_json"] for d in deltas)), {"a": 1})
+        # The block opened with the name already in hand, before any delta.
+        first_start = datas.index(starts[0])
+        self.assertLess(first_start, datas.index(deltas[0]))
+
+    def test_close_flushes_arguments_that_never_got_a_name(self):
+        # No name ever lands: the block still opens at close and the
+        # buffered arguments are flushed in order, nothing is lost.
+        upstream = (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call_2","function":{"arguments":"{}"}}]}}]}\n\n'
+            b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],'
+            b'"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n'
+            b"data: [DONE]\n\n"
+        )
+        converter = stream_converter(OPENAI, ANTHROPIC)
+        out = converter.feed(upstream) + converter.finish()
+        datas = [json.loads(line[6:]) for line in out.split(b"\n")
+                 if line.startswith(b"data: ")]
+        starts = [d for d in datas if d.get("type") == "content_block_start"
+                  and d["content_block"].get("type") == "tool_use"]
+        self.assertEqual(len(starts), 1)
+        deltas = [d for d in datas if d.get("type") == "content_block_delta"
+                  and d["delta"].get("type") == "input_json_delta"]
+        self.assertEqual(json.loads("".join(
+            d["delta"]["partial_json"] for d in deltas)), {})
+        self.assertLess(datas.index(starts[0]), datas.index(deltas[0]))
+
     def test_openai_stream_to_anthropic(self):
         upstream = (
             b'data: {"choices":[{"delta":{"role":"assistant","content":"He"}}]}\n\n'

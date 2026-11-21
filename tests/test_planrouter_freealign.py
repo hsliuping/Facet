@@ -1161,6 +1161,40 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         payload = maint.free_models_payload(self.app)
         self.assertIn("同步失败", payload["channels"][0]["quota_sync"])
 
+    def test_sync_note_older_failure_survives_unrelated_sweeps(self):
+        # A sweep that does not mention this channel (other channels only)
+        # must not hide its last known outcome: the newest report that
+        # mentions the channel decides.
+        self.app.free_align_reports = [
+            {"trigger": "scheduled",
+             "alerts": [{"channel": "火山免费", "kind": "free_quota_cmd",
+                         "message": "免费额度命令执行失败"}]},
+            {"trigger": "scheduled", "quota": ["other"]},
+        ]
+        payload = maint.free_models_payload(self.app)
+        self.assertIn("同步失败", payload["channels"][0]["quota_sync"])
+
+    def test_sync_note_reads_newest_report_mentioning_the_channel(self):
+        self.app.free_align_reports = [
+            {"trigger": "scheduled",
+             "alerts": [{"channel": "火山免费", "kind": "free_quota_cmd",
+                         "message": "免费额度命令执行失败"}]},
+            {"trigger": "scheduled", "quota": ["火山免费"]},
+        ]
+        payload = maint.free_models_payload(self.app)
+        self.assertEqual(payload["channels"][0]["quota_sync"], "")
+
+    def test_sync_note_warns_for_never_swept_channels(self):
+        # A channel the recent sweeps never mention (newly added, or long
+        # skipped) must warn instead of silently claiming a sync that never
+        # happened for it.
+        self.app.free_align_reports = [
+            {"trigger": "scheduled", "quota": ["other"]},
+            {"trigger": "scheduled", "quota": ["other"]},
+        ]
+        payload = maint.free_models_payload(self.app)
+        self.assertIn("尚未同步", payload["channels"][0]["quota_sync"])
+
     def test_payload_carries_vendor_free_limits_and_counts(self):
         self.app.providers = [{
             "id": "volcengine", "name": "火山引擎方舟",

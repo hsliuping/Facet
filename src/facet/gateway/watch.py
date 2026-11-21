@@ -54,6 +54,14 @@ EVENT_KEY_KEEP = 8
 READ_MARKS_KEEP = 2000
 
 
+def _iso_utc(now: float | None = None) -> str:
+    """ISO-8601 UTC with an explicit Z, the timestamp format every file the
+    watch writes uses. The console converts event timestamps to local time
+    through the Z marker; a bare local time next to it would make the files
+    self-inconsistent."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + "Z"
+
+
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
@@ -343,8 +351,7 @@ def mark_read(app, ids: list[str], read: bool = True) -> int:
         if read:
             if event_id not in marks:
                 changed += 1
-            touched[event_id] = time.strftime("%Y-%m-%dT%H:%M:%S",
-                                              time.localtime())
+            touched[event_id] = _iso_utc()
         elif event_id in marks:
             removed.append(event_id)
             changed += 1
@@ -387,7 +394,7 @@ def set_muted(app, keys: list[str], muted: bool = True) -> dict:
     fresh = load_snapshots(app)
     base = fresh.get("muted") if isinstance(fresh.get("muted"), dict) else dict(marks)
     for key in touched:
-        base[key] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+        base[key] = _iso_utc()
         changed += 1
     for key in removed:
         base.pop(key, None)
@@ -495,7 +502,7 @@ def run_watch(app) -> dict:
         entry = {
             "key": key, "origin": source["origin"], "label": source["label"],
             "url": source["url"], "kind": source["kind"],
-            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "checked_at": _iso_utc(),
         }
         # Dedup keys survive failed sweeps and unchanged ones: a diff that
         # fired once must not re-fire three sweeps later just because the
@@ -536,7 +543,7 @@ def run_watch(app) -> dict:
             now = time.time()
             events.append({
                 "id": uuid.uuid4().hex[:12],
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + "Z",
+                "ts": _iso_utc(now),
                 "kind": diff["kind"],
                 "source": {"key": key, "origin": source["origin"],
                            "label": source["label"], "url": source["url"]},
@@ -560,7 +567,7 @@ def run_watch(app) -> dict:
     data = {"snapshots": new_snaps,
             "read_events": fresh_marks if isinstance(fresh_marks, dict) else {},
             "muted": fresh_muted if isinstance(fresh_muted, dict) else {},
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())}
+            "updated_at": _iso_utc()}
     save_snapshots(app, data)
 
     # Append after the snapshots are safe: a crash between the two writes

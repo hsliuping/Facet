@@ -104,6 +104,22 @@ class SubscriptionMathTests(unittest.TestCase):
         self.assertEqual(subs.monthly_equivalent(yearly)["amount"], 100.0)
         self.assertEqual(subs.monthly_equivalent(quarterly)["amount"], 100.0)
 
+    def test_one_time_amortizes_over_its_validity(self):
+        # A one-time purchase is not a recurring monthly cost: it spreads
+        # across the validity it covers (¥360 over three months = ¥120).
+        record = subs.normalize({
+            "vendor": "v", "plan": "p", "price": 360, "billing_cycle": "one_time",
+            "started_at": "2026-01-01", "expires_at": "2026-04-01",
+        })
+        self.assertEqual(subs.monthly_equivalent(record)["amount"], 120.0)
+
+    def test_one_time_without_dates_has_no_monthly_equivalent(self):
+        # Without a validity window there is nothing to amortize over, and
+        # counting the full price every month inflates the monthly cost.
+        record = subs.normalize({
+            "vendor": "v", "plan": "p", "price": 360, "billing_cycle": "one_time"})
+        self.assertIsNone(subs.monthly_equivalent(record))
+
     def test_renew_extends_by_cycle_and_resets_start(self):
         record = volcengine_records()[0]
         renewed = subs.renew_record(record, {}, on=TODAY)
@@ -312,6 +328,27 @@ class ChannelIdLinkTests(unittest.TestCase):
         stored = subs.load_file(self.subs_path)[0]
         self.assertEqual(stored["channels"], [cid])
         self.assertNotIn("vendor", stored)
+
+    def test_cli_check_uses_registry_vendor_for_alerts(self):
+        # The --check path labels subscriptions like the console does: the
+        # registry name of the linked channels' provider, the plan name only
+        # as fallback. The record itself stores no vendor.
+        subs.save_file(self.subs_path, subs.normalize_all([{
+            "vendor": "火山引擎", "plan": "coding plan", "price": 199,
+            "channels": ["a"],
+            "expires_at": (date.today() + timedelta(days=3)).isoformat(),
+        }]))
+        (self.root / "providers.json").write_text(json.dumps([
+            {"id": "volcengine", "name": "火山引擎方舟",
+             "modes": {"coding": {"label": "Coding", "protocol": "openai",
+                                  "base_url": "https://ark.example.com/api/v3"}}},
+        ]), encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(["--config", str(self.config_path), "--check"])
+        self.assertEqual(code, 0)
+        self.assertIn("RENEW", out.getvalue())
+        self.assertIn("火山引擎方舟", out.getvalue())
 
     def test_rename_keeps_the_subscription_linked(self):
         cid = self.app.config.channel("a").id

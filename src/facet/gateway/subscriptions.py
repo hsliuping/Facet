@@ -20,7 +20,9 @@ BILLING_CYCLES = ("monthly", "quarterly", "yearly", "one_time", "custom")
 CURRENCIES = ("CNY", "USD", "EUR", "HKD")
 DEFAULT_REMIND_DAYS = 7
 CYCLE_MONTHS = {"monthly": 1, "quarterly": 3, "yearly": 12, "one_time": 1, "custom": 1}
-CYCLE_DIVISOR = {"monthly": 1, "quarterly": 3, "yearly": 12, "one_time": 1, "custom": 1}
+# Monthly cost divides the price by this many months; one_time is amortized
+# across its validity window in monthly_equivalent instead.
+CYCLE_DIVISOR = {"monthly": 1, "quarterly": 3, "yearly": 12, "custom": 1}
 QUOTA_UNITS = ("", "requests", "tokens", "hours")
 
 
@@ -140,6 +142,19 @@ def normalize_all(raw) -> list[dict]:
 
 def monthly_equivalent(record: dict) -> dict | None:
     cycle = record.get("billing_cycle")
+    if cycle == "one_time":
+        # A one-time purchase is not a recurring monthly cost: it spreads
+        # across the validity it covers (¥360 for three months = ¥120/month).
+        # Without a validity window there is nothing to amortize over, and
+        # counting the full price every month would inflate the monthly cost.
+        started = _date(record.get("started_at"), "started_at")
+        expires = _date(record.get("expires_at"), "expires_at")
+        if not (started and expires and expires > started):
+            return None
+        months = max(1, (expires.year - started.year) * 12
+                     + expires.month - started.month)
+        return {"currency": record.get("currency", "CNY"),
+                "amount": round(float(record.get("price") or 0) / months, 2)}
     divisor = CYCLE_DIVISOR.get(cycle)
     if not divisor:
         return None

@@ -35,15 +35,21 @@ _BEIJING = timezone(timedelta(hours=8))
 _GRANT_RULES = ("daily_active", "aliyun_bindlogin")
 
 
-def _get(path: str, token: str) -> dict:
-    """One cookie-authenticated GET against the website plane."""
+def _get(path: str, token: str, timeout: float = 30.0,
+         _urlopen=None) -> dict:
+    """One cookie-authenticated GET against the website plane.
+
+    ``timeout`` bounds the request; ``_urlopen`` replaces the opener for
+    tests, mirroring the other vendor quota fetchers.
+    """
     req = urllib.request.Request(
         _HOST + path,
         headers={"Cookie": f"m_session_id={token}", "User-Agent": _UA,
                  "Referer": _HOST + "/"},
     )
+    opener = _urlopen or urllib.request.urlopen
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with opener(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = ""
@@ -56,10 +62,10 @@ def _get(path: str, token: str) -> dict:
         raise RuntimeError(str(exc) or exc.__class__.__name__) from exc
 
 
-def _ledger(token: str) -> list:
+def _ledger(token: str, timeout: float = 30.0, _urlopen=None) -> list:
     """Latest magicube transactions, newest first."""
     data = (_get("/openapi/v1/magicubes/transactions?page=1&page_size=50",
-                 token) or {}).get("data") or {}
+                 token, timeout, _urlopen) or {}).get("data") or {}
     rows = data.get("records")
     if not isinstance(rows, list):
         raise RuntimeError("transactions response has no records")
@@ -90,21 +96,24 @@ def _today_grant(rows: list, today: str) -> tuple:
     return earned, spent, landed, hint
 
 
-def _balance(token: str) -> float:
-    data = (_get("/openapi/v1/magicubes/balance", token) or {}).get("data") or {}
+def _balance(token: str, timeout: float = 30.0, _urlopen=None) -> float:
+    data = (_get("/openapi/v1/magicubes/balance", token, timeout, _urlopen)
+            or {}).get("data") or {}
     if "available_balance" not in data:
         raise RuntimeError("balance response has no available_balance")
     return float(data.get("available_balance") or 0)
 
 
-def fetch_balance(api_key: str) -> dict:
+def fetch_balance(api_key: str, timeout: float = 30.0,
+                  _urlopen=None) -> dict:
     """Snapshot for the channel-usage card: balance plus today's ledger."""
     token = resolve_secret(api_key) or ""
     if not token:
         raise RuntimeError("no api_key")
-    balance = _balance(token)
+    balance = _balance(token, timeout, _urlopen)
     today = datetime.now(_BEIJING).strftime("%Y-%m-%d")
-    earned, spent, landed, hint = _today_grant(_ledger(token), today)
+    earned, spent, landed, hint = _today_grant(
+        _ledger(token, timeout, _urlopen), today)
     parts = [f"魔粒 {balance:g}", f"今日领 {earned:g}", f"今日用 {spent:g}"]
     if hint:
         parts.append(f"{hint} 过期")
@@ -114,7 +123,8 @@ def fetch_balance(api_key: str) -> dict:
             "windows": [], "summary": " · ".join(parts)}
 
 
-def checkin(api_key: str, confirm_seconds: float = 60.0) -> dict:
+def checkin(api_key: str, confirm_seconds: float = 60.0,
+            timeout: float = 30.0, _urlopen=None) -> dict:
     """Claim today's magicube grant. Idempotent per Beijing day.
 
     Returns {"outcome": "done" | "claimed" | "inactive", "detail", "granted",
@@ -128,13 +138,14 @@ def checkin(api_key: str, confirm_seconds: float = 60.0) -> dict:
         raise RuntimeError("no api_key")
     today = datetime.now(_BEIJING).strftime("%Y-%m-%d")
 
-    earned, spent, landed, _hint = _today_grant(_ledger(token), today)
+    earned, spent, landed, _hint = _today_grant(
+        _ledger(token, timeout, _urlopen), today)
     if landed:
         return {"outcome": "done", "granted": earned, "spent": spent,
-                "balance": _balance(token), "user": "",
+                "balance": _balance(token, timeout, _urlopen), "user": "",
                 "detail": f"today's grant already claimed ({earned:g})"}
 
-    info = _get("/api/v1/users/login/info", token)
+    info = _get("/api/v1/users/login/info", token, timeout, _urlopen)
     user = str((info.get("Data") or {}).get("Name") or "")
     if info.get("Code") != 200 or not user:
         raise RuntimeError(f"login/info: {info.get('Message') or info.get('Code')}")
@@ -143,10 +154,11 @@ def checkin(api_key: str, confirm_seconds: float = 60.0) -> dict:
     wait = 3.0
     while True:
         time.sleep(wait)
-        earned, spent, landed, _hint = _today_grant(_ledger(token), today)
+        earned, spent, landed, _hint = _today_grant(
+            _ledger(token, timeout, _urlopen), today)
         if landed:
             return {"outcome": "claimed", "granted": earned, "spent": spent,
-                    "balance": _balance(token), "user": user,
+                    "balance": _balance(token, timeout, _urlopen), "user": user,
                     "detail": f"claimed {earned:g} magicubes as {user}"}
         if time.time() >= deadline:
             return {"outcome": "inactive", "granted": None, "spent": spent,

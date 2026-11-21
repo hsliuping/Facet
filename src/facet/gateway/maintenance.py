@@ -1671,6 +1671,15 @@ def retest_failed_models(app) -> dict:
 FREE_USAGE_DAYS = 30  # window for per-model request/token figures in the console
 
 
+# The sync note reads the last few free-align reports: the newest one that
+# mentions a channel decides its note, so a sweep that covered other channels
+# does not hide the outcome, and a channel the recent sweeps never mention
+# (newly added, or long skipped) is warned about.
+FREE_SYNC_LOOKBACK = 3
+_UNSYNCED_NOTE = "尚未同步厂家免费额度：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
+_FAILED_NOTE = "厂家免费额度同步失败：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
+
+
 def _free_quota_sync_note(app, channel) -> str:
     """Warn when vendor quota sync is absent: the local baseline may drift.
 
@@ -1684,13 +1693,21 @@ def _free_quota_sync_note(app, channel) -> str:
         return ""
     reports = getattr(app, "free_align_reports", None) or []
     if not reports:
-        return "尚未同步厂家免费额度：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
-    latest = reports[-1]
-    for alert in latest.get("alerts") or []:
-        if (alert.get("channel") == channel.name
-                and alert.get("kind") == "free_quota_cmd"):
-            return "厂家免费额度同步失败：当前按基础额度 + 本地用量估算，可能与实际用量不一致"
-    return ""
+        return _UNSYNCED_NOTE
+    for report in reversed(reports[-FREE_SYNC_LOOKBACK:]):
+        if channel.name in (report.get("quota") or ()):
+            return ""  # the newest sweep mentioning it synced fine
+        if any(row.get("channel") == channel.name
+               for row in report.get("aligned") or []):
+            return ""
+        for alert in report.get("alerts") or []:
+            if (alert.get("channel") == channel.name
+                    and alert.get("kind") == "free_quota_cmd"):
+                return _FAILED_NOTE
+        for skip in report.get("skipped") or []:
+            if skip.get("channel") == channel.name:
+                return _UNSYNCED_NOTE
+    return _UNSYNCED_NOTE
 
 
 def free_models_payload(app) -> dict:

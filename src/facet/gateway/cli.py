@@ -6,10 +6,43 @@ import json
 import sys
 from pathlib import Path
 
+from . import providers as providers_mod
 from . import subscriptions as subs
 from .core import PROTOCOLS, VERSIONED_BASE, load_config
 from .seed import print_seed_banner, write_seed
 from .server import make_server
+
+
+def _registry_label(config, config_dir: Path):
+    """Vendor label for a subscription record, mirroring the console's
+    subscription_label: the registry name of the linked channels' provider,
+    the provider id, then the plan name. A record stores channel links only,
+    never a vendor."""
+    try:
+        providers = providers_mod.load_providers(config_dir)
+    except (OSError, ValueError):
+        providers = providers_mod.load_providers(None)
+    names = {}
+    for entry in providers or []:
+        if isinstance(entry, dict):
+            pid = str(entry.get("id") or "")
+            names[pid] = str(entry.get("name") or pid)
+    linked = {}
+    for channel in config.channels:
+        provider = str(channel.provider or "")
+        if provider:
+            # Records link by stable channel id, legacy records by name.
+            linked[channel.name] = provider
+            linked[str(getattr(channel, "id", "") or "")] = provider
+
+    def label(record: dict) -> str:
+        for ref in record.get("channels") or []:
+            pid = linked.get(str(ref))
+            if pid:
+                return names.get(pid, pid)
+        return str(record.get("plan") or "")
+
+    return label
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
                       "segment; /chat/completions will be used automatically")
         try:
             records = subs.load_file(subs_path)
-            summary = subs.summarize(records)
+            summary = subs.summarize(records,
+                                     label=_registry_label(config, config_dir))
             print(f"  subscriptions: {summary['total']} ({subs_path})")
             if summary["monthly_cost"]:
                 cost = ", ".join(f"{amount:g} {code}/month"

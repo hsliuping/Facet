@@ -596,6 +596,16 @@ class _OpenAIToAnthropicStream(_SSEConverter):
         }))
         return b"".join(out)
 
+    def _flush_pending(self, entry: dict) -> bytes:
+        """Argument deltas buffered while the tool name was still missing."""
+        return b"".join(
+            _event_line("content_block_delta", {
+                "index": entry["index"],
+                "delta": {"type": "input_json_delta",
+                          "partial_json": chunk},
+            })
+            for chunk in entry.pop("pending", []))
+
     def _line(self, line: bytes) -> bytes:
         event = _parse_sse_data(line)
         if event is None:
@@ -632,6 +642,7 @@ class _OpenAIToAnthropicStream(_SSEConverter):
             key = int(call.get("index") or 0)
             entry = self.tools.setdefault(key, {
                 "id": "", "name": "", "started": False, "index": -1,
+                "pending": [],
             })
             if call.get("id"):
                 entry["id"] = str(call["id"])
@@ -641,11 +652,18 @@ class _OpenAIToAnthropicStream(_SSEConverter):
             arguments = function.get("arguments")
             if arguments:
                 # The block starts only once a name is in: OpenAI sends the
-                # name in the first fragment, so this defers one delta at most.
+                # name in the first fragment, so this defers one delta at
+                # most. A provider that streams arguments before the name
+                # buffers them here; they flush right after the block opens
+                # (at close, if the name never lands).
                 if not entry["started"]:
+                    if not entry["name"]:
+                        entry["pending"].append(str(arguments))
+                        continue
                     if not entry["id"]:
                         entry["id"] = "toolu_" + uuid.uuid4().hex[:24]
                     out.append(self._start_tool(entry))
+                    out.append(self._flush_pending(entry))
                 out.append(_event_line("content_block_delta", {
                     "index": entry["index"],
                     "delta": {"type": "input_json_delta",
@@ -666,6 +684,7 @@ class _OpenAIToAnthropicStream(_SSEConverter):
                 if not entry["id"]:
                     entry["id"] = "toolu_" + uuid.uuid4().hex[:24]
                 out.append(self._start_tool(entry))
+                out.append(self._flush_pending(entry))
         out.append(self._close_block())
         usage = {"input_tokens": max(self.prompt_tokens - self.cached_tokens, 0),
                  "output_tokens": self.completion_tokens}

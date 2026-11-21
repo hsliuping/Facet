@@ -6,6 +6,7 @@ data survive a sweep untouched.
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import hashlib
 import http.client
 import json
@@ -326,6 +327,66 @@ class EventKeyTests(unittest.TestCase):
         self.assertEqual(len(keys), 3)
         self.assertNotEqual(watch_mod.event_key(e1, "src"),
                             watch_mod.event_key(e1, "other"))
+
+
+class WatchTimestampTests(unittest.TestCase):
+    """Every timestamp the watch writes is UTC ISO-8601 with a Z suffix.
+
+    The console renders event timestamps through a UTC->local conversion
+    driven by the Z marker; snapshots, read marks and mutes live in the same
+    JSON files. A bare local time next to a suffixed UTC time made the files
+    self-inconsistent (an hours-wide skew between an event and the snapshot
+    entry it came from).
+    """
+
+    def setUp(self):
+        self.app = _make_app(self)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+        (self.path.parent / "change-snapshots.json").unlink(missing_ok=True)
+        (self.path.parent / "change-events.jsonl").unlink(missing_ok=True)
+
+    def _two_sweeps_with_a_change(self):
+        with mock.patch.object(watch_mod, "snapshot_source",
+                               lambda s: _snap(s, ["m1"])):
+            watch_mod.run_watch(self.app)  # baseline
+        with mock.patch.object(
+                watch_mod, "snapshot_source",
+                lambda s: _snap(s, ["m2"] if s["key"] == "channel:a"
+                                else ["m1"])):
+            watch_mod.run_watch(self.app)  # one source changes
+
+    @staticmethod
+    def _recent(ts: str) -> bool:
+        parsed = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+        return abs((datetime.datetime.utcnow() - parsed).total_seconds()) < 300
+
+    def test_event_timestamps_are_utc(self):
+        self._two_sweeps_with_a_change()
+        events = watch_mod.load_events(self.app)
+        self.assertEqual(len(events), 2)
+        for event in events:
+            self.assertTrue(self._recent(event["ts"]), event["ts"])
+
+    def test_snapshot_entries_are_utc(self):
+        self._two_sweeps_with_a_change()
+        state = watch_mod.load_snapshots(self.app)
+        for key, entry in state["snapshots"].items():
+            self.assertTrue(self._recent(entry["checked_at"]), key)
+        self.assertTrue(self._recent(state["updated_at"]))
+
+    def test_read_marks_and_mutes_are_utc(self):
+        self._two_sweeps_with_a_change()
+        events = watch_mod.load_events(self.app)
+        self.assertEqual(watch_mod.mark_read(
+            self.app, [e["id"] for e in events]), len(events))
+        watch_mod.set_muted(self.app, ["channel:b"], muted=True)
+        state = watch_mod.load_snapshots(self.app)
+        for mark in state["read_events"].values():
+            self.assertTrue(mark.endswith("Z"), mark)
+        self.assertTrue(state["muted"]["channel:b"].endswith("Z"),
+                        state["muted"]["channel:b"])
 
 
 class RunWatchTests(unittest.TestCase):

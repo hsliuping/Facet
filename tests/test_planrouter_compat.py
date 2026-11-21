@@ -139,6 +139,12 @@ class LegacyCompletionsShapeTests(unittest.TestCase):
         chat = to_chat_request({"model": "m", "prompt": ["a", "b"]})
         self.assertEqual(chat["messages"][0]["content"], "a\nb")
 
+    def test_prompt_list_keeps_non_string_entries(self):
+        # Dropping non-string items silently rewrote the prompt the client
+        # sent: every entry must survive, coerced verbatim.
+        chat = to_chat_request({"model": "m", "prompt": ["a", 5, None]})
+        self.assertEqual(chat["messages"][0]["content"], "a\n5\nNone")
+
     def test_params_pass_through(self):
         chat = to_chat_request({"model": "m", "prompt": "x", "temperature": 0.5,
                                 "stop": ["\n"], "stream": True, "echo": True})
