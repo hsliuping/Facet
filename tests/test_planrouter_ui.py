@@ -268,19 +268,20 @@ class ConsoleTests(unittest.TestCase):
         from facet.gateway.ui import STATIC_DIR
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
-        # 七个筛选入口：渠道/厂家/用量模型/请求日志/免费模型/对比 + 目录弹窗
+        # 八个筛选入口：渠道/厂家/用量模型/请求日志/免费模型/API Keys/对比 + 目录弹窗
         for anchor in [
             "没有匹配「${esc(kw)}」的渠道",
             "没有匹配「${esc(kw)}」的厂家",
+            "没有匹配「${esc(kw)}」的 Key",
             "没有匹配的模型。",
             "没有符合筛选条件的请求。",
             "没有符合筛选条件的模型。",
             "class=\"hint\">没有匹配的模型'",
         ]:
             self.assertIn(anchor, js)
-        # 空态里的清除按钮按目标输入框各就各位（6 个空态 + 目录弹窗 1 个）；
+        # 空态里的清除按钮按目标输入框各就各位（7 个空态 + 目录弹窗 1 个）；
         # 委托选择器 closest('[data-clear-filter]') 不带 =，不计入
-        self.assertEqual(js.count('data-clear-filter="'), 7)
+        self.assertEqual(js.count('data-clear-filter="'), 8)
         self.assertIn('data-clear-filter="catalog-filter"', js)
         self.assertIn("catalog-empty", js)
         # 事件委托：一处监听处理所有清除按钮，还原值并回到搜索框
@@ -290,9 +291,9 @@ class ConsoleTests(unittest.TestCase):
         # 关键词为空时放行，第二次 Esc 才关闭弹窗/编辑器
         self.assertIn("stopImmediatePropagation()", js)
         self.assertIn("'usage-model-search', 'compare-search', 'catalog-filter'", js)
-        # 7 个筛选输入全部走 150ms 防抖：6 处内联包装 + compare-search 复用 rerender
+        # 8 个筛选输入全部走 150ms 防抖：7 处内联包装 + compare-search 复用 rerender
         self.assertIn("function debounce(fn, ms = 150)", js)
-        self.assertEqual(js.count("debounce(("), 6)
+        self.assertEqual(js.count("debounce(("), 7)
         self.assertIn("addEventListener('input', debounce(rerender))", js)
         # 空态行内按钮与文案留出间距
         self.assertIn(".hint .btn, .sub-note .btn", css)
@@ -467,6 +468,26 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("facet-requests-${todayStamp()}.csv", js)
         self.assertIn("$('btn-export-requests').onclick = exportRequests;", js)
         self.assertIn('id="btn-export-requests"', html)
+
+    def test_summary_counts_all_channels_and_keys_search(self):
+        """状态页 KPI 永远统计全量渠道；API Keys 表加搜索框与空态自救。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # renderSummary 直接统计全量渠道，不再按 channelFilter 过滤
+        self.assertIn("const cooling = s.channels.filter((c) => c.cooling).length;", js)
+        self.assertIn("['渠道总数', s.channels.length, ''],", js)
+        # 渠道筛选不再触发 renderSummary（状态页 KPI 与渠道筛选解耦）
+        self.assertNotIn("renderChannels();\n    renderSummary();", js)
+        # API Keys 搜索框 + 空态自救按钮
+        self.assertIn('id="keys-search"', html)
+        self.assertIn("keysFilter: ''", js)
+        self.assertIn("state.keysPayload", js)
+        self.assertIn("const applyKeysFilter", js)
+        self.assertIn("renderApiKeys(state.keysPayload);", js)
+        self.assertIn("data-clear-filter=\"keys-search\"", js)
+        # 搜索框纳入 Esc 清词清单
+        self.assertIn("'keys-search'];", js)
 
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""

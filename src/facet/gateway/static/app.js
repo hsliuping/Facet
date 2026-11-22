@@ -38,6 +38,7 @@ const state = {
   snapshot: null,
   tab: 'dashboard',
   channelFilter: '',
+  keysFilter: '',
   vendorFilter: '',
   key: readStoredKey('gateway'),
   adminKey: readStoredKey('admin'),
@@ -894,21 +895,15 @@ async function applyRoutePreset(kind) {
 function renderSummary() {
   const s = state.snapshot;
   if (!s) return;
-  // With an active channel filter the top metrics reflect the filtered subset.
-  const kw = (state.channelFilter || '').trim().toLowerCase();
-  const rows = kw
-    ? s.channels.filter((c) => {
-        const cfg = (state.config?.channels || []).find((x) => x.name === c.name);
-        return cfg && channelHaystack(cfg).includes(kw);
-      })
-    : s.channels;
-  const cooling = rows.filter((c) => c.cooling).length;
-  const requests = rows.reduce((n, c) => n + c.total_requests, 0);
-  const tokens = rows.reduce((n, c) => n + c.total_tokens, 0);
+  // 运行状态页的 KPI 永远统计全量渠道：渠道筛选只影响渠道页列表，
+  // 这里若跟着筛选会出现「渠道总数 2/8」与下方全量表格自相矛盾。
+  const cooling = s.channels.filter((c) => c.cooling).length;
+  const requests = s.channels.reduce((n, c) => n + c.total_requests, 0);
+  const tokens = s.channels.reduce((n, c) => n + c.total_tokens, 0);
   const listen = s.listen ? `${s.listen.host}:${s.listen.port}` : '—';
   const items = [
-    ['渠道总数', kw ? `${rows.length} / ${s.channels.length}` : rows.length, ''],
-    ['可用渠道', rows.length - cooling, 'ok'],
+    ['渠道总数', s.channels.length, ''],
+    ['可用渠道', s.channels.length - cooling, 'ok'],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests.toLocaleString(), ''],
     ['累计 Tokens', tokens.toLocaleString(), ''],
@@ -2702,7 +2697,8 @@ function renderMemberCost(data) {
 
 async function loadApiKeys() {
   markLoading('api-keys-body', 6);
-  renderApiKeys(await api('/api/keys'));
+  state.keysPayload = await api('/api/keys');
+  renderApiKeys(state.keysPayload);
 }
 
 // Per-member caps: label + field pairs shared by the summary and the dialog.
@@ -2849,12 +2845,19 @@ function renderApiKeys(payload) {
   }
 
   const rows = (payload && payload.keys) || [];
+  const kw = (state.keysFilter || '').trim().toLowerCase();
+  const shown = rows.filter((r) => !kw
+    || `${r.name || ''} ${r.key || ''}`.toLowerCase().includes(kw));
   const body = $('api-keys-body');
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="6" class="sub-note">还没有 API Key。点右上角「生成新 Key」即可签发。</td></tr>';
     return;
   }
-  body.innerHTML = rows.map((r) => {
+  if (!shown.length) {
+    body.innerHTML = `<tr><td colspan="6" class="sub-note">没有匹配「${esc(kw)}」的 Key <button type="button" class="btn small ghost" data-clear-filter="keys-search">清除筛选</button></td></tr>`;
+    return;
+  }
+  body.innerHTML = shown.map((r) => {
     const when = r.created ? new Date(r.created * 1000).toLocaleString() : '—';
     const active = r.enabled !== false;
     return `<tr>
@@ -6366,9 +6369,13 @@ function bindEvents() {
   const applyChannelFilter = debounce((value) => {
     state.channelFilter = value;
     renderChannels();
-    renderSummary();
   });
   $('channel-filter').addEventListener('input', (e) => applyChannelFilter(e.target.value));
+  const applyKeysFilter = debounce((value) => {
+    state.keysFilter = value;
+    renderApiKeys(state.keysPayload);
+  });
+  $('keys-search').addEventListener('input', (e) => applyKeysFilter(e.target.value));
   const applyVendorFilter = debounce((value) => {
     state.vendorFilter = value;
     renderVendors();
@@ -6404,7 +6411,7 @@ function bindEvents() {
   // 搜索框内按 Escape 先清关键词（拦住关窗/关编辑器），为空时放行，
   // 第二次 Esc 才关闭弹窗。本监听必须注册在下方弹窗 Escape 处理之前。
   const FILTER_INPUT_IDS = ['channel-filter', 'vendor-filter', 'free-filter',
-    'requests-query', 'usage-model-search', 'compare-search', 'catalog-filter'];
+    'requests-query', 'usage-model-search', 'compare-search', 'catalog-filter', 'keys-search'];
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-clear-filter]');
     if (!btn) return;
