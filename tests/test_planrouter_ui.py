@@ -366,6 +366,29 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("askConfirm('恢复内置'", js)
         self.assertIn("askConfirm('重置全部评分'", js)
 
+    def test_wizard_resumes_interrupted_step_and_menu_follows(self):
+        """向导断点续传：进行中步骤存 sessionStorage，重新打开自动回到中断步；
+        主动取消/完成即清除；手动打开（快速开始）仍从第 1 步开始。"""
+        from facet.gateway.ui import STATIC_DIR
+        setup_js = (STATIC_DIR / "setup.js").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 步骤记录存 sessionStorage：每次 renderWizard 写入，取消与完成清除
+        self.assertIn("const WIZARD_STEP_KEY = 'facet_wizard_step'", setup_js)
+        self.assertIn("sessionStorage.setItem(WIZARD_STEP_KEY", setup_js)
+        self.assertGreaterEqual(
+            setup_js.count("sessionStorage.removeItem(WIZARD_STEP_KEY"), 2)
+        # 恢复函数导出给 app.js（boot 时自动弹出用）
+        self.assertIn("function recallWizardStep()", setup_js)
+        self.assertIn("window.recallWizardStep = recallWizardStep", setup_js)
+        # boot 自动弹出恢复中断步（管理密码已设置且向导未完成时）
+        self.assertIn("const stepId = recallWizardStep()", js)
+        self.assertIn("if (!wizardDone && stepId) renderWizard(stepId)", js)
+        # 手动打开（快速开始按钮/页面）仍从第 1 步开始
+        self.assertIn("open.onclick = () => renderWizard('welcome')", js)
+        self.assertIn("renderWizard('welcome').catch(() => {});", js)
+        # 侧栏菜单跟随：switchPage 后当前菜单项滚回可视区（窄窗口/长菜单）
+        self.assertIn("activeItem.scrollIntoView({ block: 'nearest' })", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

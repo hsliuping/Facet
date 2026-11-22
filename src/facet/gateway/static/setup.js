@@ -733,6 +733,7 @@ async function finishWizard() {
   try {
     localStorage.setItem('setup_done', 'true');
   } catch (_) { /* ignore */ }
+  try { sessionStorage.removeItem(WIZARD_STEP_KEY); } catch (_) { /* private mode */ }
   try {
     await api('/api/setup/wizard', { method: 'POST', body: { done: true } });
   } catch (_) { /* localStorage 已兜底 */ }
@@ -753,6 +754,14 @@ function wizardSteps() {
   return WIZARD_STEPS.filter((s) => s.id !== 'admin-key' || !wizardAdminKeySet());
 }
 
+// 断点续传：进行中的步骤记在 sessionStorage——标签页刷新/意外关闭后，下次
+// 打开控制台自动回到中断的那一步；主动取消或完成即清除，不留打扰。
+const WIZARD_STEP_KEY = 'facet_wizard_step';
+
+function recallWizardStep() {
+  try { return sessionStorage.getItem(WIZARD_STEP_KEY); } catch (_) { return null; }
+}
+
 // 渲染向导弹窗。stepId 缺省 = 重绘当前步。
 async function renderWizard(stepId) {
   if (stepId) wizardState.stepId = stepId;
@@ -763,6 +772,7 @@ async function renderWizard(stepId) {
   if (idx < 0) idx = 0;
   const step = steps[idx];
   if (step.id !== wizardState.stepId) wizardState.stepId = step.id;
+  try { sessionStorage.setItem(WIZARD_STEP_KEY, step.id); } catch (_) { /* private mode */ }
   const isLast = idx === steps.length - 1;
 
   const content = await step.render();
@@ -793,6 +803,8 @@ async function renderWizard(stepId) {
   if (dismiss) {
     dismiss.onclick = () => {
       try { localStorage.setItem('setup_dismissed', 'true'); } catch (_) { /* ignore */ }
+      // 主动取消 = 明确放弃：清掉断点记录，刷新后不再自动弹出。
+      try { sessionStorage.removeItem(WIZARD_STEP_KEY); } catch (_) { /* private mode */ }
       closeWizard();
     };
   }
@@ -840,4 +852,5 @@ if (typeof window !== 'undefined') {
   window.renderWizard = renderWizard;
   window.initWizard = initWizard;
   window.closeWizard = closeWizard;
+  window.recallWizardStep = recallWizardStep;
 }

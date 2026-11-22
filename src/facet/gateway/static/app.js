@@ -1067,6 +1067,10 @@ function switchPage(name) {
   if (location.hash !== hash) history.replaceState(null, '', hash);
   document.querySelectorAll('.menu-item').forEach((t) =>
     t.classList.toggle('active', t.dataset.tab === name));
+  // 菜单很长或窗口较矮时侧栏自身滚动，切页后把当前菜单项滚回可视范围，
+  // 否则用户看不到高亮落在哪一项上。
+  const activeItem = document.querySelector('.menu-item.active');
+  if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
   document.querySelectorAll('.panel').forEach((p) =>
     p.classList.toggle('active', p.id === 'panel-' + name));
   $('page-title').textContent = PAGE_TITLES[name] || name;
@@ -6915,6 +6919,16 @@ async function boot() {
     // boot payload lands in parallel behind it — a cold vendor snapshot
     // (subscriptions/report) never delays first paint by seconds.
     switchPage(pageFromHash() || 'dashboard');
+    // 向导断点续传：上次会话向导进行到一半（sessionStorage 仍有步骤记录）且
+    // 尚未完成时，重新打开控制台自动回到中断的那一步。管理密码未设置时先走
+    // 上面的强制设密码流程，避免两层弹窗叠加；手动打开（快速开始）仍回第 1 步。
+    const listen = (state.snapshot && state.snapshot.listen) || {};
+    if (listen.admin_key_set !== false) {
+      let wizardDone = false;
+      try { wizardDone = localStorage.getItem('setup_done') === 'true'; } catch (_) { /* private mode */ }
+      const stepId = recallWizardStep();
+      if (!wizardDone && stepId) renderWizard(stepId).catch(() => {});
+    }
   }
   const rest = await Promise.allSettled([
     loadSubscriptions(),
