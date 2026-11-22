@@ -17,8 +17,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: 校验 tag 与 pyproject 版本一致
@@ -50,8 +50,8 @@ jobs:
     name: windows installer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: build-time deps（playwright / 托盘 / 图标）
@@ -100,7 +100,7 @@ jobs:
       PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       # gh release view/create/upload 需要在 git 仓库内定位 repo
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           name: dist

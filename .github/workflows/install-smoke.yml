@@ -21,7 +21,7 @@ jobs:
     name: macos arm64 · 正常路径 + 独立 CPython 兜底
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 正常路径（runner 自带 Python 3.10+，find_python 直接命中）
         run: bash tools/macos/install.sh
@@ -59,7 +59,7 @@ jobs:
     name: linux systemd · 正常路径 + 崩溃拉起
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装（runner 自带 Python 3.10+；脚本按需 sudo 注册 systemd 服务）
         run: bash tools/linux/install.sh
@@ -92,7 +92,7 @@ jobs:
     name: linux bare 容器 · 无 Python 自动兜底
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 容器安装（断言 Python 链走独立 CPython 完成）
         run: |
