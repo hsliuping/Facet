@@ -1719,7 +1719,7 @@ function openSubEditor(index) {
         <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
-  $('sub-cancel').onclick = closeModal;
+  $('sub-cancel').onclick = () => closeModal();
   $('sub-test').onclick = testSubscriptionEditor;
   const f = $('sub-form');
   f.querySelectorAll('input[name="channels"]').forEach((box) => {
@@ -1799,7 +1799,7 @@ function openRenewModal(id) {
         <button type="submit" class="btn primary">确认续费</button>
       </div>
     </form>`);
-  $('renew-cancel').onclick = closeModal;
+  $('renew-cancel').onclick = () => closeModal();
   $('renew-form').onsubmit = async (e) => {
     e.preventDefault();
     const f = $('renew-form');
@@ -1987,7 +1987,8 @@ function openAccountEditor(providerId, accountId) {
     </div></form>`);
   const f = $('account-form');
   if (existing) f.elements.namedItem('acc-id').disabled = true;
-  $('modal').querySelector('[data-account="cancel"]').onclick = closeModal;
+  $('modal').querySelector('[data-account="cancel"]').onclick = () => closeModal();
+  armDirtyGuard('account-form');
   $('modal').querySelector('[data-account="save"]').onclick = () => saveAccount(providerId, existing);
 }
 
@@ -2025,7 +2026,7 @@ function saveAccount(providerId, existing) {
   if (existing) Object.assign(existing, entry);
   else accounts.push(entry);
   markDirty();
-  closeModal();
+  closeModal(true);
   renderVendors();
   renderChannels();
   toast(`账号 ${id} 已${existing ? '更新' : '新增'}`);
@@ -2149,7 +2150,8 @@ function openVendorEditor(id) {
         <button type="submit" class="btn primary">保存厂家</button>
       </div>
     </form>`);
-  $('vendor-cancel').onclick = closeModal;
+  $('vendor-cancel').onclick = () => closeModal();
+  armDirtyGuard('vendor-form');
   if (existing) $('f-vendor-id').disabled = true;  // id is immutable once saved
 
   const list = $('vendor-mode-list');
@@ -2211,7 +2213,7 @@ function openVendorEditor(id) {
       const result = await api('/api/providers', {
         method: 'POST', body: { id: vendorId, name, modes },
       });
-      closeModal();
+      closeModal(true);
       await loadProviders();
       renderVendors();
       toast(`已保存厂家 ${result.provider?.name || vendorId}`);
@@ -4711,7 +4713,23 @@ function renderAll() {
 
 let modalReturnFocus = null;
 
+// 编辑弹窗防误丢：打开时快照表单，关闭时内容变了先确认。快照按 DOM 顺序
+// 取全部输入，天然覆盖渠道编辑器的动态行与目录复选框。只有编辑器
+// （armDirtyGuard）有守卫；其他弹窗经 openModal 清守卫后不受影响。
+let modalDirtyGuard = null;
+
+function formSnapshot(form) {
+  return JSON.stringify(Array.from(form.querySelectorAll('input, select, textarea'))
+    .map((el) => (el.type === 'checkbox' ? el.checked : el.value)));
+}
+
+function armDirtyGuard(formId) {
+  const form = $(formId);
+  modalDirtyGuard = form ? formSnapshot(form) : null;
+}
+
 function openModal(title, html) {
+  modalDirtyGuard = null;
   $('modal-title').textContent = title;
   $('modal-body').innerHTML = html;
   $('modal').hidden = false;
@@ -4721,7 +4739,17 @@ function openModal(title, html) {
   if (target) target.focus();
 }
 
-function closeModal() {
+function closeModal(force = false) {
+  if (!force && modalDirtyGuard) {
+    const form = $('modal').querySelector('form');
+    if (form && formSnapshot(form) !== modalDirtyGuard) {
+      askConfirm('有未保存的修改', '关闭后将丢失这些修改，确定要放弃吗？').then((ok) => {
+        if (ok) closeModal(true);
+      });
+      return;
+    }
+  }
+  modalDirtyGuard = null;
   $('modal').hidden = true;
   closeGuideOverlay();
   if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
@@ -5681,7 +5709,8 @@ function openChannelEditor(index) {
         <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
-  $('editor-cancel').onclick = closeModal;
+  $('editor-cancel').onclick = () => closeModal();
+  armDirtyGuard('editor-form');
   $('editor-test').onclick = testChannelEditor;
   const tmInput = $('editor-test-model');
   $('editor-test-model-btn').onclick = () => toggleTestModelDrop();
@@ -5821,7 +5850,7 @@ function saveChannelEditor() {
     } else {
       state.config.channels.push(channel);
     }
-    closeModal();
+    closeModal(true);
     markDirty();
     renderAll();
   } catch (err) {
@@ -5848,7 +5877,8 @@ function openRouteModal() {
         <button type="submit" class="btn primary">保存</button>
       </div>
     </form>`);
-  $('route-cancel').onclick = closeModal;
+  $('route-cancel').onclick = () => closeModal();
+  armDirtyGuard('route-form');
   $('route-form').onsubmit = (e) => {
     e.preventDefault();
     const f = $('route-form');
@@ -5862,7 +5892,7 @@ function openRouteModal() {
       return toast('同名同协议的链已存在', 'bad');
     }
     state.config.routes.push({ name, protocol, channels: [channel] });
-    closeModal();
+    closeModal(true);
     markDirty();
     renderAll();
   };
@@ -5938,7 +5968,7 @@ function bindEvents() {
     URL.revokeObjectURL(url);
     toast('已导出（不含密钥明文）', 'warn');
   };
-  $('modal-close').onclick = closeModal;
+  $('modal-close').onclick = () => closeModal();
   // Truly modal: clicking the backdrop or the page behind does nothing and
   // Tab cycles inside the dialog, so a stray click cannot discard a draft.
   // Only the close button, a save/cancel action or Escape dismisses it.

@@ -181,6 +181,40 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("loadMaintLogs().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("if (state.tab === 'requests') loadRequests().catch(() => {});", js)
 
+    def test_modal_editors_confirm_before_discarding_changes(self):
+        """编辑弹窗装关闭守卫：有改动未保存时先确认，保存成功直接关闭。
+
+        快照覆盖 DOM 顺序的全部输入，天然包含渠道编辑器的动态行与目录复选框。
+        直接把 closeModal 当事件处理器传会把事件对象当 force 实参（truthy），
+        绕过确认——所有关闭按钮必须包一层箭头函数。
+        """
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 守卫三件套：快照 / 装载 / force 旁路
+        self.assertIn("let modalDirtyGuard", js)
+        self.assertIn("function formSnapshot", js)
+        self.assertIn("function armDirtyGuard", js)
+        self.assertIn("function closeModal(force = false)", js)
+        self.assertIn("modalDirtyGuard = null;", js)
+        # 确认文案
+        self.assertIn("有未保存的修改", js)
+        self.assertIn("确定要放弃", js)
+        # 四类编辑器装守卫（渠道/路由/厂家/账号）
+        self.assertIn("armDirtyGuard('editor-form')", js)
+        self.assertIn("armDirtyGuard('route-form')", js)
+        self.assertIn("armDirtyGuard('vendor-form')", js)
+        self.assertIn("armDirtyGuard('account-form')", js)
+        # 保存成功路径绕过守卫直接关闭（渠道/路由/厂家/账号 ≥4 处）
+        self.assertGreaterEqual(js.count("closeModal(true)"), 4)
+        # 关闭按钮一律包箭头函数，防止事件对象被当作 force 实参
+        self.assertIn("$('modal-close').onclick = () => closeModal();", js)
+        self.assertIn("$('editor-cancel').onclick = () => closeModal();", js)
+        self.assertIn("$('vendor-cancel').onclick = () => closeModal();", js)
+        self.assertIn("$('route-cancel').onclick = () => closeModal();", js)
+        self.assertIn("[data-account=\"cancel\"]').onclick = () => closeModal();", js)
+        # Esc 关闭路径保持直呼（无实参即走守卫）
+        self.assertIn("e.preventDefault(); closeModal(); return;", js)
+
     def test_page_and_static_assets(self):
         base = self.start()
         status, _, body = self.call(base, "GET", "/")
