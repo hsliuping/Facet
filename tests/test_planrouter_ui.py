@@ -247,6 +247,22 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn('th[aria-sort="descending"]', css)
         self.assertIn('th[aria-sort="ascending"]', css)
 
+    def test_keyboard_reaches_sortable_headers_and_toast_announcements(self):
+        """键盘可达：可排序表头可聚焦、Enter/Space 触发；toast 容器 aria-live 播报。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # aria-sort 上了表头，但键盘到不了就等于没有：可排序 th 必须可聚焦，
+        # 且 Enter/Space 与点击走同一套升降序切换逻辑
+        self.assertIn("th.tabIndex = 0", js)
+        self.assertIn("if (e.key === 'Enter' || e.key === ' ')", js)
+        self.assertIn("e.preventDefault(); trigger();", js)
+        # toast 4.2s 即逝，读屏器只有靠 aria-live 才能听到操作反馈
+        self.assertIn('id="toasts" aria-live="polite"', html)
+        # 键盘聚焦必须可见
+        self.assertIn("th.sortable:focus-visible", css)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

@@ -351,10 +351,20 @@ function makeSortable(thCells, getSort, onSort) {
     const key = th.dataset.sortKey;
     if (!key) return;
     th.classList.add('sortable');
-    th.addEventListener('click', () => {
+    // 键盘可达：aria-sort 之外，th 本身要能被 Tab 聚焦、用 Enter/Space 排序，
+    // 否则读屏/键盘用户点不到任何列头。
+    th.tabIndex = 0;
+    th.setAttribute('title', '点击或回车排序');
+    const trigger = () => {
       const cur = getSort();
       const dir = (cur && cur.key === key && cur.dir === 'desc') ? 'asc' : 'desc';
       onSort(key, dir);
+    };
+    th.addEventListener('click', trigger);
+    th.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault(); trigger();
+      }
     });
   });
 }
