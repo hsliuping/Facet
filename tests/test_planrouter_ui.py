@@ -180,7 +180,7 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("loadRequests().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("loadChannelUsage().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("loadMaintLogs().catch((e) => toast(e.message, 'bad'))", js)
-        self.assertIn("loadRequests().then(() => markConn(true), () => markConn(false))", js)
+        self.assertIn("loadRequests({ silent: true }).then(() => markConn(true), () => markConn(false))", js)
 
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
@@ -196,7 +196,7 @@ class ConsoleTests(unittest.TestCase):
         # 5s 轮询不再静默吞错：成败两路都喂给 markConn
         self.assertIn("if (state.tab === 'dashboard') loadDashboard().then(() => markConn(true), () => markConn(false));", js)
         self.assertIn("if (state.tab === 'status') loadState().then(() => markConn(true), () => markConn(false));", js)
-        self.assertIn("if (state.tab === 'requests') loadRequests().then(() => markConn(true), () => markConn(false));", js)
+        self.assertIn("if (state.tab === 'requests' && requestsAutoRefresh()) loadRequests({ silent: true }).then(() => markConn(true), () => markConn(false));", js)
         # 断连横幅：默认隐藏，复用 banner 体系（含 .banner[hidden] 覆盖规则）
         self.assertIn('id="conn-banner" hidden', html)
         self.assertIn("conn-banner", js)
@@ -204,6 +204,30 @@ class ConsoleTests(unittest.TestCase):
         # 首连失败指数退避重试，而不是留下一张死页面
         self.assertIn("BOOT_RETRY_DELAYS", js)
         self.assertIn("连接失败 · 自动重试中", js)
+
+    def test_polling_redraw_does_not_disturb_user(self):
+        """后台轮询重绘不打扰：忙时跳过本轮补刷，自动刷新可关且记忆。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        # 轮询走 silent 路径：跳过 markLoading 与忙时重绘；手动刷新/筛选
+        # 变化/切页仍走无条件渲染路径（markLoading 首载断言不放松）
+        self.assertIn("async function loadRequests(opts = {})", js)
+        self.assertIn("if (!opts.silent) markLoading('requests-body', 9);", js)
+        self.assertIn("loadRequests({ silent: true })", js)
+        # 忙时守卫：开着弹窗 / 表格内有选区 / 焦点在面板输入框 → 本轮跳过
+        self.assertIn("function pollRenderBlocked(", js)
+        self.assertIn("pollRenderBlocked($('requests-body'))", js)
+        self.assertIn("pollRenderBlocked($('panel-dashboard'))", js)
+        # 自动刷新开关：默认开、localStorage 记忆、关掉则轮询不再拉日志
+        self.assertIn('id="requests-autorefresh"', html)
+        self.assertIn("facet_requests_autorefresh", js)
+        self.assertIn("if (state.tab === 'requests' && requestsAutoRefresh())", js)
+        # 仪表板轮询同样受守卫保护
+        self.assertIn("if (state.tab === 'dashboard') loadDashboard().then", js)
+        # 开关在筛选行里可读（复选框样式对齐筛选行）
+        self.assertIn(".filter-row .check", css)
 
     def test_modal_editors_confirm_before_discarding_changes(self):
         """编辑弹窗装关闭守卫：有改动未保存时先确认，保存成功直接关闭。

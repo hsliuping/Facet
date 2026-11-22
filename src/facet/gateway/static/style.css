@@ -381,6 +381,9 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 /* Status filter chips (model availability view and friends). */
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .filter-row .btn.active { border-color: var(--accent); color: #a8cbff; }
+/* 「自动刷新」这类行内复选框：全局 input 是 width:100% 的表单样式，这里收回 */
+.filter-row .check { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); white-space: nowrap; cursor: pointer; user-select: none; }
+.filter-row .check input { width: auto; margin: 0; flex: none; }
 .tier-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
 .tier-row code { font-size: 12px; word-break: break-all; }
 .tier-row select { max-width: 130px; }

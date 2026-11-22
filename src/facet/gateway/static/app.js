@@ -328,6 +328,18 @@ function markConn(ok) {
   $('conn-banner').hidden = false;
 }
 
+// ---- 轮询重绘不打扰 ----
+// 用户正开着弹窗、选择表格文本或在面板输入框里操作时，5s 轮询的整表
+// innerHTML 重建会毁掉选区和焦点。守卫命中就跳过本轮渲染（数据已进
+// state，下一轮不忙时自动补上）；手动刷新与筛选变化不走守卫。
+function pollRenderBlocked(root) {
+  if (document.querySelector('.modal-backdrop')) return true;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount && !sel.isCollapsed && root.contains(sel.anchorNode)) return true;
+  const act = document.activeElement;
+  return !!(act && act !== document.body && root.contains(act));
+}
+
 async function loadState() {
   state.snapshot = await api('/api/state');
   renderSummary();
@@ -901,7 +913,7 @@ function switchPage(name) {
     p.classList.toggle('active', p.id === 'panel-' + name));
   $('page-title').textContent = PAGE_TITLES[name] || name;
   // Each page loads its own data on entry, so opening the console stays cheap.
-  if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
+  if (name === 'dashboard') loadDashboard({ force: true }).catch((e) => toast(e.message, 'bad'));
   if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
   // 用户进入页面触发的加载失败必须可见（toast）；后台轮询仍保持静默。
   if (name === 'channels') loadChannelUsage().catch((e) => toast(e.message, 'bad'));
@@ -1160,7 +1172,7 @@ document.addEventListener('click', (e) => {
 // endpoints — /api/state carries channels, the subscription summary and the
 // maintenance digest; /api/usage/7, /api/maintenance and /api/backups top up
 // the trend chart, free-quota alignment and backup counts. No backend logic.
-async function loadDashboard() {
+async function loadDashboard(opts = {}) {
   const [snap, usage, maint, backups, dsh, subsData, keys] = await Promise.all([
     api('/api/state'),
     api('/api/usage/7').catch(() => null),
@@ -1184,6 +1196,9 @@ async function loadDashboard() {
     renderSubscriptions();
   }
   if (keys) accessState.keys = keys;
+  // 轮询路径守卫：用户忙（弹窗/选区/输入焦点）时跳过重绘，下轮补刷。
+  // 入口与手动刷新传 { force: true }，始终重绘。
+  if (!opts.force && pollRenderBlocked($('panel-dashboard'))) return;
   renderDashboard();
 }
 
@@ -1402,7 +1417,7 @@ function renderDashboard() {
   </div>`;
 }
 
-$('btn-refresh-dashboard').onclick = () => loadDashboard().catch((e) => toast(e.message, 'bad'));
+$('btn-refresh-dashboard').onclick = () => loadDashboard({ force: true }).catch((e) => toast(e.message, 'bad'));
 
 // DSH is a separate Node client: start its web profile, then hand the tokenised
 // URL to the browser. "启动" keeps the tab closed; "打开界面" opens it.
@@ -3264,11 +3279,15 @@ $('brand-list').addEventListener('click', (e) => {
   if (button) copyText(button.dataset.copy);
 });
 
-async function loadRequests() {
-  markLoading('requests-body', 9);
+// opts.silent：后台轮询路径——跳过首载「加载中」，且用户忙（弹窗/选区/
+// 焦点在表格里）时跳过本轮重绘，下一轮自动补上。手动刷新、筛选变化、
+// 切页入口不传 silent，始终渲染。
+async function loadRequests(opts = {}) {
+  if (!opts.silent) markLoading('requests-body', 9);
   const channel = state.requestFilter.channel;
   const qs = channel ? `?channel=${encodeURIComponent(channel)}` : '';
   state.requests = await api(`/api/requests/${state.requestsLimit}${qs}`);
+  if (opts.silent && pollRenderBlocked($('requests-body'))) return;
   renderRequests();
   refreshModelInsights().catch(() => {});
 }
@@ -3515,6 +3534,15 @@ $('requests-range-filter').addEventListener('change', (e) => {
 $('requests-query').addEventListener('input', (e) => {
   state.requestFilter.query = e.target.value.trim();
   renderRequests();
+});
+// 自动刷新开关：关掉后 5s 轮询不再拉取请求日志（适合正在细看/复制时）。
+// localStorage 记忆，重新打开立即拉一轮。
+const REQUESTS_AUTOREFRESH_KEY = 'facet_requests_autorefresh';
+const requestsAutoRefresh = () => $('requests-autorefresh').checked;
+$('requests-autorefresh').checked = localStorage.getItem(REQUESTS_AUTOREFRESH_KEY) !== 'off';
+$('requests-autorefresh').addEventListener('change', (e) => {
+  localStorage.setItem(REQUESTS_AUTOREFRESH_KEY, e.target.checked ? 'on' : 'off');
+  if (e.target.checked) loadRequests().catch((err) => toast(err.message, 'bad'));
 });
 // Click a row to open that request's attempt timeline (delegated: the tbody
 // is rebuilt on every render/filter).
@@ -6567,9 +6595,10 @@ async function boot() {
   setInterval(() => {
     // Live pages poll on their own cadence; other pages stay static.
     // 成败两路都喂给 markConn：断连时徽章说实话，恢复时提示。
+    // 轮询走 silent + 守卫路径：用户忙时不重绘，自动刷新可关。
     if (state.tab === 'dashboard') loadDashboard().then(() => markConn(true), () => markConn(false));
     if (state.tab === 'status') loadState().then(() => markConn(true), () => markConn(false));
-    if (state.tab === 'requests') loadRequests().then(() => markConn(true), () => markConn(false));
+    if (state.tab === 'requests' && requestsAutoRefresh()) loadRequests({ silent: true }).then(() => markConn(true), () => markConn(false));
   }, 5000);
 }
 

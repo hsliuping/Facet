@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Facet · 渠道调度控制台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261122-2">
+  <link rel="stylesheet" href="/static/style.css?v=20261122-3">
 </head>
 <body>
   <div class="shell">
@@ -1090,6 +1090,9 @@
               </select>
               <input type="search" id="requests-query" class="filter-input"
                 placeholder="筛选：模型 / 渠道 / 上游模型…" aria-label="搜索请求日志">
+              <label class="check auto-refresh" title="关闭后停止每 5 秒自动拉取，适合正在细看或复制日志时">
+                <input type="checkbox" id="requests-autorefresh" checked> 自动刷新
+              </label>
             </div>
           </div>
           <div class="table-wrap">
@@ -1122,7 +1125,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261122-6"></script>
+  <script src="/static/app.js?v=20261122-7"></script>
   <script src="/static/setup.js?v=20261118-1"></script>
 </body>
 </html>
