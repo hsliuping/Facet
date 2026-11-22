@@ -473,6 +473,24 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("loadReport", js)
         self.assertIn("quota-low", js)
 
+    def test_console_exports_usage_csv(self):
+        """用量报表与成员用量页提供 CSV 导出（UTF-8 BOM，Excel 直开不乱码）。"""
+        from facet.gateway.ui import STATIC_DIR
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 两个导出入口：模型用量表 + 分人统计表
+        self.assertIn('id="btn-export-usage-models"', html)
+        self.assertIn('id="btn-export-members"', html)
+        # CSV 组装与下载复用同一辅助函数
+        self.assertIn("function csvField", js)
+        self.assertIn("function downloadCsv", js)
+        self.assertIn("exportUsageModels", js)
+        self.assertIn("exportMemberUsage", js)
+        # 模型导出尊重当前筛选框
+        self.assertIn("usage-model-search", js)
+        # UTF-8 BOM 让 Excel 正确识别中文列名
+        self.assertIn("\\ufeff", js)
+
 
 if __name__ == "__main__":
     unittest.main()

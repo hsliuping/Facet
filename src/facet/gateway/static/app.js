@@ -194,6 +194,27 @@ function toast(message, kind = 'ok') {
 const DRAFT_SUBS = 'facet_draft_subs';
 const saveTimers = { config: null, subs: null };
 
+// CSV export shared by the usage-report and member-usage tables. A UTF-8
+// BOM makes Excel open the file as UTF-8, so Chinese headers stay readable.
+function csvField(value) {
+  const s = String(value ?? '');
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadCsv(filename, header, rows) {
+  const csv = '\ufeff' + [header, ...rows]
+    .map((row) => row.map(csvField).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function todayStamp() {
+  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 function dropDraft(key) {
   try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
 }
@@ -2302,6 +2323,7 @@ async function loadNotifications() {
 async function loadMembers(range) {
   if (range) state.memberRange = range;
   const usage = await api('/api/usage/users/' + state.memberRange);
+  state.memberUsage = usage;
   document.querySelectorAll('[data-member-range]').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.memberRange) === state.memberRange));
   const note = $('member-usage-note');
@@ -2552,6 +2574,46 @@ function renderMemberUsage(usage) {
       <td>${channelMix(r.channels)}</td>
     </tr>`;
   }).join('');
+}
+
+// CSV mirrors of the two tables above. Export respects the on-screen
+// filters (model search box) so what the user sees is what lands in the file.
+function exportUsageModels() {
+  const rows = (state.usage && state.usage.models) || [];
+  if (!rows.length) { toast('暂无模型用量数据可导出', 'warn'); return; }
+  const query = (state.usageFilter || '').trim().toLowerCase();
+  const filtered = query
+    ? rows.filter((r) => (r.model + ' ' + r.channel).toLowerCase().includes(query))
+    : rows;
+  if (!filtered.length) { toast('没有匹配当前筛选的模型', 'warn'); return; }
+  const header = ['模型', '渠道', '类型', '请求数', '失败数', 'Tokens',
+    '缓存命中输入', '总输入', '缓存命中率', '最近调用'];
+  const body = filtered.map((r) => [
+    r.model, r.channel,
+    r.tier === 'free' ? '免费' : r.tier === 'paid' ? '收费' : '未标注',
+    r.requests, r.failed, r.tokens || 0,
+    r.input_tokens ? r.cached_tokens : '',
+    r.input_tokens || '',
+    r.input_tokens ? (r.cached_tokens / r.input_tokens * 100).toFixed(1) + '%' : '',
+    r.last_used ? new Date(r.last_used * 1000).toLocaleString() : '',
+  ]);
+  downloadCsv(`facet-model-usage-${todayStamp()}.csv`, header, body);
+  toast(`已导出 ${filtered.length} 行模型用量`);
+}
+
+function exportMemberUsage() {
+  const rows = (state.memberUsage && state.memberUsage.users) || [];
+  if (!rows.length) { toast('暂无成员用量数据可导出', 'warn'); return; }
+  const header = ['成员', '请求数', '失败数', 'Tokens', '成功率', '今日请求', '主要渠道'];
+  const body = rows.map((r) => [
+    r.name || '匿名', r.requests, r.failed, r.tokens || 0,
+    r.requests ? ((r.requests - r.failed) / r.requests * 100).toFixed(1) + '%' : '',
+    (r.today && r.today.requests) || 0,
+    Object.entries(r.channels || {}).sort((a, b) => b[1].requests - a[1].requests)
+      .slice(0, 3).map(([name, ch]) => `${name}(${ch.requests})`).join(' / '),
+  ]);
+  downloadCsv(`facet-member-usage-${todayStamp()}.csv`, header, body);
+  toast(`已导出 ${rows.length} 行成员用量`);
 }
 
 function renderNotifications() {
@@ -5939,8 +6001,10 @@ function bindEvents() {
     state.usageFilter = e.target.value;
     if (state.usage) renderUsageModels(state.usage);
   };
+  $('btn-export-usage-models').onclick = exportUsageModels;
+  $('btn-export-members').onclick = exportMemberUsage;
 
-  document.querySelectorAll('.range-switch .btn').forEach((button) => {
+  document.querySelectorAll('.range-switch .btn[data-range]').forEach((button) => {
     button.onclick = () => loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
   });
 
