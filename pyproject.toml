@@ -51,6 +51,10 @@ facet = [
 "facet.gateway" = ["static/*", "providers.json"]
 
 [tool.pytest.ini_options]
+# src 布局：pytest 不会自动发现 src 下的包，本地历来靠 $env:PYTHONPATH=src
+# 跑测试，CI（validate.yml / release.yml 的裸 `python -m pytest`）则直接
+# ModuleNotFoundError: No module named 'facet'。在此声明让两种环境同口径。
+pythonpath = ["src"]
 markers = [
     "smoke: 只读冒烟用例，无副作用可并行",
     "mutating: 写配置用例，需串行执行",
