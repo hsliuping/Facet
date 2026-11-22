@@ -434,6 +434,24 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn('切换后自动保存，约 1 秒内生效，auto / facet 请求都走这里', js)
         self.assertNotIn('保存配置', js)
 
+    def test_usage_views_jump_to_channel_config(self):
+        """用量视图的渠道名可点：跳到渠道页并预填筛选，异常排查一步到位。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        # 深链处理器支持落点预填渠道筛选
+        self.assertIn("link.dataset.gotoChannel !== undefined", js)
+        self.assertIn("state.channelFilter = link.dataset.gotoChannel;", js)
+        self.assertIn("$('channel-filter').value = link.dataset.gotoChannel;", js)
+        # 三个入口都带上跳转属性：仪表板分布行、模型用量表渠道列、报表渠道汇总
+        self.assertGreaterEqual(
+            js.count('data-goto-tab="channels" data-goto-channel='), 3)
+        self.assertIn('data-goto-channel="${esc(c.name)}"', js)
+        self.assertIn('data-goto-channel="${esc(r.channel)}"', js)
+        # CSS：可点行与链接有指针反馈
+        self.assertIn(".dist-row[data-goto-tab]", css)
+        self.assertIn("a[data-goto-tab]", css)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

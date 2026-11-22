@@ -460,6 +460,12 @@ th[aria-sort="ascending"]::after { content: "↑"; opacity: 1; color: var(--acce
 .dist-bar { height: 8px; background: rgba(255,255,255,.06); border-radius: 5px; overflow: hidden; }
 .dist-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 .dist-row .dist-value { text-align: right; color: var(--muted); }
+/* 用量视图里的渠道名可点：悬停提示，点击跳渠道页并预填筛选。 */
+.dist-row[data-goto-tab] { cursor: pointer; }
+.dist-row[data-goto-tab]:hover { background: rgba(91, 157, 255, .07); border-radius: 6px; }
+.dist-row[data-goto-tab]:hover span:first-child { color: var(--text); }
+a[data-goto-tab] { color: var(--accent); cursor: pointer; }
+a[data-goto-tab]:hover { text-decoration: underline; }
 
 .model-list { display: grid; gap: 8px; }
 .model-row {

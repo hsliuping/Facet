@@ -1342,7 +1342,14 @@ function buildAccessSummary() {
 // the request log) resolve here.
 document.addEventListener('click', (e) => {
   const link = e.target.closest('[data-goto-tab]');
-  if (link) switchPage(link.dataset.gotoTab);
+  if (!link) return;
+  // 落点预填：带 data-goto-channel 的跳转把渠道名带进渠道页筛选框，
+  // 「用量异常 → 去改配置」一步到位。
+  if (link.dataset.gotoChannel !== undefined) {
+    state.channelFilter = link.dataset.gotoChannel;
+    if ($('channel-filter')) $('channel-filter').value = link.dataset.gotoChannel;
+  }
+  switchPage(link.dataset.gotoTab);
 });
 
 // Click-away for the channel editor's test-model dropdown.
@@ -2544,7 +2551,7 @@ function renderUsage() {
     </div>
     <div class="chart-block" style="margin-top:14px">
       <h4>渠道用量分布（近 ${usage.range} 天）</h4>
-      ${distribution.length ? distribution.map((c) => `<div class="dist-row">
+      ${distribution.length ? distribution.map((c) => `<div class="dist-row" data-goto-tab="channels" data-goto-channel="${esc(c.name)}" title="点按跳到渠道页查看「${esc(c.name)}」">
         <span>${esc(c.name)}</span>
         <div class="dist-bar"><span style="width:${(c.requests / largest * 100).toFixed(1)}%"></span></div>
         <span class="dist-value">${Number(c.requests).toLocaleString()} 次</span>
@@ -2613,7 +2620,7 @@ function renderUsageModels(usage) {
       ? new Date(r.last_used * 1000).toLocaleString() : '—';
     return `<tr>
       <td><code>${esc(r.model)}</code></td>
-      <td>${esc(r.channel)}</td>
+      <td>${r.channel ? `<a href="javascript:void(0)" data-goto-tab="channels" data-goto-channel="${esc(r.channel)}">${esc(r.channel)}</a>` : ''}</td>
       <td>${tierBadge(r.tier) || '<span class="sub-note">未标注</span>'}</td>
       <td class="num">${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
       <td class="num">${Number(r.tokens || 0).toLocaleString()}</td>
@@ -5019,8 +5026,8 @@ function renderReport() {
         <td class="${s.quota_ratio !== null && s.quota_ratio !== undefined && s.quota_ratio <= 0.15 ? 'quota-low' : 'sub-note'}">${s.quota_remaining === null || s.quota_remaining === undefined ? '—' : esc(s.quota_remaining + ' ' + (s.quota_unit || ''))}</td>
       </tr>`).join('')
     : '<tr><td colspan="6" class="sub-note">还没有订阅记录</td></tr>';
-  $('report-channels').textContent = '渠道用量：' + (r.channels.map((c) =>
-    `${c.name} ${Number(c.requests).toLocaleString()} 次 / ${c.tokens} tokens${c.linked ? '' : '（未关联订阅）'}`).join(' · ') || '暂无');
+  $('report-channels').innerHTML = '渠道用量：' + (r.channels.map((c) =>
+    `<a href="javascript:void(0)" data-goto-tab="channels" data-goto-channel="${esc(c.name)}">${esc(c.name)} ${Number(c.requests).toLocaleString()} 次 / ${esc(c.tokens)} tokens${c.linked ? '' : '（未关联订阅）'}</a>`).join(' · ') || '暂无');
 }
 
 $('btn-load-report').onclick = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
