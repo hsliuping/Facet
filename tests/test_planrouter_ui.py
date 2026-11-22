@@ -201,6 +201,27 @@ class ConsoleTests(unittest.TestCase):
                        "notify-history", "vendor-list"):
             self.assertIn(f"markLoading('{target}'", js)
 
+    def test_long_tables_have_sticky_headers(self):
+        """长表格（.tall）容器内滚动时表头吸顶，行内容不会从表头下透出。"""
+        from facet.gateway.ui import STATIC_DIR
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # .tall 让 table-wrap 容器自身纵向滚动（table-wrap 本就是横向滚动容器，
+        # 吸顶必须配容器内滚动而不是页面级滚动）
+        self.assertIn(".table-wrap.tall", css)
+        self.assertRegex(css, r"\.table-wrap\.tall[^}]*max-height")
+        self.assertRegex(css, r"\.table-wrap\.tall[^}]*overflow-y:\s*auto")
+        # 表头 sticky 钉在容器顶部，实底背景防止行内容透出
+        self.assertRegex(css, r"\.table-wrap\.tall thead th[^}]*position:\s*sticky")
+        self.assertRegex(css, r"\.table-wrap\.tall thead th[^}]*top:\s*0")
+        self.assertRegex(css, r"\.table-wrap\.tall thead th[^}]*background:\s*var\(--panel\)")
+        # 最长的几张表挂上 .tall（请求日志可达 500 行；用量模型/免费模型/
+        # 模型对比都是几十到几百行）
+        for tbody_id in ("requests-body", "usage-models-body", "free-body", "compare-body"):
+            idx = html.index(f'id="{tbody_id}"')
+            window = html[max(0, idx - 600):idx]
+            self.assertIn("table-wrap tall", window, tbody_id)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

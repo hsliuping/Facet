@@ -208,6 +208,16 @@ textarea { resize: vertical; min-height: 76px; font-family: ui-monospace, Consol
 select { flex: 1; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+
+/* 长表格吸顶表头：.tall 让 table-wrap 容器自身纵向滚动（它本就是横向
+   滚动容器，吸顶必须配容器内滚动而不是页面级滚动），表头 sticky 钉在
+   容器顶部；实底背景防止行内容从表头下透出。 */
+.table-wrap.tall { max-height: 560px; overflow-y: auto; }
+.table-wrap.tall thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel);
+  box-shadow: 0 1px 0 var(--border);
+}
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 th { text-align: left; color: var(--muted); font-weight: 500; padding: 11px 13px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 td { padding: 11px 13px; border-bottom: 1px solid rgba(255,255,255,.045); white-space: nowrap; }
