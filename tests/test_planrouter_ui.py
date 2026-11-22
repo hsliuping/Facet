@@ -389,6 +389,22 @@ class ConsoleTests(unittest.TestCase):
         # 侧栏菜单跟随：switchPage 后当前菜单项滚回可视区（窄窗口/长菜单）
         self.assertIn("activeItem.scrollIntoView({ block: 'nearest' })", js)
 
+    def test_form_submits_are_locked_against_double_clicks(self):
+        """表单防重复提交：确认按钮在保存期间禁用，结束（成功/失败）后恢复。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 四处提交点（订阅编辑、续费、厂家、通知设置）都走同一保护模式
+        self.assertEqual(
+            js.count("if (submitBtn) submitBtn.disabled = true;"), 4)
+        self.assertEqual(
+            js.count("if (submitBtn) submitBtn.disabled = false;"), 4)
+        # 订阅编辑：onsubmit 包装 saveSubEditor
+        self.assertIn("await saveSubEditor();", js)
+        # 通知设置：两个按钮把手传给 saveSettings
+        self.assertIn("saveSettings(false, e.currentTarget)", js)
+        self.assertIn("saveSettings(true, e.currentTarget)", js)
+        self.assertIn("async function saveSettings(withTest, submitBtn)", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

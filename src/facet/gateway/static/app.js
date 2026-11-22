@@ -1950,7 +1950,13 @@ function openSubEditor(index) {
     if (el) el.addEventListener('input', () => { el.dataset.autofill = ''; });
   });
   autofillFromChannels(f);
-  f.onsubmit = (e) => { e.preventDefault(); saveSubEditor(); };
+  // 保存期间禁用提交按钮：接口稍慢时双击「保存」会写出两条重复订阅。
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try { await saveSubEditor(); } finally { if (submitBtn) submitBtn.disabled = false; }
+  };
 }
 
 async function saveSubEditor() {
@@ -2022,6 +2028,9 @@ function openRenewModal(id) {
   $('renew-cancel').onclick = () => closeModal();
   $('renew-form').onsubmit = async (e) => {
     e.preventDefault();
+    // 续费请求进行中禁用确认按钮，防止双击重复续费。
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     const f = $('renew-form');
     const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
     try {
@@ -2037,6 +2046,7 @@ function openRenewModal(id) {
       await loadState();
       toast('已续费，到期日已更新');
     } catch (err) { toast(err.message, 'bad'); }
+    finally { if (submitBtn) submitBtn.disabled = false; }
   };
 }
 
@@ -2434,6 +2444,9 @@ function openVendorEditor(id) {
     });
     if (bad) return failField(badField, bad);
     if (!Object.keys(modes).length) return toast('厂家至少需要配置一个模式', 'bad');
+    // 校验全程同步执行（双击不可能在此窗口内重入），保存期间禁用提交按钮即可。
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
       const result = await api('/api/providers', {
         method: 'POST', body: { id: vendorId, name, modes },
@@ -2443,6 +2456,7 @@ function openVendorEditor(id) {
       renderVendors();
       toast(`已保存厂家 ${result.provider?.name || vendorId}`);
     } catch (err) { toast(err.message, 'bad'); }
+    finally { if (submitBtn) submitBtn.disabled = false; }
   };
 }
 
@@ -2964,7 +2978,8 @@ function currentSettings() {
   };
 }
 
-async function saveSettings(withTest) {
+async function saveSettings(withTest, submitBtn) {
+  if (submitBtn) submitBtn.disabled = true;
   try {
     await api('/api/notifications', {
       method: 'POST', body: { settings: currentSettings(), test: !!withTest },
@@ -2974,6 +2989,7 @@ async function saveSettings(withTest) {
     await loadSubscriptions();
     toast(withTest ? '设置已保存，测试消息已发送' : '设置已保存');
   } catch (err) { toast(err.message, 'bad'); }
+  finally { if (submitBtn) submitBtn.disabled = false; }
 }
 
 async function checkNotifications() {
@@ -6535,8 +6551,8 @@ function bindEvents() {
     loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
   };
 
-  $('btn-save-settings').onclick = () => saveSettings(false);
-  $('btn-test-notify').onclick = () => saveSettings(true);
+  $('btn-save-settings').onclick = (e) => saveSettings(false, e.currentTarget);
+  $('btn-test-notify').onclick = (e) => saveSettings(true, e.currentTarget);
   $('btn-check-notify').onclick = checkNotifications;
 
   $('btn-add-sub').onclick = () => openSubEditor(-1);
