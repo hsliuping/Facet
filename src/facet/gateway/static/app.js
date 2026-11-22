@@ -64,6 +64,8 @@ const state = {
   // requestsLimit 是「加载更多」逐级抬高的取回条数（上限 500，与后端一致）。
   requestFilter: { status: '', query: '', range: 'all', channel: '' },
   requestsLimit: 200,
+  // 关键表格的列排序状态：null 表示后端默认顺序，点击表头后为 { key, dir }。
+  sort: { usageModels: null, members: null, compare: null },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -328,6 +330,44 @@ function markLoadError(elId, err, retryFn) {
     render(true);
     retryFn().catch((e2) => markLoadError(elId, e2, retryFn));
   };
+}
+
+// 关键表格的列排序：cmpBy 生成比较器（null 值无论升降序都排最后，避免
+// "暂无跑分" 的模型插到分数序列中间）；makeSortable 给带 data-sort-key 的
+// 表头绑点击（首次点降序、再点切升序、点其他列回降序）；markSorted 渲染后
+// 同步 aria-sort（行重建不影响静态表头），读屏器与箭头样式都靠它。
+function cmpBy(sort, value) {
+  return (a, b) => {
+    const va = value(a); const vb = value(b);
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    const d = va < vb ? -1 : va > vb ? 1 : 0;
+    return sort.dir === 'asc' ? d : -d;
+  };
+}
+
+function makeSortable(thCells, getSort, onSort) {
+  thCells.forEach((th) => {
+    const key = th.dataset.sortKey;
+    if (!key) return;
+    th.classList.add('sortable');
+    th.addEventListener('click', () => {
+      const cur = getSort();
+      const dir = (cur && cur.key === key && cur.dir === 'desc') ? 'asc' : 'desc';
+      onSort(key, dir);
+    });
+  });
+}
+
+function markSorted(table, sort) {
+  if (!table) return;
+  table.querySelectorAll('thead th[data-sort-key]').forEach((th) => {
+    if (sort && th.dataset.sortKey === sort.key) {
+      th.setAttribute('aria-sort', sort.dir === 'desc' ? 'descending' : 'ascending');
+    } else {
+      th.removeAttribute('aria-sort');
+    }
+  });
 }
 
 // ---- 连接状态诚实化 ----
@@ -2424,7 +2464,18 @@ function renderUsageModels(usage) {
     body.innerHTML = '<tr><td colspan="7" class="sub-note">没有匹配的模型。</td></tr>';
     return;
   }
-  body.innerHTML = filtered.map((r) => {
+  let sorted = filtered;
+  const sort = state.sort.usageModels;
+  if (sort) {
+    const ex = {
+      requests: (r) => Number(r.requests || 0),
+      tokens: (r) => Number(r.tokens || 0),
+      last_used: (r) => (r.last_used || null),
+    }[sort.key];
+    if (ex) sorted = [...filtered].sort(cmpBy(sort, ex));
+  }
+  markSorted(body.closest('table'), sort);
+  body.innerHTML = sorted.map((r) => {
     const cacheRate = r.input_tokens
       ? `${(r.cached_tokens / r.input_tokens * 100).toFixed(1)}%`
         + ` <span class="sub-note">(${Number(r.cached_tokens).toLocaleString()} / ${Number(r.input_tokens).toLocaleString()})</span>`
@@ -2717,7 +2768,17 @@ function renderMemberUsage(usage) {
     body.innerHTML = '<tr><td colspan="6" class="sub-note">暂无按人统计。成员开始用各自的 key 调用后自动累计。</td></tr>';
     return;
   }
-  body.innerHTML = rows.map((r) => {
+  let sorted = rows;
+  const sort = state.sort.members;
+  if (sort) {
+    const ex = {
+      requests: (r) => Number(r.requests || 0),
+      tokens: (r) => Number(r.tokens || 0),
+    }[sort.key];
+    if (ex) sorted = [...rows].sort(cmpBy(sort, ex));
+  }
+  markSorted(body.closest('table'), sort);
+  body.innerHTML = sorted.map((r) => {
     const rate = r.requests ? ((r.requests - r.failed) / r.requests * 100).toFixed(1) + '%' : '—';
     const spike = r.spike
       ? '<span class="tag warn" title="今日请求数达到 10 次以上且为此前日均的 3 倍">突增</span>'
@@ -6090,6 +6151,17 @@ function bindEvents() {
     const name = pageFromHash();
     if (name && name !== state.tab) switchPage(name);
   });
+  // 关键表格列排序：表头是静态结构，进控制台时绑定一次；点击只改 state
+  // 后按缓存数据重排重绘，不发网络请求。
+  makeSortable(document.querySelectorAll('#panel-usage thead th'),
+    () => state.sort.usageModels,
+    (key, dir) => { state.sort.usageModels = { key, dir }; renderUsageModels(state.usage); });
+  makeSortable(document.querySelectorAll('#panel-members thead th'),
+    () => state.sort.members,
+    (key, dir) => { state.sort.members = { key, dir }; renderMemberUsage(state.memberUsage); });
+  makeSortable(document.querySelectorAll('#panel-compare thead th'),
+    () => state.sort.compare,
+    (key, dir) => { state.sort.compare = { key, dir }; renderCompare(); });
 
   $('btn-add-channel').onclick = () => openChannelEditor(-1);
   $('channel-filter').addEventListener('input', (e) => {
@@ -6520,8 +6592,20 @@ function renderCompare() {
   if (!rows.length) {
     $('compare-body').innerHTML = '<tr><td colspan="6" class="hint">没有匹配的模型</td></tr>';
   } else {
+    let sorted = rows;
+    const sort = state.sort.compare;
+    if (sort) {
+      const ex = {
+        score: (m) => (m.score_count && m.scores && m.scores.length
+          ? Math.max(...m.scores.map((s) => Number(s.value) || -Infinity))
+          : null),
+        channels: (m) => (m.channel_count || null),
+      }[sort.key];
+      if (ex) sorted = [...rows].sort(cmpBy(sort, ex));
+    }
+    markSorted($('compare-body').closest('table'), sort);
     const groups = compareGroups(data.models || []);
-    $('compare-body').innerHTML = rows.map((m) => {
+    $('compare-body').innerHTML = sorted.map((m) => {
       let scoreHtml = '<span class="hint">暂无公开跑分</span>';
       if (m.score_count) {
         const picked = [...m.scores]

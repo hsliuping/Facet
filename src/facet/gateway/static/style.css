@@ -425,6 +425,13 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .load-error { color: var(--bad); }
 .load-error .btn { margin-left: 9px; }
 
+/* 关键表格列排序：可排序列指针 + 双向箭头提示；当前排序列显示单侧箭头，
+   与 aria-sort 同步（读屏器读取同一属性）。 */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable::after { content: "⇅"; margin-left: 5px; font-size: 11px; opacity: .35; }
+th[aria-sort="descending"]::after { content: "↓"; opacity: 1; color: var(--accent); }
+th[aria-sort="ascending"]::after { content: "↑"; opacity: 1; color: var(--accent); }
+
 .chart-card {
   background: linear-gradient(160deg, var(--panel), #0f1721);
   border: 1px solid var(--border); border-radius: var(--radius);

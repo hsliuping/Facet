@@ -222,6 +222,31 @@ class ConsoleTests(unittest.TestCase):
             window = html[max(0, idx - 600):idx]
             self.assertIn("table-wrap tall", window, tbody_id)
 
+    def test_key_tables_support_column_sorting(self):
+        """关键表格点表头排序：首次点降序、再点切升序，aria-sort 标注当前排序。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # makeSortable 绑定点击 + cmpBy 通用比较器（null 值恒排最后）
+        self.assertIn("function makeSortable", js)
+        self.assertIn("function cmpBy", js)
+        self.assertIn("aria-sort", js)
+        # 三张关键表各持排序状态，点击后按它重排
+        for name in ("usageModels", "members", "compare"):
+            self.assertIn(f"state.sort.{name}", js)
+        # 可排序列带 data-sort-key（用量模型：请求数/Tokens/最后使用；
+        # 模型对比：跑分/渠道数；成员用量：请求/Tokens）
+        self.assertIn('<th data-sort-key="requests">请求 / 失败</th>', html)
+        self.assertIn('<th data-sort-key="tokens">Tokens</th>', html)
+        self.assertIn('<th data-sort-key="last_used">最近调用</th>', html)
+        self.assertIn('<th data-sort-key="score">跑分</th>', html)
+        self.assertIn('<th data-sort-key="channels">渠道</th>', html)
+        # 样式：可排列表头指针 + 双向箭头提示，当前排序用单侧箭头
+        self.assertIn("th.sortable", css)
+        self.assertIn('th[aria-sort="descending"]', css)
+        self.assertIn('th[aria-sort="ascending"]', css)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
