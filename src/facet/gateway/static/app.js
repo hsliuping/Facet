@@ -1528,9 +1528,10 @@ function renderDashboard() {
   }
   const req = usage.days.map((d) => d.requests);
   const tok = usage.days.map((d) => d.tokens);
+  const dashLabels = usage.days.map((d) => d.date);
   el.innerHTML = `<div class="chart-grid">
-    <div class="chart-block"><h4>每日请求数（合计 ${req.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${bars(req, '#5b9dff')}</div>
-    <div class="chart-block"><h4>每日 Tokens（合计 ${tok.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${sparkline(tok, '#8a6cff')}</div>
+    <div class="chart-block"><h4>每日请求数（合计 ${req.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${bars(req, '#5b9dff', { labels: dashLabels, ariaLabel: '每日请求数柱状图' })}</div>
+    <div class="chart-block"><h4>每日 Tokens（合计 ${tok.reduce((a, b) => a + b, 0).toLocaleString()}）</h4>${sparkline(tok, '#8a6cff', { labels: dashLabels, ariaLabel: '每日 Tokens 折线图' })}</div>
   </div>`;
 }
 
@@ -2394,20 +2395,24 @@ function openVendorEditor(id) {
   };
 }
 
-function bars(values, color) {
+// bars/sparkline 接受 { labels, ariaLabel }：labels 与 values 对齐，作为每个
+// 数据点 SVG <title> 的悬停提示（「日期：数值」）；ariaLabel 描述整张图，
+// 配合 role="img" 让读屏器能读出图表含义。
+function bars(values, color, { labels = [], ariaLabel = '' } = {}) {
   const max = Math.max(...values, 1);
   const w = 560, h = 100, pad = 6;
   const width = (w - pad * 2) / Math.max(values.length, 1);
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${esc(ariaLabel)}">
     <line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}" stroke="rgba(255,255,255,.1)" />
     ${values.map((v, i) => {
       const barHeight = (v / max) * (h - pad * 2);
-      return `<rect x="${(pad + i * width + 1).toFixed(1)}" y="${(h - pad - barHeight).toFixed(1)}" width="${Math.max(width - 2, 1).toFixed(1)}" height="${barHeight.toFixed(1)}" rx="2" fill="${color}" opacity="0.75" />`;
+      const tip = labels[i] ? `<title>${esc(labels[i])}：${fmtNum(v)}</title>` : '';
+      return `<rect x="${(pad + i * width + 1).toFixed(1)}" y="${(h - pad - barHeight).toFixed(1)}" width="${Math.max(width - 2, 1).toFixed(1)}" height="${barHeight.toFixed(1)}" rx="2" fill="${color}" opacity="0.75">${tip}</rect>`;
     }).join('')}
   </svg>`;
 }
 
-function sparkline(values, color) {
+function sparkline(values, color, { labels = [], ariaLabel = '' } = {}) {
   const max = Math.max(...values, 1);
   const w = 560, h = 100, pad = 6;
   const step = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
@@ -2416,10 +2421,15 @@ function sparkline(values, color) {
   const area = points
     ? `M ${pad},${h - pad} L ${points.replace(/ /g, ' L ')} L ${(pad + (values.length - 1) * step).toFixed(1)},${h - pad} Z`
     : '';
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+  // 折线本身没有可悬停的子元素：每个数据点铺一个透明圆点承接 <title>。
+  const dots = values.map((v, i) => labels[i]
+    ? `<circle cx="${(pad + i * step).toFixed(1)}" cy="${(h - pad - (v / max) * (h - pad * 2)).toFixed(1)}" r="4" fill="transparent" pointer-events="all"><title>${esc(labels[i])}：${fmtNum(v)}</title></circle>`
+    : '').join('');
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${esc(ariaLabel)}">
     <line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}" stroke="rgba(255,255,255,.1)" />
     ${area ? `<path d="${area}" fill="${color}" opacity="0.12" />` : ''}
     ${points ? `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" />` : ''}
+    ${dots}
   </svg>`;
 }
 
@@ -2441,6 +2451,7 @@ function renderUsage() {
   }
   const requests = usage.days.map((d) => d.requests);
   const tokens = usage.days.map((d) => d.tokens);
+  const usageLabels = usage.days.map((d) => d.date);
   const totalRequests = requests.reduce((a, b) => a + b, 0);
   const totalTokens = tokens.reduce((a, b) => a + b, 0);
   const distribution = (usage.channels || []).slice(0, 6);
@@ -2448,8 +2459,8 @@ function renderUsage() {
   const cacheRows = (usage.channels || []).filter((c) => c.input_tokens);
   el.innerHTML = `
     <div class="chart-grid">
-      <div class="chart-block"><h4>每日请求数（合计 ${totalRequests.toLocaleString()}）</h4>${bars(requests, '#5b9dff')}</div>
-      <div class="chart-block"><h4>每日 Tokens（合计 ${totalTokens.toLocaleString()}）</h4>${sparkline(tokens, '#8a6cff')}</div>
+      <div class="chart-block"><h4>每日请求数（合计 ${totalRequests.toLocaleString()}）</h4>${bars(requests, '#5b9dff', { labels: usageLabels, ariaLabel: '每日请求数柱状图' })}</div>
+      <div class="chart-block"><h4>每日 Tokens（合计 ${totalTokens.toLocaleString()}）</h4>${sparkline(tokens, '#8a6cff', { labels: usageLabels, ariaLabel: '每日 Tokens 折线图' })}</div>
     </div>
     <div class="chart-block" style="margin-top:14px">
       <h4>渠道用量分布（近 ${usage.range} 天）</h4>

@@ -318,6 +318,30 @@ class ConsoleTests(unittest.TestCase):
         # 浏览器标签标题跟随当前页，多标签/历史记录可区分
         self.assertIn("document.title = `${PAGE_TITLES[name] || 'Facet'} · Facet`", js)
 
+    def test_usage_charts_have_value_tooltips_and_aria(self):
+        """图表数值可读：每个数据点悬停显示「日期：数值」；SVG 带无障碍语义。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # bars/sparkline 接受 labels（逐点提示文案）与 ariaLabel（整图描述）
+        self.assertIn(
+            "function bars(values, color, { labels = [], ariaLabel = '' } = {})", js)
+        self.assertIn(
+            "function sparkline(values, color, { labels = [], ariaLabel = '' } = {})", js)
+        self.assertIn('role="img"', js)
+        self.assertIn('aria-label="${esc(ariaLabel)}"', js)
+        # 逐点 <title>：悬停柱/点即可读到具体数值
+        self.assertIn('<title>${esc(labels[i])}', js)
+        # 两个调用点把日期数组传入（仪表板趋势 + 用量报表）
+        self.assertIn("usage.days.map((d) => d.date)", js)
+        self.assertIn(
+            "bars(req, '#5b9dff', { labels: dashLabels, ariaLabel: '每日请求数柱状图' })", js)
+        self.assertIn(
+            "sparkline(tok, '#8a6cff', { labels: dashLabels, ariaLabel: '每日 Tokens 折线图' })", js)
+        self.assertIn(
+            "bars(requests, '#5b9dff', { labels: usageLabels, ariaLabel: '每日请求数柱状图' })", js)
+        self.assertIn(
+            "sparkline(tokens, '#8a6cff', { labels: usageLabels, ariaLabel: '每日 Tokens 折线图' })", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
