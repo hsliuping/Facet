@@ -940,6 +940,30 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(reloaded.lookup(record["key"])["name"], "alice")
         self.assertEqual(reloaded.match(record["key"]), "alice")
 
+    def test_rotate_member_key_preserves_name_and_limits(self):
+        """轮换只换 key 值：名字、配额、启用状态全部保留，旧 key 立即失效。"""
+        store = KeyStore(self.keys_file)
+        record = store.create("alice", limits={"rpm": 30})
+        old = record["key"]
+        rotated = store.rotate(old)
+        self.assertIsNotNone(rotated)
+        self.assertNotEqual(rotated["key"], old)
+        self.assertTrue(rotated["key"].startswith("sk-pr-"))
+        self.assertEqual(len(rotated["key"]), len("sk-pr-") + 32)
+        self.assertEqual(rotated["name"], "alice")
+        self.assertEqual(rotated["limits"], {"rpm": 30})
+        self.assertTrue(rotated["enabled"])
+        # 旧 key 立即失效，新 key 可用；记录数不变（不是删旧建新）
+        self.assertIsNone(store.lookup(old))
+        self.assertEqual(store.lookup(rotated["key"])["name"], "alice")
+        self.assertEqual(len(store.list()), 1)
+        # 未知 key 轮换返回 None
+        self.assertIsNone(store.rotate("sk-pr-" + "0" * 32))
+        # 落盘持久：重载后同样只有新 key 可用
+        reloaded = KeyStore(self.keys_file)
+        self.assertIsNone(reloaded.lookup(old))
+        self.assertEqual(reloaded.lookup(rotated["key"])["name"], "alice")
+
     def test_lookup_respects_enabled_and_prefix(self):
         store = KeyStore(self.keys_file)
         record = store.create("bob")

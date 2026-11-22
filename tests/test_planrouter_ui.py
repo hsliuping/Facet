@@ -99,6 +99,7 @@ class ConsoleTests(unittest.TestCase):
         from facet.gateway.ui import STATIC_DIR
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
         # 接入信息页顶部的常驻警告条容器（默认隐藏，非环回时显示）
         self.assertIn('id="access-security-note"', html)
         # 前端从 /api/state 的 listen.host 判断回环地址
@@ -107,6 +108,9 @@ class ConsoleTests(unittest.TestCase):
         # 提示文案要说明明文风险并给出可行建议
         self.assertIn("明文", html)
         self.assertIn("反向代理", html)
+        # .banner 的 display:flex 会压过 UA 的 [hidden] 样式，必须显式覆盖，
+        # 否则回环地址下警告条仍然渲染（冒烟发现过的回归）
+        self.assertIn(".banner[hidden]", css)
 
     def test_page_and_static_assets(self):
         base = self.start()
@@ -672,6 +676,81 @@ class MigrationPackageTests(unittest.TestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual([p.name for p in target.iterdir() if p.name.startswith("keys")],
                          ["keys.json"])
+
+
+class MemberKeyRotationTests(unittest.TestCase):
+    """POST /api/keys/rotate：一键换发成员 Key，旧值立即失效，配额保留。"""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        tmp.close()
+        self.path = Path(tmp.name)
+        self.keys_path = Path(tmp.name + ".keys.json")
+        self.httpd = None
+
+    def tearDown(self):
+        if self.httpd:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+        self.path.unlink(missing_ok=True)
+        self.keys_path.unlink(missing_ok=True)
+
+    def start(self) -> str:
+        raw = base_config(admin_key="pass")
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd.daemon_threads = True
+        self.httpd.app = App(load_config(self.path), config_path=self.path,
+                             keys_file=self.keys_path)  # type: ignore[attr-defined]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        return f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def call(self, base: str, method: str, path: str, body=None, admin: str | None = None,
+             key: str | None = None):
+        headers = {}
+        if admin is not None:
+            headers["X-Admin-Key"] = admin
+        if key:
+            headers["Authorization"] = "Bearer " + key
+        data = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode()
+        req = Request(base + path, data=data, headers=headers, method=method)
+        try:
+            with urlopen(req, timeout=5) as resp:
+                return resp.status, resp.headers, resp.read()
+        except HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
+
+    def test_rotate_endpoint_swaps_the_secret_in_place(self):
+        store = KeyStore(self.keys_path)
+        record = store.create("alice", limits={"rpm": 30})
+        base = self.start()
+        status, _, body = self.call(base, "POST", "/api/keys/rotate",
+                                    body={"key": record["key"]}, admin="pass")
+        self.assertEqual(status, 200, body)
+        payload = json.loads(body)
+        self.assertNotEqual(payload["key"], record["key"])
+        self.assertTrue(payload["key"].startswith("sk-pr-"))
+        self.assertEqual(payload["name"], "alice")
+        self.assertEqual(payload["limits"], {"rpm": 30})
+        # 旧 key 立即失效，新 key 可用（keys.json 已落盘，需重载验证）
+        reloaded = KeyStore(self.keys_path)
+        self.assertIsNone(reloaded.lookup(record["key"]))
+        self.assertEqual(reloaded.lookup(payload["key"])["name"], "alice")
+        # 未知 key 返回 400 并带中文错误
+        status, _, body = self.call(base, "POST", "/api/keys/rotate",
+                                    body={"key": "sk-pr-" + "0" * 32}, admin="pass")
+        self.assertEqual(status, 400)
+        self.assertIn("不存在", json.loads(body)["error"]["message"])
+
+    def test_console_has_a_rotate_button_wired_to_the_endpoint(self):
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn('data-rotate=', js)
+        self.assertIn('/api/keys/rotate', js)
+        self.assertIn('rotateKey', js)
 
 
 if __name__ == "__main__":

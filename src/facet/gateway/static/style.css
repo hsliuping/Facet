@@ -335,6 +335,9 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
   border: 1px solid rgba(224, 166, 58, .42); border-left: 4px solid var(--warn);
   border-radius: var(--radius); padding: 13px 17px; margin-top: 22px;
 }
+/* display:flex above beats the UA's [hidden] rule, so an explicitly hidden
+   banner (e.g. the loopback-gated security note) would still render. */
+.banner[hidden] { display: none; }
 .banner.critical { border-left-color: var(--bad); }
 .banner .banner-title { font-weight: 650; white-space: nowrap; }
 .banner .banner-items { color: #e8d3b0; font-size: 12.5px; flex: 1; min-width: 220px; }

@@ -140,6 +140,21 @@ class KeyStore:
                     return True
         return False
 
+    def rotate(self, key: str) -> dict | None:
+        """Re-issue one member's secret in place, keeping name/limits/state.
+
+        Returns the updated record (carrying the new key value) or None when
+        the key is unknown. The old value stops working immediately — the
+        record it matched against now holds the fresh secret.
+        """
+        with self.lock:
+            for record in self.records:
+                if hmac.compare_digest(record["key"], str(key or "")):
+                    record["key"] = KEY_PREFIX + secrets.token_hex(16)
+                    self._write()
+                    return dict(record)
+        return None
+
     def pause(self, key: str) -> bool:
         """Pause a key (set enabled=False); True only when it flipped this call."""
         with self.lock:

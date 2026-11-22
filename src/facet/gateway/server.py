@@ -5084,6 +5084,15 @@ class App:
             raise ValueError("成员 Key 不存在或已被删除")
         return record
 
+    def rotate_member_key(self, key: str) -> dict:
+        """Re-issue one member key's secret; ValueError when it is gone."""
+        if not self.keys:
+            raise ValueError("成员 Key 功能未启用")
+        record = self.keys.rotate(key)
+        if record is None:
+            raise ValueError("成员 Key 不存在或已被删除")
+        return record
+
     def member_usage(self, days: int = 30) -> dict:
         """Member usage stats merged with each key's current limits/state."""
         if not self.usage:

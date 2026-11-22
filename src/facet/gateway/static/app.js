@@ -49,6 +49,7 @@ const state = {
   usage: null,
   usageFilter: '',
   usageRange: 30,
+  memberRange: 30,
   notify: null,
   report: null,
   maintenance: null,
@@ -2497,6 +2498,25 @@ function editQuota(record) {
   if (first) first.focus();
 }
 
+// Rotate one member key in place: a fresh secret replaces the old one while
+// the name, quota block and enabled state stay untouched. The new value is
+// shown exactly once — the store never displays it again.
+async function rotateKey(oldKey) {
+  const ok = await askConfirm('轮换成员 Key',
+    '为这个 Key 签发新密钥？旧密钥立即失效，名字与配额保留；使用旧密钥的工具需要更新为新值。');
+  if (!ok) return;
+  try {
+    const fresh = await api('/api/keys/rotate', { method: 'POST', body: { key: oldKey } });
+    loadApiKeys().catch(() => {});
+    await askText({
+      title: '新 Key 已生效',
+      message: `「${fresh.name}」的新密钥只显示这一次，请立即复制并更新到使用它的工具：`,
+      value: fresh.key,
+      confirmText: '我已保存',
+    });
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
 function renderApiKeys(payload) {
   const master = (payload && payload.master) || '';
   const enabled = payload ? payload.master_enabled !== false : true;
@@ -2543,12 +2563,16 @@ function renderApiKeys(payload) {
       <td>${active
         ? `<button class="btn small ghost" data-pause="${esc(r.key)}">暂停</button>`
         : `<button class="btn small" data-enable="${esc(r.key)}">启用</button>`}
+        <button class="btn small ghost" data-rotate="${esc(r.key)}">轮换</button>
         <button class="btn small ghost" data-quota="${esc(r.key)}">配额</button>
         <button class="btn small ghost" data-delete="${esc(r.key)}">删除</button></td>
     </tr>`;
   }).join('');
   body.querySelectorAll('[data-copy]').forEach((el) => {
     el.onclick = () => copyText(el.dataset.copy);
+  });
+  body.querySelectorAll('[data-rotate]').forEach((button) => {
+    button.onclick = () => rotateKey(button.dataset.rotate);
   });
   body.querySelectorAll('[data-quota]').forEach((button) => {
     button.onclick = () => editQuota(rows.find((r) => r.key === button.dataset.quota));

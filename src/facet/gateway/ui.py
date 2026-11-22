@@ -405,6 +405,16 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 200, record)
         return True
 
+    if path == "/api/keys/rotate" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+            record = app.rotate_member_key(str(incoming.get("key") or ""))
+        except (ValueError, AttributeError, OSError) as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, record)
+        return True
+
     if path in ("/api/keys/enable", "/api/keys/revoke", "/api/keys/delete", "/api/keys/pause") and method == "POST":
         action = path.rsplit("/", 1)[-1]
         try:
