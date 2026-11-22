@@ -395,6 +395,10 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .days-left.expiring { color: var(--warn); }
 .days-left.expired { color: var(--bad); }
 .sub-note { color: var(--muted); font-size: 12px; }
+/* 数据加载中的提示行：轻微脉冲，与"还没有数据"的静态空态区分开 */
+.loading-note { animation: loading-pulse 1.2s ease-in-out infinite; }
+@keyframes loading-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .loading-note { animation: none; } }
 
 .chart-card {
   background: linear-gradient(160deg, var(--panel), #0f1721);

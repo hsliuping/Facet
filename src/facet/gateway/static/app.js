@@ -281,6 +281,15 @@ async function loadChannelUsage() {
   renderChannels();
 }
 
+// 首次进入页面时表格是空的：先放一行"加载中"，避免接口慢或失败时被
+// "还没有数据"的空态误导。已有内容的表格（切筛选、后台轮询）不重绘，
+// 防止每次刷新都闪一下。
+function markLoading(tbodyId, colspan) {
+  const tbody = $(tbodyId);
+  if (!tbody || tbody.children.length) return;
+  tbody.innerHTML = `<tr><td colspan="${colspan}" class="sub-note loading-note">加载中…</td></tr>`;
+}
+
 async function loadState() {
   state.snapshot = await api('/api/state');
   renderSummary();
@@ -858,25 +867,26 @@ function switchPage(name) {
   // Each page loads its own data on entry, so opening the console stays cheap.
   if (name === 'dashboard') loadDashboard().catch((e) => toast(e.message, 'bad'));
   if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
-  if (name === 'channels') loadChannelUsage().catch(() => {});
+  // 用户进入页面触发的加载失败必须可见（toast）；后台轮询仍保持静默。
+  if (name === 'channels') loadChannelUsage().catch((e) => toast(e.message, 'bad'));
   if (name === 'models') {
     renderModels();
-    loadState().catch(() => {});
+    loadState().catch((e) => toast(e.message, 'bad'));
     refreshModelInsights().catch(() => {});
   }
-  if (name === 'status') loadState().catch(() => {});
+  if (name === 'status') loadState().catch((e) => toast(e.message, 'bad'));
   if (name === 'maintenance') {
     loadMaintenance().catch((e) => toast(e.message, 'bad'));
-    loadMaintLogs().catch(() => {});
-    loadFreeAlignLogs().catch(() => {});
-    loadBackups().catch(() => {});
+    loadMaintLogs().catch((e) => toast(e.message, 'bad'));
+    loadFreeAlignLogs().catch((e) => toast(e.message, 'bad'));
+    loadBackups().catch((e) => toast(e.message, 'bad'));
   }
   if (name === 'usage') {
     loadUsage().catch((e) => toast(e.message, 'bad'));
-    loadReport($('report-month').value).catch(() => {});
+    loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
   }
   if (name === 'compare') loadCompare().catch((e) => toast(e.message, 'bad'));
-  if (name === 'requests') loadRequests().catch(() => {});
+  if (name === 'requests') loadRequests().catch((e) => toast(e.message, 'bad'));
   if (name === 'members') {
     loadMembers().catch((e) => toast(e.message, 'bad'));
     loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
@@ -890,7 +900,7 @@ function switchPage(name) {
   if (name === 'apikeys') loadApiKeys().catch((e) => toast(e.message, 'bad'));
   if (name === 'subscriptions') {
     loadNotifications().catch((e) => toast(e.message, 'bad'));
-    loadReport($('report-month').value).catch(() => {});
+    loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
     loadSubscriptions().catch((e) => toast(e.message, 'bad'));
   }
   if (name === 'vendors') {
@@ -2240,6 +2250,7 @@ function sparkline(values, color) {
 
 async function loadUsage(range) {
   if (range) state.usageRange = range;
+  markLoading('usage-models-body', 7);
   state.usage = await api('/api/usage/' + state.usageRange);
   document.querySelectorAll('.range-switch .btn').forEach((b) =>
     b.classList.toggle('active', Number(b.dataset.range) === state.usageRange));
@@ -2344,6 +2355,7 @@ async function loadNotifications() {
 
 async function loadMembers(range) {
   if (range) state.memberRange = range;
+  markLoading('member-usage-body', 6);
   const usage = await api('/api/usage/users/' + state.memberRange);
   state.memberUsage = usage;
   document.querySelectorAll('[data-member-range]').forEach((b) =>
@@ -2402,6 +2414,7 @@ function renderMemberCost(data) {
 }
 
 async function loadApiKeys() {
+  markLoading('api-keys-body', 6);
   renderApiKeys(await api('/api/keys'));
 }
 
@@ -3214,6 +3227,7 @@ $('brand-list').addEventListener('click', (e) => {
 });
 
 async function loadRequests() {
+  markLoading('requests-body', 9);
   const channel = state.requestFilter.channel;
   const qs = channel ? `?channel=${encodeURIComponent(channel)}` : '';
   state.requests = await api(`/api/requests/${state.requestsLimit}${qs}`);

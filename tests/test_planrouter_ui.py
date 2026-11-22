@@ -159,6 +159,28 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("含图像", js)
         self.assertIn("粘性", js)
 
+    def test_tables_show_loading_state_and_load_errors_are_visible(self):
+        """表格首载显示"加载中"，页面进入时的加载失败不再静默吞错。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        # 统一的加载中辅助 + 脉冲样式（与"还没有数据"的静态空态区分）
+        self.assertIn("function markLoading", js)
+        self.assertIn("加载中…", js)
+        self.assertIn("loading-note", js)
+        self.assertIn("loading-note", css)
+        self.assertIn("@keyframes", css)
+        # 主表格（请求日志/用量模型/API Key/成员用量）首载都给出加载中反馈
+        self.assertIn("markLoading('requests-body'", js)
+        self.assertIn("markLoading('usage-models-body'", js)
+        self.assertIn("markLoading('api-keys-body'", js)
+        self.assertIn("markLoading('member-usage-body'", js)
+        # 用户进入页面触发的加载失败必须可见（toast）；后台轮询仍保持静默
+        self.assertIn("loadRequests().catch((e) => toast(e.message, 'bad'))", js)
+        self.assertIn("loadChannelUsage().catch((e) => toast(e.message, 'bad'))", js)
+        self.assertIn("loadMaintLogs().catch((e) => toast(e.message, 'bad'))", js)
+        self.assertIn("if (state.tab === 'requests') loadRequests().catch(() => {});", js)
+
     def test_page_and_static_assets(self):
         base = self.start()
         status, _, body = self.call(base, "GET", "/")
