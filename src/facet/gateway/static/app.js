@@ -356,6 +356,21 @@ function debounce(fn, ms = 150) {
   };
 }
 
+// 页面选择状态记忆：月份/范围/日志筛选存 sessionStorage（标签页关闭即
+// 清），刷新后恢复，不必每次重选。键名以 facet_ 前缀避免与其他应用冲突。
+function rememberSelection(key, value) {
+  try {
+    if (value === '' || value === null || value === undefined) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (_) { /* private mode */ }
+}
+function recallSelection(key, fallback) {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(key));
+    return (v === null || v === undefined) ? fallback : v;
+  } catch (_) { return fallback; }
+}
+
 function makeSortable(thCells, getSort, onSort) {
   thCells.forEach((th) => {
     const key = th.dataset.sortKey;
@@ -1008,6 +1023,8 @@ function switchPage(name) {
   document.querySelectorAll('.panel').forEach((p) =>
     p.classList.toggle('active', p.id === 'panel-' + name));
   $('page-title').textContent = PAGE_TITLES[name] || name;
+  // 浏览器标签标题跟随当前页：多标签/历史记录可区分看的是哪一页。
+  document.title = `${PAGE_TITLES[name] || 'Facet'} · Facet`;
   // Each page loads its own data on entry, so opening the console stays cheap.
   // 表格页的加载失败写进对应表格（markLoadError，可重试）；无表格的页面
   // 仍用 toast。后台轮询仍保持静默。
@@ -3644,11 +3661,13 @@ $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.me
 $('btn-export-diagnostics').onclick = exportDiagnostics;
 $('requests-status-filter').addEventListener('change', (e) => {
   state.requestFilter.status = e.target.value;
+  rememberSelection('facet_requests_filter', state.requestFilter);
   renderRequests();
 });
 // 渠道筛选交给后端（audit 归档里的历史也能回溯），所以这里重新拉取。
 $('requests-channel-filter').addEventListener('change', (e) => {
   state.requestFilter.channel = e.target.value;
+  rememberSelection('facet_requests_filter', state.requestFilter);
   loadRequests().catch((err) => toast(err.message, 'bad'));
 });
 // 「加载更多」抬高取回窗口（200 → 400 → 500，与后端上限一致）。
@@ -3659,13 +3678,27 @@ $('btn-more-requests').onclick = () => {
 };
 $('requests-range-filter').addEventListener('change', (e) => {
   state.requestFilter.range = e.target.value;
+  rememberSelection('facet_requests_filter', state.requestFilter);
   renderRequests();
 });
 const applyRequestQuery = debounce((value) => {
   state.requestFilter.query = value.trim();
+  rememberSelection('facet_requests_filter', state.requestFilter);
   renderRequests();
 });
 $('requests-query').addEventListener('input', (e) => applyRequestQuery(e.target.value));
+// 刷新后恢复上次的页面选择（rememberSelection 写、这里读）：报表/成本
+// 月份、用量与成员范围、请求日志筛选。渠道下拉选项每次取回后重建，
+// 恢复的 state.requestFilter.channel 会在首次 renderChannelFilter 里
+// 自动带上 selected。本块在脚本加载即执行，早于 boot 的首次加载。
+$('report-month').value = recallSelection('facet_report_month', $('report-month').value);
+$('member-cost-month').value = recallSelection('facet_member_cost_month', $('member-cost-month').value);
+state.usageRange = recallSelection('facet_usage_range', state.usageRange);
+state.memberRange = recallSelection('facet_member_range', state.memberRange);
+state.requestFilter = { ...state.requestFilter, ...recallSelection('facet_requests_filter', {}) };
+$('requests-status-filter').value = state.requestFilter.status || '';
+$('requests-range-filter').value = state.requestFilter.range || 'all';
+$('requests-query').value = state.requestFilter.query || '';
 // 自动刷新开关：关掉后 5s 轮询不再拉取请求日志（适合正在细看/复制时）。
 // localStorage 记忆，重新打开立即拉一轮。
 const REQUESTS_AUTOREFRESH_KEY = 'facet_requests_autorefresh';
@@ -4896,7 +4929,10 @@ function renderReport() {
 }
 
 $('btn-load-report').onclick = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
-$('report-month').onchange = () => loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
+$('report-month').onchange = () => {
+  rememberSelection('facet_report_month', $('report-month').value);
+  loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
+};
 
 function renderAll() {
   renderChannels();
@@ -6411,17 +6447,26 @@ function bindEvents() {
   $('btn-export-members').onclick = exportMemberUsage;
 
   document.querySelectorAll('.range-switch .btn[data-range]').forEach((button) => {
-    button.onclick = () => loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
+    button.onclick = () => {
+      rememberSelection('facet_usage_range', Number(button.dataset.range));
+      loadUsage(Number(button.dataset.range)).catch((e) => toast(e.message, 'bad'));
+    };
   });
 
   // Member keys page: the shared .range-switch selector above also catches
   // these buttons, so this later binding wins for them.
   document.querySelectorAll('[data-member-range]').forEach((button) => {
-    button.onclick = () => loadMembers(Number(button.dataset.memberRange)).catch((e) => toast(e.message, 'bad'));
+    button.onclick = () => {
+      rememberSelection('facet_member_range', Number(button.dataset.memberRange));
+      loadMembers(Number(button.dataset.memberRange)).catch((e) => toast(e.message, 'bad'));
+    };
   });
 
   $('btn-member-cost').onclick = () => loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
-  $('member-cost-month').onchange = () => loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
+  $('member-cost-month').onchange = () => {
+    rememberSelection('facet_member_cost_month', $('member-cost-month').value);
+    loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
+  };
 
   $('btn-save-settings').onclick = () => saveSettings(false);
   $('btn-test-notify').onclick = () => saveSettings(true);

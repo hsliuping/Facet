@@ -33,8 +33,8 @@ from playwright.sync_api import expect
 
 @pytest.mark.smoke
 def test_title_and_brand(console):
-    """验证 HTML 标题与品牌名称"""
-    expect(console.page).to_have_title("Facet · 渠道调度控制台")
+    """验证 HTML 标题与品牌名称；标题随页面切换（进入仪表板后带页名）"""
+    expect(console.page).to_have_title("仪表板 · Facet")
     expect(console.el(".brand h1")).to_have_text("Facet")
 
 

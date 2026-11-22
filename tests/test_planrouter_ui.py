@@ -297,6 +297,27 @@ class ConsoleTests(unittest.TestCase):
         # 空态行内按钮与文案留出间距
         self.assertIn(".hint .btn, .sub-note .btn", css)
 
+    def test_page_selections_survive_reload_and_title_follows_page(self):
+        """刷新恢复页面选择（月份/范围/日志筛选）；浏览器标签标题跟随当前页。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # sessionStorage 记忆/恢复助手（标签页关闭即清，不留长期痕迹）
+        self.assertIn("function rememberSelection(key, value)", js)
+        self.assertIn("function recallSelection(key, fallback)", js)
+        # 五组选择各有写入点：报表月份/成本月份/用量范围/成员范围/日志筛选
+        for key in ['facet_report_month', 'facet_member_cost_month',
+                    'facet_usage_range', 'facet_member_range', 'facet_requests_filter']:
+            self.assertGreaterEqual(js.count(f"'{key}'"), 2)  # 写 + 读
+        # boot 恢复：状态字段与静态控件值都还原；渠道下拉由首次重建选项时带回
+        self.assertIn("recallSelection('facet_report_month'", js)
+        self.assertIn(
+            "state.requestFilter = { ...state.requestFilter, ...recallSelection('facet_requests_filter'",
+            js)
+        self.assertIn("$('requests-status-filter').value = state.requestFilter.status || ''", js)
+        self.assertIn("$('requests-query').value = state.requestFilter.query || ''", js)
+        # 浏览器标签标题跟随当前页，多标签/历史记录可区分
+        self.assertIn("document.title = `${PAGE_TITLES[name] || 'Facet'} · Facet`", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
