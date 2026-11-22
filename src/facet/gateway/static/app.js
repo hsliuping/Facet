@@ -727,7 +727,57 @@ function channelHaystack(c) {
     ...Object.entries(c.models || {}).flat()].join(' ').toLowerCase();
 }
 
+// 配置体检：渠道页顶部横幅，集中点破三类静默配置问题——
+// ① 同一条链内多个启用渠道声明同一个显式模型名（链序靠前者优先生效，
+//    其余只在其失败后接手，不知道这条规则就会以为两个都在“生效”）；
+// ② api_key 是 env:VAR 引用但网关进程没有读到该变量（渠道徽标只说
+//    「未配置」，不说为什么）；
+// ③ api_key 是字面 ***（常见于把导出的脱敏配置直接当 router.json 用，
+//    请求会带着 Bearer *** 反复 401）。①由本页 config 推导，②③来自
+//    /api/state 快照；快照未就绪时先只跑①。
+function renderConfigHealth() {
+  const el = $('config-health');
+  if (!el || !state.config) return;
+  const issues = [];
+  const byName = {};
+  for (const c of state.config.channels || []) byName[c.name] = c;
+  const snap = {};
+  for (const c of (state.snapshot && state.snapshot.channels) || []) snap[c.name] = c;
+  for (const r of state.config.routes || []) {
+    const owners = {};
+    for (const n of r.channels || []) {
+      const c = byName[n];
+      if (!c || c.enabled === false) continue;
+      for (const m of Object.keys(c.models || {})) {
+        if (m === 'auto' || m === '*') continue;
+        (owners[m] = owners[m] || []).push(n);
+      }
+    }
+    for (const [m, names] of Object.entries(owners)) {
+      if (names.length < 2) continue;
+      issues.push(`链 ${r.name}（${r.protocol}）：模型 ${m} 被渠道 ${names.join('、')} 重复声明，`
+        + `${names[0]} 优先生效，其余只在其失败后接手`);
+    }
+  }
+  for (const c of state.config.channels || []) {
+    const s = snap[c.name];
+    if (String(c.api_key || '').startsWith('env:') && s && s.configured === false) {
+      issues.push(`渠道 ${c.name}：密钥是 ${c.api_key} 引用，但网关进程没有读到该变量`
+        + `——请求会不带密钥发出；请设置该环境变量（需重启网关）或改填明文密钥`);
+    }
+    if (s && s.placeholder_key) {
+      issues.push(`渠道 ${c.name}：密钥是占位符 ***（常见于把导出的脱敏配置直接当配置文件用），`
+        + `会原样发给上游并被拒绝；请改填明文密钥或 env:VAR 引用`);
+    }
+  }
+  el.hidden = !issues.length;
+  if (!issues.length) return;
+  el.innerHTML = `<span class="banner-title">配置体检发现 ${issues.length} 个问题</span>`
+    + `<span class="banner-items">${issues.map((t) => `<span class="banner-item">${esc(t)}</span>`).join('')}</span>`;
+}
+
 function renderChannels() {
+  renderConfigHealth();
   const list = $('channel-list');
   const kw = (state.channelFilter || '').trim().toLowerCase();
   // Enabled channels first, then the config order (priority; the backend

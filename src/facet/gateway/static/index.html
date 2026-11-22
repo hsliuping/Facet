@@ -220,6 +220,7 @@
               <button class="btn" id="btn-add-channel">新增渠道</button>
             </div>
           </div>
+          <div class="banner" id="config-health" hidden></div>
           <input type="search" id="channel-filter" class="filter-input" placeholder="筛选渠道：名称 / 协议 / 端点 / 模型…" aria-label="筛选渠道">
           <div class="list" id="channel-list"></div>
           <p class="hint">新增渠道请在「密钥」里直接粘贴明文 API Key；只有需要引用容器环境变量时才写 <code>env:VAR</code>（VAR 是变量名，不是密钥本身）。<code>base_url</code> 已含 <code>/v3</code> 等版本段时，「上游路径」留空会自动用 <code>/chat/completions</code>，不会重复拼出 <code>/v3/v1/</code>。编辑已有渠道时留空或保留 <code>***</code> 表示不改动已保存的密钥。改动会自动保存并热加载，无需重启。导出文件不含密钥明文。</p>
@@ -1127,7 +1128,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts" aria-live="polite"></div>
-  <script src="/static/app.js?v=20261122-21"></script>
+  <script src="/static/app.js?v=20261122-22"></script>
   <script src="/static/setup.js?v=20261118-2"></script>
 </body>
 </html>

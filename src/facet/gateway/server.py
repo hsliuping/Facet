@@ -4799,7 +4799,13 @@ class App:
         for channel in self.config.channels:
             item = dict(snap["channels"].get(channel.name, {}))
             catalog = self.store.catalog_view(channel.name)
-            has_key = bool(resolve_secret(channel.api_key))
+            # resolve_secret passes a literal "***" through, and such channels
+            # then send Bearer *** upstream and fail 401 while looking "usable"
+            # (typical when a masked export is pasted back as router.json).
+            # Report them honestly: not configured, plus a placeholder flag the
+            # console's config-health banner explains.
+            placeholder = channel.api_key == "***"
+            has_key = bool(resolve_secret(channel.api_key)) and not placeholder
             item.update({
                 "name": channel.name,
                 "protocol": channel.protocol,
@@ -4817,6 +4823,7 @@ class App:
                     "changes": catalog["changes"],
                 },
                 "configured": has_key,
+                "placeholder_key": placeholder,
             })
             rank = self.store.billing_ranks.get(channel.name)
             item["billing"] = None if not rank else {

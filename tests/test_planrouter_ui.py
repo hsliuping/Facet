@@ -489,6 +489,40 @@ class ConsoleTests(unittest.TestCase):
         # 搜索框纳入 Esc 清词清单
         self.assertIn("'keys-search'];", js)
 
+    def test_state_flags_placeholder_api_key(self):
+        """api_key 写成字面 *** 的渠道必须被体检识别：不再伪装成已配置。
+
+        手滑把导出的脱敏配置直接当 router.json 用时，字面 *** 会被
+        resolve_secret 原样返回并作为 Bearer 密钥发给上游，渠道反复 401
+        却在控制台里显示「可用」——这就是要消除的静默失败。
+        """
+        cfg = base_config()
+        cfg["channels"][0]["api_key"] = "***"  # plan-a：脱敏占位符
+        base = self.start(cfg)
+        _, _, body = self.call(base, "GET", "/api/state")
+        channels = {c["name"]: c for c in json.loads(body)["channels"]}
+        self.assertFalse(channels["plan-a"]["configured"])
+        self.assertTrue(channels["plan-a"]["placeholder_key"])
+        # 本来就没有密钥的渠道：configured=False 但不是占位符
+        self.assertFalse(channels["claude"]["placeholder_key"])
+
+    def test_channels_page_shows_config_health_banner(self):
+        """渠道页顶部要有配置体检横幅：链内重复模型声明、env: 引用未解析、
+        字面 *** 占位密钥，三类静默配置问题各给出解释与修法。"""
+        from facet.gateway.ui import STATIC_DIR
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="config-health"', html)
+        self.assertIn("function renderConfigHealth(", js)
+        # 重复模型映射：说明谁优先生效、谁只是失败后备
+        self.assertIn("重复声明", js)
+        self.assertIn("优先生效", js)
+        # env: 引用未解析：点破「未配置」徽标的原因
+        self.assertIn("没有读到该变量", js)
+        # 字面 *** 占位密钥：点名脱敏导出这一常见来源
+        self.assertIn("placeholder_key", js)
+        self.assertIn("占位符", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
