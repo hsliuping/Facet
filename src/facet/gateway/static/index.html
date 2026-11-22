@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Facet · 渠道调度控制台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261122-9">
+  <link rel="stylesheet" href="/static/style.css?v=20261122-10">
 </head>
 <body>
   <div class="shell">
@@ -651,8 +651,8 @@
               <table class="status-table">
                 <thead>
                   <tr>
-                    <th>模型</th><th>渠道</th><th>类型</th><th data-sort-key="requests">请求 / 失败</th>
-                    <th data-sort-key="tokens">Tokens</th><th>缓存命中</th><th data-sort-key="last_used">最近调用</th>
+                    <th>模型</th><th>渠道</th><th>类型</th><th data-sort-key="requests" class="num">请求 / 失败</th>
+                    <th data-sort-key="tokens" class="num">Tokens</th><th>缓存命中</th><th data-sort-key="last_used">最近调用</th>
                   </tr>
                 </thead>
                 <tbody id="usage-models-body"></tbody>
@@ -800,7 +800,7 @@
               <table class="status-table">
                 <thead>
                   <tr>
-                    <th>成员</th><th data-sort-key="requests">请求 / 失败</th><th data-sort-key="tokens">Tokens</th><th>成功率</th>
+                    <th>成员</th><th data-sort-key="requests" class="num">请求 / 失败</th><th data-sort-key="tokens" class="num">Tokens</th><th>成功率</th>
                     <th>今日配额</th><th>主要渠道</th>
                   </tr>
                 </thead>
@@ -1125,7 +1125,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts" aria-live="polite"></div>
-  <script src="/static/app.js?v=20261122-18"></script>
+  <script src="/static/app.js?v=20261122-19"></script>
   <script src="/static/setup.js?v=20261118-2"></script>
 </body>
 </html>

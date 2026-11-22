@@ -715,7 +715,7 @@ function channelCard(c, i) {
       <select class="auto-model" data-auto-model data-index="${i}" aria-label="切换该渠道的默认（auto）模型">
         ${autoModelOptions(c)}
       </select>
-      <small class="hint">切换后点「保存配置」生效，auto / facet 请求都走这里</small>
+      <small class="hint">切换后自动保存，约 1 秒内生效，auto / facet 请求都走这里</small>
     </dd></div></dl>
     <dl class="models-line"><div><dt>模型映射</dt><dd class="wrap">${modelBits || '未配置'}</dd></div></dl>
   </article>`;
@@ -2615,8 +2615,8 @@ function renderUsageModels(usage) {
       <td><code>${esc(r.model)}</code></td>
       <td>${esc(r.channel)}</td>
       <td>${tierBadge(r.tier) || '<span class="sub-note">未标注</span>'}</td>
-      <td>${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
-      <td>${Number(r.tokens || 0).toLocaleString()}</td>
+      <td class="num">${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
+      <td class="num">${Number(r.tokens || 0).toLocaleString()}</td>
       <td>${cacheRate}</td>
       <td>${last}</td>
     </tr>`;
@@ -2915,8 +2915,8 @@ function renderMemberUsage(usage) {
     const paused = r.enabled === false ? '<span class="tag unknown">已暂停</span>' : '';
     return `<tr>
       <td>${esc(r.name || '匿名')} ${spike} ${paused}</td>
-      <td>${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
-      <td>${Number(r.tokens || 0).toLocaleString()}</td>
+      <td class="num">${Number(r.requests).toLocaleString()} / ${Number(r.failed).toLocaleString()}</td>
+      <td class="num">${Number(r.tokens || 0).toLocaleString()}</td>
       <td>${rate}</td>
       <td>${esc(quotaProgress(r))}</td>
       <td>${channelMix(r.channels)}</td>

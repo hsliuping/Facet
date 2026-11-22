@@ -237,8 +237,8 @@ class ConsoleTests(unittest.TestCase):
             self.assertIn(f"state.sort.{name}", js)
         # 可排序列带 data-sort-key（用量模型：请求数/Tokens/最后使用；
         # 模型对比：跑分/渠道数；成员用量：请求/Tokens）
-        self.assertIn('<th data-sort-key="requests">请求 / 失败</th>', html)
-        self.assertIn('<th data-sort-key="tokens">Tokens</th>', html)
+        self.assertIn('<th data-sort-key="requests" class="num">请求 / 失败</th>', html)
+        self.assertIn('<th data-sort-key="tokens" class="num">Tokens</th>', html)
         self.assertIn('<th data-sort-key="last_used">最近调用</th>', html)
         self.assertIn('<th data-sort-key="score">跑分</th>', html)
         self.assertIn('<th data-sort-key="channels">渠道</th>', html)
@@ -416,6 +416,23 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("  copyViaExecCommand(value);", js)
         # 降级实现必须移除临时 textarea，不留 DOM 垃圾
         self.assertIn("ta.remove();", js)
+
+    def test_numeric_columns_align_right_and_hint_fix(self):
+        """数字列右对齐+等宽数字；渠道卡「默认模型」提示不再指向不存在的按钮。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # CSS：数字列右对齐 + 等宽数字（多位数扫读更容易比大小）
+        self.assertIn("th.num, td.num", css)
+        self.assertIn("font-variant-numeric: tabular-nums", css)
+        # 模型用量表 + 成员用量表的数字列（表头 2+2、单元格 2+2）都带 num 类
+        self.assertEqual(html.count('<th data-sort-key="requests" class="num">'), 2)
+        self.assertEqual(html.count('<th data-sort-key="tokens" class="num">'), 2)
+        self.assertEqual(js.count('<td class="num">'), 4)
+        # 提示文案：默认模型切换是 markDirty 自动保存，不存在「保存配置」按钮
+        self.assertIn('切换后自动保存，约 1 秒内生效，auto / facet 请求都走这里', js)
+        self.assertNotIn('保存配置', js)
 
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
