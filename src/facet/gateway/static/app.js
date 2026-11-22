@@ -178,12 +178,18 @@ async function api(path, opts = {}) {
       }
       return api(path, { ...opts, retried: true });
     }
-    throw new Error(isApi
+    const authErr = new Error(isApi
       ? '未授权：请从左侧菜单打开「管理密钥」页填入 admin_key 后重试'
       : '未授权：请从左侧菜单打开「API Keys」页填入 api_key 后重试');
+    authErr.status = 401;
+    throw authErr;
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  if (!res.ok) {
+    const err = new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -290,6 +296,38 @@ function markLoading(tbodyId, colspan) {
   tbody.innerHTML = `<tr><td colspan="${colspan}" class="sub-note loading-note">加载中…</td></tr>`;
 }
 
+// ---- 连接状态诚实化 ----
+// 徽章必须说实话：5s 轮询失败不能继续挂着「已连接」。连续 2 次失败才
+// 切换到「已断开」（单次网络抖动不惊扰），恢复后 toast 告知并撤掉横幅。
+let connFails = 0;
+let connDown = false;
+const CONN_FAIL_THRESHOLD = 2;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function markConn(ok) {
+  if (ok) {
+    const recovered = connDown;
+    connFails = 0;
+    connDown = false;
+    const badge = $('conn-badge');
+    badge.textContent = '已连接';
+    badge.className = 'badge ok';
+    if (recovered) {
+      toast('已重新连接', 'ok');
+      $('conn-banner').hidden = true;
+    }
+    return;
+  }
+  connFails += 1;
+  if (connDown || connFails < CONN_FAIL_THRESHOLD) return;
+  connDown = true;
+  const badge = $('conn-badge');
+  badge.textContent = '已断开 · 自动重试中';
+  badge.className = 'badge bad';
+  $('conn-banner').hidden = false;
+}
+
 async function loadState() {
   state.snapshot = await api('/api/state');
   renderSummary();
@@ -298,9 +336,7 @@ async function loadState() {
   renderExactModels();
   renderBrandList();
   renderScores();
-  const badge = $('conn-badge');
-  badge.textContent = '已连接';
-  badge.className = 'badge ok';
+  markConn(true);
   $('footer-config').textContent = state.snapshot.config_path
     ? '配置文件：' + state.snapshot.config_path : '';
   renderBanner();
@@ -6467,12 +6503,39 @@ function renderCompareDetail() {
   $('compare-detail-body').innerHTML = blocks.join('');
 }
 
+// 首连失败指数退避重试（2s→4s→8s→16s 封顶），不再留下一张死页面。
+// 封顶后保持 16s 慢速重试，徽章始终如实显示失败状态。
+const BOOT_RETRY_DELAYS = [2000, 4000, 8000, 16000];
+
 async function boot() {
   bindEvents();
-  try {
-    await loadConfig();
-    await restoreDrafts();
-    await loadState();
+  let bootFailures = 0;
+  let authFailed = false;
+  for (;;) {
+    try {
+      await loadConfig();
+      await restoreDrafts();
+      await loadState();
+      break;
+    } catch (err) {
+      if (err.status === 401) {
+        // 密钥错误/未填不是掉线：不重试——重试会反复弹密钥输入框。
+        // 徽章如实显示失败，后续初始载荷仍会各自弹出密钥框等用户补填。
+        toast(err.message, 'bad');
+        $('conn-badge').textContent = '连接失败';
+        $('conn-badge').className = 'badge bad';
+        authFailed = true;
+        break;
+      }
+      bootFailures += 1;
+      if (bootFailures === 1) toast(err.message, 'bad');
+      if (bootFailures === BOOT_RETRY_DELAYS.length) toast('网关仍不可达，控制台将继续自动重试', 'bad');
+      $('conn-badge').textContent = '连接失败 · 自动重试中';
+      $('conn-badge').className = 'badge bad';
+      await sleep(BOOT_RETRY_DELAYS[Math.min(bootFailures - 1, BOOT_RETRY_DELAYS.length - 1)]);
+    }
+  }
+  if (!authFailed) {
     // 首启（seed 未设管理密码）：弹出不可关闭的「设置管理密码」，设置成功后
     // 自动进入新手配置向导。不等它完成——控制台先在背后渲染。
     forceSetupAdminKey().catch((err) => toast(err.message, 'bad'));
@@ -6481,10 +6544,6 @@ async function boot() {
     // boot payload lands in parallel behind it — a cold vendor snapshot
     // (subscriptions/report) never delays first paint by seconds.
     switchPage(pageFromHash() || 'dashboard');
-  } catch (err) {
-    toast(err.message, 'bad');
-    $('conn-badge').textContent = '连接失败';
-    $('conn-badge').className = 'badge bad';
   }
   const rest = await Promise.allSettled([
     loadSubscriptions(),
@@ -6501,16 +6560,16 @@ async function boot() {
   for (const r of rest) {
     if (r.status === 'rejected') {
       toast(r.reason.message, 'bad');
-      $('conn-badge').textContent = '连接失败';
-      $('conn-badge').className = 'badge bad';
+      markConn(false);
       break;
     }
   }
   setInterval(() => {
     // Live pages poll on their own cadence; other pages stay static.
-    if (state.tab === 'dashboard') loadDashboard().catch(() => {});
-    if (state.tab === 'status') loadState().catch(() => {});
-    if (state.tab === 'requests') loadRequests().catch(() => {});
+    // 成败两路都喂给 markConn：断连时徽章说实话，恢复时提示。
+    if (state.tab === 'dashboard') loadDashboard().then(() => markConn(true), () => markConn(false));
+    if (state.tab === 'status') loadState().then(() => markConn(true), () => markConn(false));
+    if (state.tab === 'requests') loadRequests().then(() => markConn(true), () => markConn(false));
   }, 5000);
 }
 

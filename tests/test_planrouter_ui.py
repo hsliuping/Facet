@@ -175,11 +175,35 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("markLoading('usage-models-body'", js)
         self.assertIn("markLoading('api-keys-body'", js)
         self.assertIn("markLoading('member-usage-body'", js)
-        # 用户进入页面触发的加载失败必须可见（toast）；后台轮询仍保持静默
+        # 用户进入页面触发的加载失败必须可见（toast）；后台轮询失败不 toast
+        # 刷屏，交给 markConn 如实翻徽章（断连诚实化见其专属测试）
         self.assertIn("loadRequests().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("loadChannelUsage().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("loadMaintLogs().catch((e) => toast(e.message, 'bad'))", js)
-        self.assertIn("if (state.tab === 'requests') loadRequests().catch(() => {});", js)
+        self.assertIn("loadRequests().then(() => markConn(true), () => markConn(false))", js)
+
+    def test_connection_badge_is_honest_about_disconnects(self):
+        """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        # 失败计数防抖 + 统一的状态翻转助手（单次抖动不惊扰，连续失败才切态）
+        self.assertIn("function markConn(", js)
+        self.assertIn("connFails", js)
+        self.assertIn("已断开 · 自动重试中", js)
+        self.assertIn("已重新连接", js)
+        # 5s 轮询不再静默吞错：成败两路都喂给 markConn
+        self.assertIn("if (state.tab === 'dashboard') loadDashboard().then(() => markConn(true), () => markConn(false));", js)
+        self.assertIn("if (state.tab === 'status') loadState().then(() => markConn(true), () => markConn(false));", js)
+        self.assertIn("if (state.tab === 'requests') loadRequests().then(() => markConn(true), () => markConn(false));", js)
+        # 断连横幅：默认隐藏，复用 banner 体系（含 .banner[hidden] 覆盖规则）
+        self.assertIn('id="conn-banner" hidden', html)
+        self.assertIn("conn-banner", js)
+        self.assertIn(".banner[hidden]", css)
+        # 首连失败指数退避重试，而不是留下一张死页面
+        self.assertIn("BOOT_RETRY_DELAYS", js)
+        self.assertIn("连接失败 · 自动重试中", js)
 
     def test_modal_editors_confirm_before_discarding_changes(self):
         """编辑弹窗装关闭守卫：有改动未保存时先确认，保存成功直接关闭。
