@@ -4301,6 +4301,60 @@ $('backup-body').addEventListener('click', async (e) => {
   }
 });
 
+// ---- whole-machine migration: one zip with config + member keys +
+// subscriptions + usage. The bundle carries plaintext secrets, so both
+// directions warn; import always keeps the local management password.
+async function exportMigration() {
+  try {
+    const payload = await api('/api/migration/export');
+    const bin = atob(payload.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = payload.filename || 'facet-migration.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`迁移包已导出（含 ${(payload.contents || []).length} 个文件）。${payload.note || ''}`, 'warn');
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}
+
+async function importMigration(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+  const data = dataUrl.split(',', 2)[1] || '';
+  const ok = await askConfirm('导入迁移包',
+    '将用迁移包覆盖本机的配置、成员密钥、订阅账号与用量数据（覆盖前自动备份为 *.migration.bak）。'
+    + '本机的管理密码保持不变；改动立即生效，无需重启。继续吗？');
+  if (!ok) return;
+  try {
+    const result = await api('/api/migration/import', { method: 'POST', body: { data } });
+    (result.warnings || []).forEach((w) => toast(w, 'warn'));
+    toast(`迁移完成：${(result.imported || []).join('、') || '无变更'}`);
+    await loadConfig();
+    await loadState();
+    await loadMaintenance().catch(() => {});
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}
+
+$('btn-migration-export').onclick = exportMigration;
+$('btn-migration-import').onclick = () => $('migration-file').click();
+$('migration-file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (file) await importMigration(file).catch((err) => toast(err.message, 'bad'));
+});
+
 async function loadMaintLogs() {
   state.maintlog = await api('/api/maintenance/logs');
   renderMaintLogs();

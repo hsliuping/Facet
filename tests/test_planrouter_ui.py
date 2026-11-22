@@ -1,17 +1,22 @@
 """Tests for the browser console and its configuration API."""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from facet.gateway import subscriptions as subs
 from facet.gateway.core import load_config
+from facet.gateway.keys import KeyStore
 from facet.gateway.server import App, Handler
 
 
@@ -403,6 +408,241 @@ class ConsoleTests(unittest.TestCase):
         # Both channels offer the same registry match; pick whichever
         # _row_better prefers (free beats paid, then higher score).
         self.assertIn(gpt_rows[0]["channel"], ("plan-a", "plan-b"))
+
+
+class MigrationPackageTests(unittest.TestCase):
+    """One-click whole-machine migration: export/import zip of the config dir.
+
+    The console cannot move a deployment today: config backups cover only
+    router.json and the config export masks every secret, so moving to a new
+    machine means hand-copying keys.json / subscriptions.json / usage.json.
+    These tests pin the migration bundle: everything the gateway persists in
+    the config dir travels in one zip, import restores it with hot reload and
+    snapshot backups, and the local management password never changes.
+    """
+
+    def setUp(self):
+        self._tmpdirs = []
+
+    def tearDown(self):
+        import shutil
+        for path in self._tmpdirs:
+            shutil.rmtree(path, ignore_errors=True)
+
+    def _dir(self) -> Path:
+        import tempfile
+        path = Path(tempfile.mkdtemp(prefix="facet-migration-"))
+        self._tmpdirs.append(path)
+        return path
+
+    def _seed_files(self, root: Path) -> dict:
+        """Write config + keys + subscriptions + usage like a lived-in deploy."""
+        raw = base_config(admin_key="source-pass")
+        raw["channels"][0]["api_key"] = "top-secret"
+        config_path = root / "router.json"
+        config_path.write_text(json.dumps(raw), encoding="utf-8")
+        keys_path = root / "keys.json"
+        store = KeyStore(keys_path)
+        member = store.create("alice")
+        subs_path = root / "subscriptions.json"
+        subs.save_file(subs_path, [{"plan": "pro", "price": 20}], None)
+        usage_path = root / "usage.json"
+        usage_path.write_text(json.dumps({
+            "days": {"2026-11-20": {"plan-a": {
+                "requests": 3, "success": 2, "failed": 1, "tokens": 100}}}},
+        ), encoding="utf-8")
+        return {"config": config_path, "keys": keys_path, "member": member,
+                "subs": subs_path, "usage": usage_path, "raw": raw}
+
+    def _start(self, root: Path, admin_key: str | None = None) -> tuple[str, App]:
+        if admin_key is not None:
+            raw = json.loads((root / "router.json").read_text(encoding="utf-8"))
+            raw.setdefault("listen", {})["admin_key"] = admin_key
+            (root / "router.json").write_text(json.dumps(raw), encoding="utf-8")
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        httpd.daemon_threads = True
+        httpd.app = App(
+            load_config(root / "router.json"), config_path=root / "router.json",
+            keys_file=root / "keys.json", subscriptions_file=root / "subscriptions.json",
+            usage_file=root / "usage.json")  # type: ignore[attr-defined]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        return base, httpd.app  # type: ignore[return-value]
+
+    def _export(self, base: str, admin: str = "source-pass"):
+        status, _, body = self.call(base, "GET", "/api/migration/export", admin=admin)
+        return status, json.loads(body) if status == 200 else body
+
+    def call(self, base: str, method: str, path: str, body=None, admin: str | None = None):
+        headers = {}
+        if admin:
+            headers["X-Admin-Key"] = admin
+        data = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode()
+        req = Request(base + path, data=data, headers=headers, method=method)
+        try:
+            with urlopen(req, timeout=5) as resp:
+                return resp.status, resp.headers, resp.read()
+        except HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
+
+    def test_export_zip_carries_every_persistent_file_unmasked(self):
+        root = self._dir()
+        seed = self._seed_files(root)
+        base, _ = self._start(root)
+        status, payload = self._export(base)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["filename"].endswith(".zip"))
+        blob = base64.b64decode(payload["data"])
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            names = set(zf.namelist())
+            self.assertEqual(names, {"router.json", "keys.json",
+                                     "subscriptions.json", "usage.json"})
+            # The whole point: channel secrets travel in plaintext so the
+            # target machine can serve requests without re-entering keys.
+            shipped = json.loads(zf.read("router.json").decode("utf-8"))
+            self.assertEqual(shipped["channels"][0]["api_key"], "top-secret")
+            member_keys = json.loads(zf.read("keys.json").decode("utf-8"))
+            self.assertEqual(member_keys["keys"][0]["key"], seed["member"]["key"])
+        self.assertEqual({c["name"] for c in payload["contents"]}, names)
+
+    def test_export_with_config_only(self):
+        root = self._dir()
+        (root / "router.json").write_text(
+            json.dumps(base_config(admin_key="source-pass")), encoding="utf-8")
+        base, _ = self._start(root)
+        status, payload = self._export(base)
+        self.assertEqual(status, 200)
+        self.assertEqual([c["name"] for c in payload["contents"]], ["router.json"])
+
+    def test_import_requires_admin_key(self):
+        root = self._dir()
+        self._seed_files(root)
+        base, _ = self._start(root)
+        status, _, _ = self.call(base, "GET", "/api/migration/export")
+        self.assertEqual(status, 401)
+
+    def test_import_rejects_bad_payloads(self):
+        root = self._dir()
+        self._seed_files(root)
+        base, _ = self._start(root)
+        for data in ("not-base64!!", ""):
+            status, _, body = self.call(base, "POST", "/api/migration/import",
+                                        body={"data": data}, admin="source-pass")
+            self.assertEqual(status, 400, body)
+        # A valid zip without router.json is not a migration package.
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("keys.json", "{}")
+        status, _, body = self.call(base, "POST", "/api/migration/import",
+                                    body={"data": base64.b64encode(buf.getvalue()).decode()},
+                                    admin="source-pass")
+        self.assertEqual(status, 400)
+        self.assertIn("router.json", body.decode("utf-8"))
+
+    def test_import_moves_everything_and_hot_reloads(self):
+        source = self._dir()
+        seed = self._seed_files(source)
+        source_base, source_app = self._start(source)
+        _, exported = self._export(source_base)
+
+        target = self._dir()
+        (target / "router.json").write_text(
+            json.dumps(base_config(admin_key="target-pass")), encoding="utf-8")
+        target_base, target_app = self._start(target)
+        status, _, body = self.call(
+            target_base, "POST", "/api/migration/import",
+            body={"data": exported["data"]}, admin="target-pass")
+        self.assertEqual(status, 200, body)
+        result = json.loads(body)
+        self.assertTrue(result["ok"])
+        self.assertIn("router.json", result["imported"])
+        self.assertIn("keys.json", result["imported"])
+        self.assertIn("subscriptions.json", result["imported"])
+        self.assertIn("usage.json", result["imported"])
+
+        # Config travels whole (source channels appear) and hot-reloads.
+        status, _, body = self.call(target_base, "GET", "/api/config",
+                                    admin="target-pass")
+        names = {c["name"] for c in json.loads(body)["channels"]}
+        self.assertEqual(names, {"plan-a", "plan-b", "claude"})
+        # Member keys keep working on the target machine.
+        self.assertIsNotNone(target_app.keys.lookup(seed["member"]["key"]))
+        # Subscriptions and usage are reloaded into the running process.
+        self.assertEqual(target_app.subscriptions[0]["plan"], "pro")
+        self.assertIn("2026-11-20", target_app.usage.data["days"])
+
+    def test_import_preserves_local_admin_key(self):
+        source = self._dir()
+        self._seed_files(source)
+        source_base, _ = self._start(source)
+        _, exported = self._export(source_base)
+
+        target = self._dir()
+        (target / "router.json").write_text(
+            json.dumps(base_config(admin_key="target-pass")), encoding="utf-8")
+        target_base, _ = self._start(target)
+        status, _, body = self.call(
+            target_base, "POST", "/api/migration/import",
+            body={"data": exported["data"]}, admin="target-pass")
+        self.assertEqual(status, 200, body)
+        # The importing operator would be locked out if the source machine's
+        # management password silently replaced theirs.
+        on_disk = json.loads((target / "router.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["listen"]["admin_key"], "target-pass")
+        status, _, _ = self.call(target_base, "GET", "/api/config", admin="target-pass")
+        self.assertEqual(status, 200)
+        status, _, _ = self.call(target_base, "GET", "/api/config", admin="source-pass")
+        self.assertEqual(status, 401)
+
+    def test_import_snapshots_overwritten_files(self):
+        source = self._dir()
+        self._seed_files(source)
+        source_base, _ = self._start(source)
+        _, exported = self._export(source_base)
+
+        target = self._dir()
+        self._seed_files(target)
+        target_base, _ = self._start(target)
+        # App startup annotates channel ids on disk, so capture the files
+        # that are actually live at import time.
+        old_config = (target / "router.json").read_text(encoding="utf-8")
+        old_keys = (target / "keys.json").read_text(encoding="utf-8")
+        status, _, body = self.call(
+            target_base, "POST", "/api/migration/import",
+            body={"data": exported["data"]}, admin="source-pass")
+        self.assertEqual(status, 200, body)
+        backup = (target / "router.json.migration.bak")
+        self.assertTrue(backup.is_file())
+        self.assertEqual(backup.read_text(encoding="utf-8"), old_config)
+        keys_backup = (target / "keys.json.migration.bak")
+        self.assertTrue(keys_backup.is_file())
+        self.assertEqual(keys_backup.read_text(encoding="utf-8"), old_keys)
+
+    def test_import_ignores_unrelated_zip_members(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("router.json", json.dumps(base_config(admin_key="source-pass")))
+            zf.writestr("keys.json", json.dumps({"keys": [
+                {"key": "sk-member-abc", "name": "bob", "created": 0, "enabled": True}]}))
+            # Path traversal and junk entries must never reach the config dir.
+            zf.writestr("../evil.txt", "nope")
+            zf.writestr("sub/../../deep.txt", "nope")
+        target = self._dir()
+        (target / "router.json").write_text(
+            json.dumps(base_config(admin_key="target-pass")), encoding="utf-8")
+        base, app = self._start(target)
+        status, _, body = self.call(
+            base, "POST", "/api/migration/import",
+            body={"data": base64.b64encode(buf.getvalue()).decode()},
+            admin="target-pass")
+        self.assertEqual(status, 200, body)
+        self.assertEqual([p.name for p in target.iterdir() if p.name.startswith("keys")],
+                         ["keys.json"])
 
 
 if __name__ == "__main__":

@@ -1,9 +1,11 @@
 """Local HTTP gateway: one compatible endpoint, automatic channel failover."""
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import hmac
+import io
 import json
 import os
 import random
@@ -13,6 +15,7 @@ import shutil
 import sys
 import threading
 import time
+import zipfile
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -4419,6 +4422,168 @@ class App:
         self._backup_config("restore")
         self.apply_config(raw)
         return {"ok": True, "tag": tag, "restored": source.name}
+
+    # ------------------------------------------------------------ migration
+    def migration_export_payload(self) -> dict:
+        """One zip with every file the gateway persists beside the config.
+
+        A config backup (or the masked config export) was never enough to
+        move a deployment: member keys, subscription credentials and usage
+        history live in their own files next to router.json. The bundle
+        carries them in plaintext — it is a migration artifact to copy to the
+        target machine, not something to email around. Import never lets the
+        bundled management password replace the local one (see
+        migration_import), so leaking it still cannot hijack a live console.
+        """
+        if not self.config_path or not self.config_path.is_file():
+            raise ValueError("未找到配置文件，无法导出迁移包")
+        files: list[Path] = [self.config_path]
+        for optional in (self.keys.path if self.keys else None,
+                         self.subscriptions_path,
+                         self.usage.path if self.usage else None):
+            if optional is not None and optional.is_file():
+                files.append(optional)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in files:
+                zf.write(path, arcname=path.name)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        return {
+            "filename": f"facet-migration-{stamp}.zip",
+            "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+            "contents": [{"name": p.name, "size": p.stat().st_size}
+                         for p in files],
+            "note": "迁移包含明文密钥（渠道、成员 Key），请妥善保管，不要外发",
+        }
+
+    def migration_import(self, payload) -> dict:
+        """Restore a bundle produced by migration_export_payload, hot.
+
+        Only the four known file names are extracted — a crafted zip member
+        can never write outside the config dir, and junk entries are ignored.
+        The config goes through the validated apply_config pipeline (a bad
+        bundle is rejected before anything is touched); every replaced file
+        is snapshotted as ``<name>.migration.bak`` first so the import is
+        itself revertible. The local admin_key always survives: the importing
+        operator would otherwise be locked out by the source machine's
+        management password.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("body 必须是对象")
+        data = str(payload.get("data") or "")
+        if not data:
+            raise ValueError("缺少迁移包数据 data")
+        try:
+            blob = base64.b64decode(data, validate=True)
+        except ValueError as exc:
+            raise ValueError(f"迁移包数据不是有效的 base64：{exc}")
+        members: dict[str, bytes] = {}
+        try:
+            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                for name in ("router.json", "keys.json",
+                             "subscriptions.json", "usage.json"):
+                    if name in zf.namelist():
+                        members[name] = zf.read(name)
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"迁移包不是有效的 zip 文件：{exc}")
+        if "router.json" not in members:
+            raise ValueError("迁移包缺少 router.json，不是有效的迁移包")
+        try:
+            raw = json.loads(members["router.json"].decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError(f"迁移包内的 router.json 无法解析：{exc}")
+        if not isinstance(raw, dict):
+            raise ValueError("迁移包内的 router.json 不是配置对象")
+
+        imported: list[str] = []
+        skipped: list[str] = []
+        warnings: list[str] = []
+
+        def snapshot(path: Path) -> None:
+            shutil.copyfile(path, path.with_name(path.name + ".migration.bak"))
+
+        def write_atomic(path: Path, blob_: bytes) -> None:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(blob_)
+            os.replace(tmp, path)
+
+        # ---- config: validated pipeline, local management password kept
+        if not self.config_path:
+            raise ValueError("未找到配置文件，无法导入迁移包")
+        if self.config_path.is_file():
+            self._backup_config("migration")
+        listen = dict(raw.get("listen") or {})
+        if self.config.listen.admin_key:
+            listen["admin_key"] = self.config.listen.admin_key
+            warnings.append("管理密码保持本机不变，迁移包内的密码未生效")
+        raw["listen"] = listen
+        self.apply_config(raw)
+        imported.append("router.json")
+
+        # ---- member keys
+        keys_blob = members.get("keys.json")
+        if keys_blob is not None and self.keys is not None:
+            try:
+                json.loads(keys_blob.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(f"迁移包内的 keys.json 无法解析：{exc}")
+            path = self.keys.path
+            if path.is_file():
+                snapshot(path)
+            write_atomic(path, keys_blob)
+            fresh = KeyStore(path)
+            with self.keys.lock:
+                self.keys.records = fresh.records
+            imported.append("keys.json")
+        elif keys_blob is not None:
+            skipped.append("keys.json")
+
+        # ---- subscription accounts
+        subs_blob = members.get("subscriptions.json")
+        if subs_blob is not None and self.subscriptions_path is not None:
+            try:
+                document = json.loads(subs_blob.decode("utf-8"))
+                records = subs.normalize_all(
+                    document.get("subscriptions")
+                    if isinstance(document, dict) else document)
+                settings = subs.normalize_settings(
+                    document.get("settings") if isinstance(document, dict) else None)
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(f"迁移包内的 subscriptions.json 无法采用：{exc}")
+            path = self.subscriptions_path
+            if path.is_file():
+                snapshot(path)
+            write_atomic(path, subs_blob)
+            self.subscriptions = records
+            self.subscription_settings = settings
+            self._migrate_subscription_channels(self.subscriptions)
+            self._refresh_billing_ranks()
+            imported.append("subscriptions.json")
+        elif subs_blob is not None:
+            skipped.append("subscriptions.json")
+
+        # ---- usage history
+        usage_blob = members.get("usage.json")
+        if usage_blob is not None and self.usage is not None:
+            try:
+                document = json.loads(usage_blob.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(f"迁移包内的 usage.json 无法解析：{exc}")
+            if not (isinstance(document, dict) and isinstance(document.get("days"), dict)):
+                raise ValueError("迁移包内的 usage.json 不是用量数据")
+            path = self.usage.path
+            if path.is_file():
+                snapshot(path)
+            write_atomic(path, usage_blob)
+            with self.usage.lock:
+                self.usage.data = document
+                self.usage.dirty = True
+            imported.append("usage.json")
+        elif usage_blob is not None:
+            skipped.append("usage.json")
+
+        return {"ok": True, "imported": imported, "skipped": skipped,
+                "warnings": warnings}
 
     def _apply_catalog_filter(self, candidates, decision) -> tuple[list, list]:
         """Soft validation of candidates against recorded upstream catalogs.

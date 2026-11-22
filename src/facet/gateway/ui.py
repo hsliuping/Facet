@@ -823,6 +823,32 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, result)
         return True
 
+    if path == "/api/migration/export" and method == "GET":
+        # Whole-machine migration bundle (config + keys + subscriptions +
+        # usage) as base64; the console turns it into a zip download.
+        try:
+            _json(h, 200, app.migration_export_payload())
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+        return True
+
+    if path == "/api/migration/import" and method == "POST":
+        try:
+            incoming = json.loads(raw) if raw else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        try:
+            result = app.migration_import(incoming)
+        except ValueError as exc:
+            _json(h, 400, {"error": {"message": str(exc)}})
+            return True
+        except OSError as exc:
+            _json(h, 500, {"error": {"message": f"cannot write config dir: {exc}"}})
+            return True
+        _json(h, 200, result)
+        return True
+
     if path.startswith("/api/channels/") and path.endswith("/reset") and method == "POST":
         name = unquote(path[len("/api/channels/"):-len("/reset")])
         if not name or "/" in name:

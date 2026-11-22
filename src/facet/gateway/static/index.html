@@ -580,6 +580,20 @@
           <div class="card settings-card">
             <div class="card-top">
               <div>
+                <h3>整机迁移</h3>
+                <p class="sub-note">把配置、成员密钥、订阅账号与用量数据打成单个迁移包，拷到新机器后在另一台网关的「导入迁移包」里一键恢复，改动立即生效。迁移包内含明文密钥，请妥善保管，不要外发。</p>
+              </div>
+              <div class="actions">
+                <button class="btn small" id="btn-migration-export">导出迁移包</button>
+                <button class="btn small ghost" id="btn-migration-import">导入迁移包</button>
+                <input type="file" id="migration-file" accept=".zip" hidden>
+              </div>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
                 <h3>维护历史</h3>
                 <p class="sub-note">历次自动运维的完整报告，保存在配置目录的 <code>maintenance.jsonl</code>，重启不丢失。点开一条可查看全部明细。</p>
               </div>
@@ -1086,7 +1100,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261118-2"></script>
+  <script src="/static/app.js?v=20261122-1"></script>
   <script src="/static/setup.js?v=20261118-1"></script>
 </body>
 </html>
