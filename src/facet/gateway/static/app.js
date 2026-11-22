@@ -2046,14 +2046,16 @@ function openAccountEditor(providerId, accountId) {
 function saveAccount(providerId, existing) {
   const f = $('account-form');
   const v = (n) => String(f.elements.namedItem(n)?.value ?? '').trim();
+  clearFieldErrors(f);
   const id = existing ? existing.id : v('acc-id');
-  if (!id) { toast('账号 id 不能为空', 'bad'); return; }
+  const idField = f.elements.namedItem('acc-id');
+  if (!id) return failField(idField, '账号 id 不能为空');
   if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(id)) {
-    toast('账号 id 需字母开头，仅含字母 / 数字 / 下划线 / 横线，≤64 字符', 'bad'); return;
+    return failField(idField, '账号 id 需字母开头，仅含字母 / 数字 / 下划线 / 横线，≤64 字符');
   }
   const accounts = ensureAccounts();
   if (!existing && accounts.some((a) => a && a.id === id)) {
-    toast(`账号 ${id} 已存在`, 'bad'); return;
+    return failField(idField, `账号 ${id} 已存在`);
   }
   const envs = providerCredEnvs(providerId);
   const prevCreds = (existing && existing.credentials) || {};
@@ -2065,7 +2067,7 @@ function saveAccount(providerId, existing) {
     else if (prevCreds[env]) creds[env] = prevCreds[env];
   });
   if (!Object.keys(creds).length && envs.length) {
-    toast('至少填写一项管理面凭据（AK/SK）', 'bad'); return;
+    return failField(f.querySelector('[data-acc-env]'), '至少填写一项管理面凭据（AK/SK）');
   }
   const entry = { id, provider: providerId, label: v('acc-label') || id };
   // Vendors without a management plane keep whatever credentials they had
@@ -2221,30 +2223,33 @@ function openVendorEditor(id) {
 
   $('vendor-form').onsubmit = async (e) => {
     e.preventDefault();
+    clearFieldErrors($('vendor-form'));
     const vendorId = (existing ? existing.id : $('f-vendor-id').value.trim()).toLowerCase();
     const name = $('f-vendor-name').value.trim();
-    if (!vendorId) return toast('厂家 id 必填', 'bad');
-    if (!/^[a-z0-9-]+$/.test(vendorId)) return toast('厂家 id 只能包含小写字母、数字和连字符', 'bad');
-    if (!name) return toast('厂家名称必填', 'bad');
+    if (!vendorId) return failField($('f-vendor-id'), '厂家 id 必填');
+    if (!/^[a-z0-9-]+$/.test(vendorId)) return failField($('f-vendor-id'), '厂家 id 只能包含小写字母、数字和连字符');
+    if (!name) return failField($('f-vendor-name'), '厂家名称必填');
     const modes = {};
     let bad = null;
+    let badField = null;
     list.querySelectorAll('.vendor-mode-fieldset').forEach((fs) => {
       if (bad) return;
       const idx = fs.dataset.index;
       const q = (suffix) => (fs.querySelector(`[name="${suffix}-${idx}"]`)?.value ?? '').trim();
       const key = fs.querySelector('[name="mode-key"]').value;
-      if (modes[key]) { bad = `模式 key 重复：${key}`; return; }
+      if (modes[key]) { bad = `模式 key 重复：${key}`; badField = fs.querySelector('[name="mode-key"]'); return; }
       const label = q('mode-label');
       const base = q('mode-base');
-      if (!label) { bad = `模式 ${key} 的显示名必填`; return; }
-      if (!base) { bad = `模式 ${key} 的 base_url 必填`; return; }
+      if (!label) { bad = `模式 ${key} 的显示名必填`; badField = fs.querySelector(`[name="mode-label-${idx}"]`); return; }
+      if (!base) { bad = `模式 ${key} 的 base_url 必填`; badField = fs.querySelector(`[name="mode-base-${idx}"]`); return; }
       const method = fs.querySelector('[name="mode-method"]').value;
       let docsUrl = q('mode-docs');
       let modelsUrl = q('mode-models');
-      if (method === 'docs' && !docsUrl) { bad = `模式 ${key} 选择了文档提取但未填文档 URL`; return; }
-      if (method === 'api' && !modelsUrl) { bad = `模式 ${key} 选择了接口拉取但未填模型接口 URL`; return; }
+      if (method === 'docs' && !docsUrl) { bad = `模式 ${key} 选择了文档提取但未填文档 URL`; badField = fs.querySelector(`[name="mode-docs-${idx}"]`); return; }
+      if (method === 'api' && !modelsUrl) { bad = `模式 ${key} 选择了接口拉取但未填模型接口 URL`; badField = fs.querySelector(`[name="mode-models-${idx}"]`); return; }
       if (method === 'manual' && (docsUrl || modelsUrl)) {
         bad = `模式 ${key} 选择了手动维护但仍填了 URL，请改选获取方式或清空 URL`;
+        badField = fs.querySelector('[name="mode-method"]');
         return;
       }
       if (method === 'manual') { docsUrl = ''; modelsUrl = ''; }
@@ -2258,7 +2263,7 @@ function openVendorEditor(id) {
         models: q('mode-model-list').split('\n').map((s) => s.trim()).filter(Boolean),
       };
     });
-    if (bad) return toast(bad, 'bad');
+    if (bad) return failField(badField, bad);
     if (!Object.keys(modes).length) return toast('厂家至少需要配置一个模式', 'bad');
     try {
       const result = await api('/api/providers', {
@@ -5833,17 +5838,55 @@ function openChannelEditor(index) {
   renderRatePresets();
 }
 
+// ---- 校验错误内联定位 ----
+// 表单校验失败不再只弹 toast（转瞬即逝也不知道改哪个框）：在出错的
+// .field 容器（额度包行则定位到该行）上加 .invalid、注入 .field-error
+// 文案并聚焦出错字段。提交入口先 clearFieldErrors 清掉上一轮错误。
+function clearFieldErrors(form) {
+  form.querySelectorAll('.invalid').forEach((el) => el.classList.remove('invalid'));
+  form.querySelectorAll('.field-error').forEach((el) => el.remove());
+}
+
+function showFieldError(fieldEl, msg) {
+  const host = fieldEl.closest('.field') || fieldEl.closest('.mq-row');
+  if (!host) { toast(msg, 'bad'); return; }
+  host.classList.add('invalid');
+  let note = host.querySelector('.field-error');
+  if (!note) {
+    note = document.createElement('p');
+    note.className = 'field-error';
+    host.appendChild(note);
+  }
+  note.textContent = msg;
+  fieldEl.focus();
+}
+
+// toast 之外同时把错误钉在字段旁边（提交入口型校验共用）。
+function failField(fieldEl, msg) {
+  toast(msg, 'bad');
+  showFieldError(fieldEl, msg);
+}
+
+// 校验保持 throw→catch(toast) 流程；FieldError 额外携带出错字段做内联定位。
+class FieldError extends Error {
+  constructor(fieldEl, msg) {
+    super(msg);
+    this.fieldEl = fieldEl;
+  }
+}
+
 function saveChannelEditor() {
   const f = $('editor-form');
   const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
+  clearFieldErrors(f);
   try {
     const name = val('name');
     const models = parseModels(val('models'));
-    if (!name) throw new Error('渠道名称不能为空');
-    if (!Object.keys(models).length) throw new Error('至少配置一条模型映射');
+    if (!name) throw new FieldError(f.elements.namedItem('name'), '渠道名称不能为空');
+    if (!Object.keys(models).length) throw new FieldError(f.elements.namedItem('models'), '至少配置一条模型映射');
     const clash = state.config.channels.some(
       (c, i) => c.name === name && i !== state.editing);
-    if (clash) throw new Error('渠道名称与已有渠道重复：' + name);
+    if (clash) throw new FieldError(f.elements.namedItem('name'), '渠道名称与已有渠道重复：' + name);
     const rate = {};
     ['rpm', 'rpd', 'tpm', 'tpd'].forEach((k) => { if (val(k)) rate[k] = Number(val(k)); });
     const tiers = {};
@@ -5857,15 +5900,15 @@ function saveChannelEditor() {
       const model = (row.querySelector('[data-mq-model]').value || '').trim();
       const rawTokens = (row.querySelector('[data-mq-tokens]').value || '').trim();
       const expires = (row.querySelector('[data-mq-expires]').value || '').trim();
-      if (!model) throw new Error('额度包缺少模型：请选择模型或移除该行');
-      if (!rawTokens) throw new Error(`额度包 ${model} 缺少面额（tokens）`);
+      if (!model) throw new FieldError(row.querySelector('[data-mq-model]'), '额度包缺少模型：请选择模型或移除该行');
+      if (!rawTokens) throw new FieldError(row.querySelector('[data-mq-tokens]'), `额度包 ${model} 缺少面额（tokens）`);
       const tokens = Math.round(Number(rawTokens));
-      if (!(tokens > 0)) throw new Error(`额度包 ${model} 的面额必须是正整数`);
-      if (packs[model]) throw new Error(`额度包重复登记了模型：${model}`);
+      if (!(tokens > 0)) throw new FieldError(row.querySelector('[data-mq-tokens]'), `额度包 ${model} 的面额必须是正整数`);
+      if (packs[model]) throw new FieldError(row.querySelector('[data-mq-model]'), `额度包重复登记了模型：${model}`);
       packs[model] = { tokens, period: 'total', ...(expires ? { expires } : {}) };
     });
     const provider = val('provider');
-    if (!provider) throw new Error('必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
+    if (!provider) throw new FieldError(f.elements.namedItem('provider'), '必须选择厂家：渠道对应厂家，没有厂家就没有渠道');
     // Channel-bound management credentials (channel = account): typed values
     // land on the channel's own creds; untouched fields round-trip the stored
     // masked/env value ("***" or env:REF) so the backend inherits instead of
@@ -5919,6 +5962,7 @@ function saveChannelEditor() {
     renderAll();
   } catch (err) {
     toast(err.message, 'bad');
+    if (err.fieldEl) showFieldError(err.fieldEl, err.message);
   }
 }
 
@@ -5946,14 +5990,15 @@ function openRouteModal() {
   $('route-form').onsubmit = (e) => {
     e.preventDefault();
     const f = $('route-form');
+    clearFieldErrors(f);
     const name = f.elements.namedItem('rname').value.trim();
     const protocol = f.elements.namedItem('rprotocol').value;
     const channel = f.elements.namedItem('rchannel').value;
     const picked = state.config.channels.find((c) => c.name === channel);
-    if (!name) return toast('链名称不能为空', 'bad');
-    if (!picked || picked.protocol !== protocol) return toast('渠道协议与链协议不一致', 'bad');
+    if (!name) return failField(f.elements.namedItem('rname'), '链名称不能为空');
+    if (!picked || picked.protocol !== protocol) return failField(f.elements.namedItem('rchannel'), '渠道协议与链协议不一致');
     if (state.config.routes.some((r) => r.name === name && r.protocol === protocol)) {
-      return toast('同名同协议的链已存在', 'bad');
+      return failField(f.elements.namedItem('rname'), '同名同协议的链已存在');
     }
     state.config.routes.push({ name, protocol, channels: [channel] });
     closeModal(true);

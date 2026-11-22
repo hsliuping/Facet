@@ -392,6 +392,13 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .mq-row input[type="number"] { flex: 1; min-width: 90px; }
 .mq-row input[type="date"] { width: 140px; flex: 0 0 auto; }
 .mq-row .btn.ghost { padding: 4px 9px; flex: 0 0 auto; }
+
+/* 校验错误内联定位：出错字段容器标红、注入错误文案并聚焦（额度包行
+   的错误定位到具体行，flex 换行让文案独占一行显示在行下方）。 */
+.field.invalid :is(input, select, textarea), .mq-row.invalid :is(input, select, textarea) { border-color: var(--bad); }
+.field-error { margin: 5px 0 0; color: var(--bad); font-size: 12px; }
+.mq-row.invalid { flex-wrap: wrap; }
+.mq-row .field-error { flex: 1 0 100%; }
 .mq-wrap { width: 100%; }
 .mq-wrap .mq-usage { margin: -2px 0 6px 8px; }
 .days-left { font-weight: 650; }

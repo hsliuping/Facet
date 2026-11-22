@@ -229,6 +229,29 @@ class ConsoleTests(unittest.TestCase):
         # 开关在筛选行里可读（复选框样式对齐筛选行）
         self.assertIn(".filter-row .check", css)
 
+    def test_validation_errors_point_at_the_offending_field(self):
+        """校验错误内联定位：出错字段红框 + .field-error 文案 + 聚焦，不只弹 toast。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+        # 助手三件套：清旧错误 / 注入新错误（.field 或额度包行宿主）/ 聚焦
+        self.assertIn("function clearFieldErrors(", js)
+        self.assertIn("function showFieldError(", js)
+        self.assertIn("closest('.field') || fieldEl.closest('.mq-row')", js)
+        self.assertIn("class FieldError extends Error", js)
+        # 渠道编辑器：额度包错误定位到具体行的输入框，不再笼统 toast
+        self.assertIn("new FieldError(row.querySelector('[data-mq-model]')", js)
+        self.assertIn("new FieldError(row.querySelector('[data-mq-tokens]')", js)
+        self.assertIn("if (err.fieldEl) showFieldError(err.fieldEl, err.message);", js)
+        # 路由链 / 厂家 / 账号表单同样内联定位
+        self.assertIn("failField(f.elements.namedItem('rname')", js)
+        self.assertIn("failField($('f-vendor-id')", js)
+        self.assertIn("badField = fs.querySelector('[name=\"mode-key\"]')", js)
+        self.assertIn("failField(f.querySelector('[data-acc-env]')", js)
+        # 样式：出错字段红框 + 错误文案红字
+        self.assertIn(".field.invalid", css)
+        self.assertIn(".field-error", css)
+
     def test_modal_editors_confirm_before_discarding_changes(self):
         """编辑弹窗装关闭守卫：有改动未保存时先确认，保存成功直接关闭。
 
