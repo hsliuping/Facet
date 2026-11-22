@@ -346,6 +346,16 @@ function cmpBy(sort, value) {
   };
 }
 
+// 筛选输入防抖：渠道/用量/对比等大列表每次按键全量重渲染，连续输入会
+// 卡；停顿 150ms 才渲染一次。「清除筛选」与 Escape 也走同一 input 事件。
+function debounce(fn, ms = 150) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
 function makeSortable(thCells, getSort, onSort) {
   thCells.forEach((th) => {
     const key = th.dataset.sortKey;
@@ -652,7 +662,7 @@ function renderChannels() {
   list.innerHTML = shown.length
     ? shown.map(([c, i]) => channelCard(c, i)).join('')
     : `<div class="card"><p class="hint">${state.config.channels.length
-        ? `没有匹配「${esc(kw)}」的渠道`
+        ? `没有匹配「${esc(kw)}」的渠道 <button type="button" class="btn small ghost" data-clear-filter="channel-filter">清除筛选</button>`
         : '还没有渠道，点击「新增渠道」开始。'}</p></div>`;
 }
 
@@ -2010,7 +2020,7 @@ function renderVendors() {
   const kw = (state.vendorFilter || '').trim().toLowerCase();
   const shown = kw ? vendors.filter((p) => vendorHaystack(p).includes(kw)) : vendors;
   if (!shown.length) {
-    el.innerHTML = `<div class="card"><p class="hint">没有匹配「${esc(kw)}」的厂家</p></div>`;
+    el.innerHTML = `<div class="card"><p class="hint">没有匹配「${esc(kw)}」的厂家 <button type="button" class="btn small ghost" data-clear-filter="vendor-filter">清除筛选</button></p></div>`;
     return;
   }
   el.innerHTML = shown.map((p) => {
@@ -2471,7 +2481,8 @@ function renderUsageModels(usage) {
     ? rows.filter((r) => (r.model + ' ' + r.channel).toLowerCase().includes(query))
     : rows;
   if (!filtered.length) {
-    body.innerHTML = '<tr><td colspan="7" class="sub-note">没有匹配的模型。</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="sub-note">没有匹配的模型。'
+      + ' <button type="button" class="btn small ghost" data-clear-filter="usage-model-search">清除筛选</button></td></tr>';
     return;
   }
   let sorted = filtered;
@@ -3460,7 +3471,8 @@ function renderRequests() {
     return true;
   });
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">没有符合筛选条件的请求。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">没有符合筛选条件的请求。'
+      + ' <button type="button" class="btn small ghost" data-clear-filter="requests-query">清除筛选</button></td></tr>';
     $('requests-note').textContent = `${data.note} · 共 ${data.entries.length} 条，筛选后 0 条 · ${(data.size / 1024).toFixed(1)} KB`;
     return;
   }
@@ -3649,10 +3661,11 @@ $('requests-range-filter').addEventListener('change', (e) => {
   state.requestFilter.range = e.target.value;
   renderRequests();
 });
-$('requests-query').addEventListener('input', (e) => {
-  state.requestFilter.query = e.target.value.trim();
+const applyRequestQuery = debounce((value) => {
+  state.requestFilter.query = value.trim();
   renderRequests();
 });
+$('requests-query').addEventListener('input', (e) => applyRequestQuery(e.target.value));
 // 自动刷新开关：关掉后 5s 轮询不再拉取请求日志（适合正在细看/复制时）。
 // localStorage 记忆，重新打开立即拉一轮。
 const REQUESTS_AUTOREFRESH_KEY = 'facet_requests_autorefresh';
@@ -4267,7 +4280,8 @@ function renderFreePage(free) {
     return;
   }
   if (!visible.length) {
-    box.innerHTML = '<tr><td colspan="7" class="sub-note">没有符合筛选条件的模型。</td></tr>';
+    box.innerHTML = '<tr><td colspan="7" class="sub-note">没有符合筛选条件的模型。'
+      + ' <button type="button" class="btn small ghost" data-clear-filter="free-filter">清除筛选</button></td></tr>';
     return;
   }
 
@@ -4341,10 +4355,10 @@ $('free-filters').addEventListener('click', (e) => {
   renderFreePage((state.maintenance && state.maintenance.free_models) || {});
 });
 
-$('free-filter').addEventListener('input', (e) => {
+$('free-filter').addEventListener('input', debounce((e) => {
   state.freeQuery = e.target.value;
   renderFreePage((state.maintenance && state.maintenance.free_models) || {});
-});
+}));
 
 $('free-alerts').addEventListener('click', (e) => {
   if (!e.target.closest('.banner-align')) return;
@@ -5160,6 +5174,7 @@ function renderCatalogList(models) {
     <div id="catalog-items">${models.map((m) =>
       `<label class="pick"><input type="checkbox" value="${esc(m)}" ${precheck(m) ? 'checked' : ''}><span><strong>${esc(m)}</strong>${planModels.has(m) ? ' <span class="tag plan">套餐</span>' : ''}</span></label>`
     ).join('')}</div>
+    <p class="hint" id="catalog-empty" hidden>没有匹配的模型 <button type="button" class="btn small ghost" data-clear-filter="catalog-filter">清除筛选</button></p>
     <div class="test-row"><button type="button" class="btn small" id="catalog-apply">把勾选写入模型映射</button><span class="hint" id="catalog-count"></span></div>`;
   const boxes = () => Array.from(list.querySelectorAll('#catalog-items input[type="checkbox"]'));
   const visible = () => boxes().filter((b) => b.parentElement.style.display !== 'none');
@@ -5167,12 +5182,17 @@ function renderCatalogList(models) {
     $('catalog-count').textContent =
       `已勾选 ${boxes().filter((b) => b.checked).length} / ${models.length} 个`;
   };
-  $('catalog-filter').addEventListener('input', () => {
+  $('catalog-filter').addEventListener('input', debounce(() => {
     const kw = $('catalog-filter').value.trim().toLowerCase();
+    let shown = 0;
     boxes().forEach((b) => {
-      b.parentElement.style.display = (!kw || b.value.toLowerCase().includes(kw)) ? '' : 'none';
+      const hit = (!kw || b.value.toLowerCase().includes(kw));
+      b.parentElement.style.display = hit ? '' : 'none';
+      if (hit) shown++;
     });
-  });
+    const empty = $('catalog-empty');
+    if (empty) empty.hidden = shown > 0;
+  }));
   list.querySelectorAll('[data-cat]').forEach((b) => {
     b.onclick = () => {
       if (b.dataset.cat === 'none') boxes().forEach((x) => { x.checked = false; });
@@ -6174,15 +6194,17 @@ function bindEvents() {
     (key, dir) => { state.sort.compare = { key, dir }; renderCompare(); });
 
   $('btn-add-channel').onclick = () => openChannelEditor(-1);
-  $('channel-filter').addEventListener('input', (e) => {
-    state.channelFilter = e.target.value;
+  const applyChannelFilter = debounce((value) => {
+    state.channelFilter = value;
     renderChannels();
     renderSummary();
   });
-  $('vendor-filter').addEventListener('input', (e) => {
-    state.vendorFilter = e.target.value;
+  $('channel-filter').addEventListener('input', (e) => applyChannelFilter(e.target.value));
+  const applyVendorFilter = debounce((value) => {
+    state.vendorFilter = value;
     renderVendors();
   });
+  $('vendor-filter').addEventListener('input', (e) => applyVendorFilter(e.target.value));
   $('btn-add-route').onclick = openRouteModal;
   document.querySelectorAll('[data-preset]').forEach((btn) => {
     btn.onclick = () => applyRoutePreset(btn.dataset.preset);
@@ -6209,6 +6231,29 @@ function bindEvents() {
     toast('已导出（不含密钥明文）', 'warn');
   };
   $('modal-close').onclick = () => closeModal();
+  // 筛选空态自救：无结果行里的「清除筛选」一键还原输入并回到搜索框；
+  // 搜索框内按 Escape 先清关键词（拦住关窗/关编辑器），为空时放行，
+  // 第二次 Esc 才关闭弹窗。本监听必须注册在下方弹窗 Escape 处理之前。
+  const FILTER_INPUT_IDS = ['channel-filter', 'vendor-filter', 'free-filter',
+    'requests-query', 'usage-model-search', 'compare-search', 'catalog-filter'];
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-clear-filter]');
+    if (!btn) return;
+    const input = $(btn.dataset.clearFilter);
+    if (!input) return;
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !FILTER_INPUT_IDS.includes(e.target.id)) return;
+    if (!e.target.value) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    e.target.value = '';
+    e.target.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
   // Truly modal: clicking the backdrop or the page behind does nothing and
   // Tab cycles inside the dialog, so a stray click cannot discard a draft.
   // Only the close button, a save/cancel action or Escape dismisses it.
@@ -6358,10 +6403,10 @@ function bindEvents() {
 
   $('btn-refresh-usage').onclick = () => loadUsage().catch((e) => toast(e.message, 'bad'));
 
-  $('usage-model-search').oninput = (e) => {
+  $('usage-model-search').oninput = debounce((e) => {
     state.usageFilter = e.target.value;
     if (state.usage) renderUsageModels(state.usage);
-  };
+  });
   $('btn-export-usage-models').onclick = exportUsageModels;
   $('btn-export-members').onclick = exportMemberUsage;
 
@@ -6543,7 +6588,7 @@ function bindCompareControls() {
   $('compare-vendor').addEventListener('change', rerender);
   $('compare-tier').addEventListener('change', rerender);
   $('compare-only-scores').addEventListener('change', rerender);
-  $('compare-search').addEventListener('input', rerender);
+  $('compare-search').addEventListener('input', debounce(rerender));
   $('btn-compare-close').onclick = () => {
     compareState.openId = '';
     $('compare-detail-card').style.display = 'none';
@@ -6600,7 +6645,8 @@ function renderCompare() {
   $('compare-note').textContent = `共 ${rows.length} 个模型；色阶只在同口径组（榜单 + 设定 + harness，且样本 ≥ 3）内计算，聚合站数据不参与着色`;
 
   if (!rows.length) {
-    $('compare-body').innerHTML = '<tr><td colspan="6" class="hint">没有匹配的模型</td></tr>';
+    $('compare-body').innerHTML = '<tr><td colspan="6" class="hint">没有匹配的模型'
+      + ' <button type="button" class="btn small ghost" data-clear-filter="compare-search">清除筛选</button></td></tr>';
   } else {
     let sorted = rows;
     const sort = state.sort.compare;

@@ -424,6 +424,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
    toast 更持久，失败原因不会一闪而过。 */
 .load-error { color: var(--bad); }
 .load-error .btn { margin-left: 9px; }
+/* 空态行内按钮（清除筛选）与文案留出间距 */
+.hint .btn, .sub-note .btn { margin-left: 8px; }
 
 /* 关键表格列排序：可排序列指针 + 双向箭头提示；当前排序列显示单侧箭头，
    与 aria-sort 同步（读屏器读取同一属性）。 */
