@@ -342,6 +342,30 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn(
             "sparkline(tokens, '#8a6cff', { labels: usageLabels, ariaLabel: '每日 Tokens 折线图' })", js)
 
+    def test_destructive_actions_require_typing_name(self):
+        """高危操作输入名称确认：确认按钮在输入匹配前禁用；可重建操作维持单点确认。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 输入匹配才可确认的对话框：按钮初始 disabled，输入与 expected 一致才解锁
+        self.assertIn(
+            "function askConfirmTyped({ title, message, expected, confirmText = '确认' })", js)
+        self.assertIn('data-ask="ok" disabled', js)
+        self.assertIn("okBtn.disabled = input.value.trim() !== expected", js)
+        # 四个高危操作接入：删除渠道输渠道名、删除链输链名、恢复备份输「恢复」、导入迁移包输「导入」
+        self.assertIn("await askConfirmTyped({ title: '删除渠道',", js)
+        self.assertIn("expected: name", js)
+        self.assertIn("await askConfirmTyped({ title: '删除链',", js)
+        self.assertIn("expected: route.name", js)
+        self.assertIn("await askConfirmTyped({ title: '恢复备份',", js)
+        self.assertIn("expected: '恢复'", js)
+        self.assertIn("await askConfirmTyped({ title: '导入迁移包',", js)
+        self.assertIn("expected: '导入'", js)
+        # 订阅/账号/恢复内置/重置评分等可重建操作维持单点确认，不升级
+        self.assertIn("askConfirm('删除订阅'", js)
+        self.assertIn("askConfirm('删除账号'", js)
+        self.assertIn("askConfirm('恢复内置'", js)
+        self.assertIn("askConfirm('重置全部评分'", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

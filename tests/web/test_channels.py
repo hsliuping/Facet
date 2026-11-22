@@ -99,11 +99,12 @@ def test_b3_delete_channel_removes_from_list_and_config(config_path, console, ap
 
     # 点击临时渠道的删除按钮（索引 2，即第三条）
     console.el('button[data-action="delete"][data-index="2"]').click()
-    # 确认 ask 浮层出现（无输入框）
+    # 确认 ask 浮层出现（删除渠道要求输入渠道名才能确认）
     ask = console.wait_ask()
-    # 确认删除并等待自动保存 /api/config 响应
+    expect(ask.locator('[data-ask="ok"]')).to_be_disabled()
+    # 输入渠道名解锁确认按钮，并等待自动保存 /api/config 响应
     with console.expect_api("/api/config"):
-        console.ask_confirm()
+        console.ask_answer("temp-delete")
     # 等待列表行数回到 2
     console.wait_cards("#channel-list", 2)
 

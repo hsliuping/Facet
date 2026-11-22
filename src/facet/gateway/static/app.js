@@ -139,6 +139,53 @@ async function askConfirm(title, message) {
   return (await askText({ title, message, withInput: false, confirmText: '确认' })) !== null;
 }
 
+// 高危且不可重建的操作（删除渠道/链、恢复备份、导入迁移包）要求输入名称或
+// 口令才能确认：确认按钮在输入与 expected 完全一致前保持禁用，
+// 误点「确认」的代价从一次手滑升级为一次有意识的输入。
+function askConfirmTyped({ title, message, expected, confirmText = '确认' }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop ask-backdrop';
+    wrap.innerHTML = `<div class="modal ask-modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>${esc(title)}</h2></div>
+      <p class="hint ask-message">${esc(message)}</p>
+      <p class="hint">请输入 <strong>${esc(expected)}</strong> 以确认：</p>
+      <input class="ask-input" type="text" autocomplete="off" spellcheck="false" placeholder="${esc(expected)}">
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" data-ask="cancel">取消</button>
+        <button type="button" class="btn primary" data-ask="ok" disabled>${esc(confirmText)}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('.ask-input');
+    const okBtn = wrap.querySelector('[data-ask="ok"]');
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      resolve(ok);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); finish(false);
+      } else if (e.key === 'Enter' && e.target === input) {
+        e.preventDefault(); e.stopPropagation();
+        if (!okBtn.disabled) finish(true);
+      }
+    };
+    // Capture phase: stop the page-wide Escape handler from closing an open editor.
+    document.addEventListener('keydown', onKey, true);
+    wrap.querySelector('[data-ask="cancel"]').onclick = () => finish(false);
+    okBtn.onclick = () => finish(true);
+    input.addEventListener('input', () => {
+      okBtn.disabled = input.value.trim() !== expected;
+    });
+    input.focus();
+  });
+}
+
 // Concurrent 401s during boot must share one dialog instead of stacking overlays.
 const authPrompts = { api: null, gateway: null };
 
@@ -4685,8 +4732,9 @@ $('backup-body').addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-restore-tag]');
   if (!b) return;
   const tag = b.dataset.restoreTag;
-  const ok = await askConfirm('恢复备份',
-    `用备份「${tag}」覆盖当前配置？当前配置会先存为「恢复前快照」，随时可再换回来。`);
+  const ok = await askConfirmTyped({ title: '恢复备份',
+    message: `用备份「${tag}」覆盖当前配置？当前配置会先存为「恢复前快照」，随时可再换回来。`,
+    expected: '恢复' });
   if (!ok) return;
   b.disabled = true;
   try {
@@ -4731,9 +4779,10 @@ async function importMigration(file) {
     reader.readAsDataURL(file);
   });
   const data = dataUrl.split(',', 2)[1] || '';
-  const ok = await askConfirm('导入迁移包',
-    '将用迁移包覆盖本机的配置、成员密钥、订阅账号与用量数据（覆盖前自动备份为 *.migration.bak）。'
-    + '本机的管理密码保持不变；改动立即生效，无需重启。继续吗？');
+  const ok = await askConfirmTyped({ title: '导入迁移包',
+    message: '将用迁移包覆盖本机的配置、成员密钥、订阅账号与用量数据（覆盖前自动备份为 *.migration.bak）。'
+      + '本机的管理密码保持不变；改动立即生效，无需重启。',
+    expected: '导入' });
   if (!ok) return;
   try {
     const result = await api('/api/migration/import', { method: 'POST', body: { data } });
@@ -6392,7 +6441,9 @@ function bindEvents() {
     }
     if (action === 'delete') {
       const name = state.config.channels[i].name;
-      if (!(await askConfirm('删除渠道', `删除渠道「${name}」？它也会从所有路由链中移除。`))) return;
+      if (!(await askConfirmTyped({ title: '删除渠道',
+        message: `删除渠道「${name}」？它也会从所有路由链中移除。`,
+        expected: name }))) return;
       state.config.channels.splice(i, 1);
       removeFromRoutes(name);
       markDirty(); renderAll();
@@ -6409,7 +6460,8 @@ function bindEvents() {
     const route = state.config.routes[ri];
     const action = b.dataset.action;
     if (action === 'delete-route') {
-      if (!(await askConfirm('删除链', `删除链「${route.name}」？`))) return;
+      if (!(await askConfirmTyped({ title: '删除链',
+        message: `删除链「${route.name}」？`, expected: route.name }))) return;
       state.config.routes.splice(ri, 1);
     } else if (action === 'move-up' && pos > 0) {
       [route.channels[pos - 1], route.channels[pos]] = [route.channels[pos], route.channels[pos - 1]];
