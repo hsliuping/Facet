@@ -4355,6 +4355,20 @@ $('migration-file').addEventListener('change', async (e) => {
   if (file) await importMigration(file).catch((err) => toast(err.message, 'bad'));
 });
 
+// Task-based user manual (docs/user-guide.md) in an overlay, reachable from
+// every page via the header button. Served through the whitelisted
+// /api/guide?doc=user-guide route, so nothing outside docs/ can be read.
+$('btn-user-guide').onclick = async () => {
+  try {
+    const res = await api('/api/guide?doc=user-guide');
+    openModal('用户手册', res && res.available
+      ? `<div class="guide-body">${renderMarkdown(res.markdown)}</div>`
+      : '<p class="hint">用户手册不可用：docs/user-guide.md 未随安装打包。</p>');
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+};
+
 async function loadMaintLogs() {
   state.maintlog = await api('/api/maintenance/logs');
   renderMaintLogs();

@@ -234,6 +234,21 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("3.1 NVIDIA NIM——免费层", guide["markdown"])
         self.assertIn("5.4 Z.AI（智谱海外）", guide["markdown"])
 
+    def test_guide_serves_user_guide_and_blocks_unknown_docs(self):
+        # ?doc=user-guide serves the task-based user manual (docs/user-guide.md);
+        # any other name falls back to the default manual, never the filesystem.
+        base = self.start()
+        status, _, body = self.call(base, "GET", "/api/guide?doc=user-guide")
+        self.assertEqual(status, 200)
+        guide = json.loads(body)
+        self.assertTrue(guide["available"])
+        self.assertIn("第一次部署", guide["markdown"])
+        self.assertIn("整机迁移", guide["markdown"])
+        status, _, body = self.call(base, "GET", "/api/guide?doc=../../secrets")
+        guide = json.loads(body)
+        self.assertTrue(guide["available"])
+        self.assertIn("3.1 NVIDIA NIM——免费层", guide["markdown"])
+
     def test_guide_image_route_confines_to_docs(self):
         base = self.start()
         # A real file that exists in the repo but outside docs/ must be off-limits.

@@ -191,12 +191,15 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, benchmarks_mod.payload())
         return True
     if path == "/api/guide" and method == "GET":
-        # ?doc=integration serves the agent integration guide; the default is
-        # the api-key manual. Names are whitelisted (no path traversal).
+        # ?doc=integration serves the agent integration guide and ?doc=user-guide
+        # the task-based user manual; the default is the api-key manual. Names
+        # are whitelisted (no path traversal).
         query = urlsplit(h.path or "").query
         doc = dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("doc", "")
         if doc == "integration":
             target = GUIDE_PATH.parent / "agent-integration.md"
+        elif doc == "user-guide":
+            target = GUIDE_PATH.parent / "user-guide.md"
         else:
             target = GUIDE_PATH
         if target.is_file():
