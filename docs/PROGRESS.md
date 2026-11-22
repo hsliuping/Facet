@@ -84,9 +84,9 @@
 ## 接下来
 
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
-- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示；NVIDIA 已补 4 张）；界面与手册不符处回改手册
+- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：21 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信、4.13 SCNet 三节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
 - [ ] **superagent 对接（往后排）**：2026-11-15 讨论降级——产品转向轻量团队版后受众是小团队管理员，agent 舰队叙事不再是产品需求；P0 后半（Router / Worker 分别指定模型）、P1（Worker 档位）、P2（运维 policy）暂缓，DSH 当模型底座的能力已被实测覆盖无需再验；仅保留 P3（吸收三条设计原则到维护层，见 [行动清单](planrouter-superagent-integration.md)），随维护层迭代渐进
-- [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过再打 v1.0.0 tag（版本号已定为 1.0）
+- [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过后把版本从 1.0.0b1 升为 1.0.0 再打 v1.0.0 tag；当前版本定位 **Beta**（1.0.0b1，正式试用未通过前不自称稳定版，test_package 的 prerelease 门测试随发布提交一并放开）
 
 ---
 
@@ -113,6 +113,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-22 | 版本定位改为 **Beta（1.0.0b1）**：正式试用未通过前不自称稳定版——pyproject version 1.0.0→1.0.0b1（PEP 440 pre-release）、classifier 降回 `Development Status :: 4 - Beta`，facet 与 facet.gateway 的 `__version__` 同步；test_package 版本断言允许 pre-release 后缀，并新增 prerelease 门测试（试用通过前版本必须保持 pre-release，发正式版时随发布提交一并删除）；发布链无需改动——release 校验 tag 与 pyproject 一致（打 v1.0.0b1 即匹配）、build_windows 正则解析版本、exe 名随版本（facet-manual 安装包名改为 x.y.z 占位不再硬编码） |
 | 2026-11-22 | 控制台体验批次（`8570d24..ec1ce76`，7 笔）：数字列右对齐 + 等宽数字；用量报表明细的渠道名可点击跳「渠道配置」并预填筛选（`data-goto-channel` 深链）；请求日志筛选结果导出 CSV（`filterRequestEntries`/`exportRequests`，15 列 UTF-8 BOM）；运行状态 KPI 恢复全量统计（修复摘要随筛选泄漏）；API Keys 表加搜索框（`keysFilter`）；配置体检——`/api/state` 渠道新增 `placeholder_key`，字面 `***` 不再算已配置，渠道页顶部横幅（`renderConfigHealth`）点破链内重复模型声明（链序靠前者优先生效）、`env:` 引用变量未解析、`***` 占位密钥三类静默问题；全局快捷键——非输入场景按 `/` 聚焦当前页筛选框（8 页映射，输入焦点/编辑器弹窗/问答框/修饰键不抢）；CI actions 升级 `checkout@v5` / `setup-python@v6`（Node 24 运行时，注解区 deprecation 警告清零），validate + install-smoke 双 run 验证绿。全量回归 1296 passed 1 xfailed |
 | 2026-11-22 | 自维护与手册批（`d3ea094`、`43611cf`、`2432795`）：整机迁移包——导出 router/keys/subscriptions/usage 四文件 zip（base64 前端转下载，密钥明文随包、UI 警示勿外发），导入只认四个白名单文件名（其余成员一律忽略，路径穿越无法写出配置目录），走 apply_config 校验管线热重载，覆盖前先存 `migration.bak`，本机管理密码永远保留防自锁；任务化用户手册 `docs/user-guide.md`（部署/接工具/省钱/运维/排障/迁移六任务主线互相链接），`/api/guide` 白名单扩 user-guide、非法值回退默认，控制台页头「用户手册」按钮弹窗渲染 Markdown；用量报表与成员用量导出 CSV（UTF-8 BOM，尊重当前筛选，顺手修 `.range-switch` 误捕同组无 data-range 按钮） |
 | 2026-11-22 | 安全与请求日志批（`a8cd654`、`4d86d31`、`230434e`、`907a8cf`）：非环回监听时接入信息页警告条提示局域网 HTTP 明文嗅探风险与缓解路径（回环默认隐藏）；成员 Key 一键轮换——`KeyStore.rotate` 就地换发保留名字/配额/启用状态、旧 Key 立即失效、`POST /api/keys/rotate`、弹窗一次性展示新密钥（`sk-pr-` 前缀），顺手修 `.banner` 的 flex 压过 `[hidden]`（补 `.banner[hidden]{display:none}`）与 memberRange 未初始化显示「最近 undefined 天」；请求日志按渠道跨归档筛选——`/api/requests` 新增 `?channel=` 透传 `audit.recent`（跨 5 归档最多 500 条），渠道下拉跟随取回记录重建、「加载更多」200→400→500、默认取回 50→200，尝试时间线补流式/粘性/含图像/模型未验证标记；表格首载 markLoading——空表先渲染「加载中…」占位（已有内容不重绘防闪烁），switchPage 加载失败改 toast 可见（8 处静默吞错收敛，后台轮询保持静默），loading-note 脉冲动画含 prefers-reduced-motion 降级 |
