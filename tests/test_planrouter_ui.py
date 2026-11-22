@@ -94,6 +94,20 @@ class ConsoleTests(unittest.TestCase):
         except HTTPError as exc:
             return exc.code, exc.headers, exc.read()
 
+    def test_access_page_warns_on_non_loopback_listen(self):
+        """监听地址为非环回时，接入信息页必须给出 HTTP 明文传输的安全提示。"""
+        from facet.gateway.ui import STATIC_DIR
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 接入信息页顶部的常驻警告条容器（默认隐藏，非环回时显示）
+        self.assertIn('id="access-security-note"', html)
+        # 前端从 /api/state 的 listen.host 判断回环地址
+        self.assertIn("loopbackHosts", js)
+        self.assertIn("renderAccessSecurity", js)
+        # 提示文案要说明明文风险并给出可行建议
+        self.assertIn("明文", html)
+        self.assertIn("反向代理", html)
+
     def test_page_and_static_assets(self):
         base = self.start()
         status, _, body = self.call(base, "GET", "/")

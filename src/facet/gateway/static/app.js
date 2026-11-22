@@ -924,6 +924,23 @@ async function loadAccessPage() {
   renderAccessPage();
 }
 
+// Loopback listen addresses: anything else means the gateway answers on a
+// LAN/public interface, where plain HTTP exposes keys and conversations.
+const loopbackHosts = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
+
+function renderAccessSecurity() {
+  const note = $('access-security-note');
+  if (!note) return;
+  const listen = (state.snapshot || {}).listen || {};
+  const host = String(listen.host || '').trim();
+  const exposed = !!host && !loopbackHosts.has(host);
+  note.hidden = !exposed;
+  if (exposed) {
+    const hostEl = $('access-security-host');
+    if (hostEl) hostEl.textContent = `${host}:${listen.port || ''}`;
+  }
+}
+
 function renderAccessPage() {
   const origin = location.origin;
   const keys = accessState.keys || {};
@@ -973,6 +990,7 @@ function renderAccessPage() {
 
   fillAccessExampleModels();
   renderAccessExample();
+  renderAccessSecurity();
 }
 
 function fillAccessExampleModels() {

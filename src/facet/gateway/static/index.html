@@ -817,6 +817,16 @@
             </div>
           </div>
 
+          <div class="banner" id="access-security-note" hidden>
+            <span class="banner-title">局域网明文传输</span>
+            <span class="banner-items">
+              当前网关监听在 <code id="access-security-host"></code>（非本机回环地址）：
+              API Key 与对话内容以 HTTP 明文在网络上传输，同一网段内的设备可以嗅探到全部内容。
+              建议：仅在受信任的内网使用；需要跨网访问时前置反向代理（Nginx / Caddy）提供 HTTPS；
+              并定期到「API Keys」页暂停旧 Key、签发新 Key 以轮换凭据。
+            </span>
+          </div>
+
           <div class="card settings-card">
             <div class="card-top">
               <div>
