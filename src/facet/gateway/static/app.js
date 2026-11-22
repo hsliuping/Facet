@@ -6480,6 +6480,24 @@ function bindEvents() {
     e.target.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
+  // 全局快捷键：非输入场景按 / 聚焦当前页的筛选框。焦点已在输入框/
+  // 可编辑区、编辑器弹窗或问答框打开时不抢，避免打断打字与表单；
+  // 带修饰键（Ctrl/Win/Alt）的组合留给浏览器与输入法。
+  const PAGE_FILTER_IDS = { channels: 'channel-filter', free: 'free-filter',
+    vendors: 'vendor-filter', usage: 'usage-model-search', requests: 'requests-query',
+    compare: 'compare-search', models: 'catalog-filter', apikeys: 'keys-search' };
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+      || t.tagName === 'SELECT' || t.isContentEditable);
+    if (typing || !$('modal').hidden || document.querySelector('.ask-backdrop')) return;
+    const input = $(PAGE_FILTER_IDS[state.tab] || '');
+    if (!input) return;
+    e.preventDefault();
+    input.focus();
+  });
+
   // Truly modal: clicking the backdrop or the page behind does nothing and
   // Tab cycles inside the dialog, so a stray click cannot discard a draft.
   // Only the close button, a save/cancel action or Escape dismisses it.

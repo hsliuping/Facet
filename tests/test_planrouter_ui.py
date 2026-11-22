@@ -523,6 +523,27 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("placeholder_key", js)
         self.assertIn("占位符", js)
 
+    def test_slash_shortcut_focuses_current_page_filter(self):
+        """全局快捷键：非输入场景按 / 聚焦当前页的筛选框。
+
+        只在没在打字、没有弹窗打开时生效；每个带筛选输入的页面都要映射。
+        """
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn("PAGE_FILTER_IDS", js)
+        self.assertIn("e.key !== '/'", js)
+        # 焦点已在输入框/可编辑区时不抢（含中文输入法安全：修饰键忽略）
+        self.assertIn("isContentEditable", js)
+        self.assertIn("e.ctrlKey || e.metaKey || e.altKey", js)
+        # 弹窗（编辑器与问答框）打开时不抢焦点
+        self.assertIn("ask-backdrop", js)
+        # 八个筛选入口逐一映射：渠道/免费模型/厂家/用量/请求日志/对比/模型目录/Keys
+        for mapping in ("channels: 'channel-filter'", "free: 'free-filter'",
+                        "vendors: 'vendor-filter'", "usage: 'usage-model-search'",
+                        "requests: 'requests-query'", "compare: 'compare-search'",
+                        "models: 'catalog-filter'", "apikeys: 'keys-search'"):
+            self.assertIn(mapping, js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
