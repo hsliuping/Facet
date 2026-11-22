@@ -175,12 +175,31 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("markLoading('usage-models-body'", js)
         self.assertIn("markLoading('api-keys-body'", js)
         self.assertIn("markLoading('member-usage-body'", js)
-        # 用户进入页面触发的加载失败必须可见（toast）；后台轮询失败不 toast
-        # 刷屏，交给 markConn 如实翻徽章（断连诚实化见其专属测试）
-        self.assertIn("loadRequests().catch((e) => toast(e.message, 'bad'))", js)
+        # 用户进入页面触发的加载失败必须落进表格行（错误文案 + 重试按钮），
+        # 不能只 toast 一闪而过把表格留在"加载中"；后台轮询失败不 toast 刷屏，
+        # 交给 markConn 如实翻徽章（断连诚实化见其专属测试）
         self.assertIn("loadChannelUsage().catch((e) => toast(e.message, 'bad'))", js)
-        self.assertIn("loadMaintLogs().catch((e) => toast(e.message, 'bad'))", js)
         self.assertIn("loadRequests({ silent: true }).then(() => markConn(true), () => markConn(false))", js)
+        # 统一的错误行辅助：错误写进对应表格，附「重试」
+        self.assertIn("function markLoadError", js)
+        self.assertIn("加载失败：", js)
+        self.assertIn("重试", js)
+        self.assertIn("load-error", js)
+        self.assertIn("load-error", css)
+        # 各表格页进入时的加载失败改写进对应表格行（此前只 toast，表格停在加载中）
+        for target in ("requests-body", "usage-models-body", "api-keys-body",
+                       "member-usage-body", "member-cost-body", "report-body",
+                       "compare-body", "sub-body", "free-body", "recommend-body",
+                       "changes-body", "freealign-body", "backup-body",
+                       "maintlog-body", "notify-history"):
+            self.assertIn(f"markLoadError('{target}'", js)
+        # 只会加载一次的表格也要有"加载中"首态（requests/usage-models/
+        # api-keys/member-usage 已有，此处补齐其余各表）
+        for target in ("sub-body", "tasks-body", "recommend-body", "changes-body",
+                       "freealign-body", "backup-body", "maintlog-body",
+                       "report-body", "compare-body", "member-cost-body",
+                       "notify-history", "vendor-list"):
+            self.assertIn(f"markLoading('{target}'", js)
 
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""

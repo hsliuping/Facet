@@ -290,10 +290,44 @@ async function loadChannelUsage() {
 // 首次进入页面时表格是空的：先放一行"加载中"，避免接口慢或失败时被
 // "还没有数据"的空态误导。已有内容的表格（切筛选、后台轮询）不重绘，
 // 防止每次刷新都闪一下。
-function markLoading(tbodyId, colspan) {
-  const tbody = $(tbodyId);
-  if (!tbody || tbody.children.length) return;
-  tbody.innerHTML = `<tr><td colspan="${colspan}" class="sub-note loading-note">加载中…</td></tr>`;
+function markLoading(elId, colspan) {
+  const el = $(elId);
+  if (!el || el.children.length) return;
+  if (el.tagName === 'TBODY') {
+    el.innerHTML = `<tr><td colspan="${colspan}" class="sub-note loading-note">加载中…</td></tr>`;
+  } else {
+    el.innerHTML = '<p class="sub-note loading-note">加载中…</p>';
+  }
+}
+
+// 加载失败的三态：错误写进对应的表格行/容器里，不再只 toast 一闪而过把
+// 表格留在"加载中"。retryFn 是重新加载的函数，错误行末尾附「重试」按钮；
+// 表格列数从 thead 自动推导，无需逐表维护 colspan。
+function markLoadError(elId, err, retryFn) {
+  const el = $(elId);
+  if (!el) return;
+  const isRow = el.tagName === 'TBODY';
+  const cols = isRow && el.closest('table')
+    ? el.closest('table').querySelectorAll('thead th').length : 0;
+  const msg = esc((err && err.message) || String(err || '未知错误'));
+  const retryBtn = retryFn
+    ? '<button type="button" class="btn small ghost" data-retry-load>重试</button>' : '';
+  const render = (loading) => {
+    const body = loading
+      ? '加载中…'
+      : `加载失败：${msg}${retryBtn}`;
+    el.innerHTML = isRow
+      ? `<tr><td colspan="${cols || 1}" class="sub-note ${loading ? 'loading-note' : 'load-error'}">${body}</td></tr>`
+      : `<p class="sub-note ${loading ? 'loading-note' : 'load-error'}">${body}</p>`;
+  };
+  render(false);
+  if (!retryFn) return;
+  const btn = el.querySelector('[data-retry-load]');
+  if (btn) btn.onclick = () => {
+    btn.disabled = true;
+    render(true);
+    retryFn().catch((e2) => markLoadError(elId, e2, retryFn));
+  };
 }
 
 // ---- 连接状态诚实化 ----
@@ -795,6 +829,7 @@ function addMonthsISO(iso, months, fromToday) {
 }
 
 async function loadSubscriptions() {
+  markLoading('sub-body', 12);
   state.subs = await api('/api/subscriptions');
   renderSubscriptions();
 }
@@ -802,6 +837,7 @@ async function loadSubscriptions() {
 // Vendor registry for the channel editor: load once, tolerate absence so
 // a console served by an older backend still works.
 async function loadProviders() {
+  markLoading('vendor-list');
   try {
     state.providers = (await api('/api/providers')).providers || [];
   } catch (_) {
@@ -913,9 +949,10 @@ function switchPage(name) {
     p.classList.toggle('active', p.id === 'panel-' + name));
   $('page-title').textContent = PAGE_TITLES[name] || name;
   // Each page loads its own data on entry, so opening the console stays cheap.
+  // 表格页的加载失败写进对应表格（markLoadError，可重试）；无表格的页面
+  // 仍用 toast。后台轮询仍保持静默。
   if (name === 'dashboard') loadDashboard({ force: true }).catch((e) => toast(e.message, 'bad'));
-  if (name === 'free') loadFreeModels().catch((e) => toast(e.message, 'bad'));
-  // 用户进入页面触发的加载失败必须可见（toast）；后台轮询仍保持静默。
+  if (name === 'free') loadFreeModels().catch((e) => markLoadError('free-body', e, () => loadFreeModels()));
   if (name === 'channels') loadChannelUsage().catch((e) => toast(e.message, 'bad'));
   if (name === 'models') {
     renderModels();
@@ -925,19 +962,21 @@ function switchPage(name) {
   if (name === 'status') loadState().catch((e) => toast(e.message, 'bad'));
   if (name === 'maintenance') {
     loadMaintenance().catch((e) => toast(e.message, 'bad'));
-    loadMaintLogs().catch((e) => toast(e.message, 'bad'));
-    loadFreeAlignLogs().catch((e) => toast(e.message, 'bad'));
-    loadBackups().catch((e) => toast(e.message, 'bad'));
+    loadMaintLogs().catch((e) => markLoadError('maintlog-body', e, () => loadMaintLogs()));
+    loadFreeAlignLogs().catch((e) => markLoadError('freealign-body', e, () => loadFreeAlignLogs()));
+    loadBackups().catch((e) => markLoadError('backup-body', e, () => loadBackups()));
   }
   if (name === 'usage') {
-    loadUsage().catch((e) => toast(e.message, 'bad'));
-    loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
+    loadUsage().catch((e) => markLoadError('usage-models-body', e, () => loadUsage()));
+    loadReport($('report-month').value)
+      .catch((e) => markLoadError('report-body', e, () => loadReport($('report-month').value)));
   }
-  if (name === 'compare') loadCompare().catch((e) => toast(e.message, 'bad'));
-  if (name === 'requests') loadRequests().catch((e) => toast(e.message, 'bad'));
+  if (name === 'compare') loadCompare().catch((e) => markLoadError('compare-body', e, () => loadCompare()));
+  if (name === 'requests') loadRequests().catch((e) => markLoadError('requests-body', e, () => loadRequests()));
   if (name === 'members') {
-    loadMembers().catch((e) => toast(e.message, 'bad'));
-    loadMemberCost($('member-cost-month').value).catch((e) => toast(e.message, 'bad'));
+    loadMembers().catch((e) => markLoadError('member-usage-body', e, () => loadMembers()));
+    loadMemberCost($('member-cost-month').value)
+      .catch((e) => markLoadError('member-cost-body', e, () => loadMemberCost($('member-cost-month').value)));
   }
   if (name === 'quickstart') {
     const open = $('btn-open-wizard');
@@ -945,11 +984,12 @@ function switchPage(name) {
     renderWizard('welcome').catch(() => {});
   }
   if (name === 'access') loadAccessPage().catch((e) => toast(e.message, 'bad'));
-  if (name === 'apikeys') loadApiKeys().catch((e) => toast(e.message, 'bad'));
+  if (name === 'apikeys') loadApiKeys().catch((e) => markLoadError('api-keys-body', e, () => loadApiKeys()));
   if (name === 'subscriptions') {
-    loadNotifications().catch((e) => toast(e.message, 'bad'));
-    loadReport($('report-month').value).catch((e) => toast(e.message, 'bad'));
-    loadSubscriptions().catch((e) => toast(e.message, 'bad'));
+    loadNotifications().catch((e) => markLoadError('notify-history', e, () => loadNotifications()));
+    loadReport($('report-month').value)
+      .catch((e) => markLoadError('report-body', e, () => loadReport($('report-month').value)));
+    loadSubscriptions().catch((e) => markLoadError('sub-body', e, () => loadSubscriptions()));
   }
   if (name === 'vendors') {
     loadProviders().then(renderVendors).catch((e) => toast(e.message, 'bad'));
@@ -2404,6 +2444,7 @@ function renderUsageModels(usage) {
 }
 
 async function loadNotifications() {
+  markLoading('notify-history');
   state.notify = await api('/api/notifications');
   renderNotifications();
 }
@@ -2427,6 +2468,7 @@ async function loadMembers(range) {
 // members by their share of the channel's usage (see build_member_costs).
 async function loadMemberCost(month) {
   const q = month ? '/' + encodeURIComponent(month) : '';
+  markLoading('member-cost-body', 5);
   renderMemberCost(await api('/api/report/members' + q));
 }
 
@@ -3560,17 +3602,19 @@ $('requests-body').addEventListener('click', (e) => {
 async function loadMaintenance() {
   state.maintenance = await api('/api/maintenance');
   renderMaintenance();
-  await loadTasks().catch(() => {});
-  await loadRecommendations().catch(() => {});
-  await loadChanges().catch(() => {});
+  await loadTasks().catch((e) => markLoadError('tasks-body', e, () => loadTasks()));
+  await loadRecommendations().catch((e) => markLoadError('recommend-body', e, () => loadRecommendations()));
+  await loadChanges().catch((e) => markLoadError('changes-body', e, () => loadChanges()));
 }
 
 async function loadTasks() {
+  markLoading('tasks-body', 6);
   state.tasks = await api('/api/tasks');
   renderTasks();
 }
 
 async function loadRecommendations() {
+  markLoading('recommend-body', 8);
   state.recommendations = await api('/api/recommend?purpose=agent&limit=20');
   renderRecommendations();
 }
@@ -3689,6 +3733,7 @@ const CHANGE_KINDS = {
 const CHANGE_ORIGINS = { provider: '厂家套餐', channel: '渠道目录', subscription: '套餐文档' };
 
 async function loadChanges() {
+  markLoading('changes-body');
   state.changes = await api('/api/changes');
   renderChanges();
 }
@@ -4412,6 +4457,7 @@ $('btn-reset-all-scores').onclick = async () => {
 };
 
 async function loadFreeAlignLogs() {
+  markLoading('freealign-body');
   state.freealignLogs = await api('/api/freealign/logs');
   renderFreeAlignLogs();
 }
@@ -4481,6 +4527,7 @@ $('btn-refresh-freealign').onclick = () => Promise.all([loadMaintenance(), loadF
   .catch((e) => toast(e.message, 'bad'));
 
 async function loadBackups() {
+  markLoading('backup-body');
   state.backups = await api('/api/backups');
   renderBackups();
 }
@@ -4594,6 +4641,7 @@ $('btn-user-guide').onclick = async () => {
 };
 
 async function loadMaintLogs() {
+  markLoading('maintlog-body');
   state.maintlog = await api('/api/maintenance/logs');
   renderMaintLogs();
 }
@@ -4730,6 +4778,7 @@ $('btn-admin-key-save').onclick = async () => {
 };
 
 async function loadReport(month) {
+  markLoading('report-body', 6);
   state.report = await api(month ? `/api/report/${encodeURIComponent(month)}` : '/api/report');
   renderReport();
 }
@@ -6397,6 +6446,7 @@ function compareBenchLabel(s) {
 
 async function loadCompare(force) {
   if (force || !compareState.data) {
+    markLoading('compare-body', 6);
     compareState.data = await api('/api/models/compare');
   }
   bindCompareControls();

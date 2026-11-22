@@ -410,6 +410,11 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 @keyframes loading-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .loading-note { animation: none; } }
 
+/* 加载失败落在表格行/容器里（markLoadError），红字 + 可点「重试」，比
+   toast 更持久，失败原因不会一闪而过。 */
+.load-error { color: var(--bad); }
+.load-error .btn { margin-left: 9px; }
+
 .chart-card {
   background: linear-gradient(160deg, var(--panel), #0f1721);
   border: 1px solid var(--border); border-radius: var(--radius);
