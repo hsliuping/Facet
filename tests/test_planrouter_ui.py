@@ -452,6 +452,22 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn(".dist-row[data-goto-tab]", css)
         self.assertIn("a[data-goto-tab]", css)
 
+    def test_request_log_export_csv(self):
+        """请求日志支持导出 CSV：当前已取回且筛选后的记录，复用 downloadCsv。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # 筛选逻辑抽成共享函数，渲染与导出同一套条件
+        self.assertIn("function filterRequestEntries(entries)", js)
+        self.assertIn("const entries = filterRequestEntries(data.entries);", js)
+        # 结果标签提升为模块级常量，表格与导出共用
+        self.assertIn("const REQUEST_STATUS_LABELS = {", js)
+        # 导出函数 + 按钮绑定 + 页面头部按钮
+        self.assertIn("function exportRequests()", js)
+        self.assertIn("facet-requests-${todayStamp()}.csv", js)
+        self.assertIn("$('btn-export-requests').onclick = exportRequests;", js)
+        self.assertIn('id="btn-export-requests"', html)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR

@@ -2971,6 +2971,30 @@ function exportMemberUsage() {
   toast(`已导出 ${rows.length} 行成员用量`);
 }
 
+// 请求日志导出：导出当前已取回（上限 500 条）且按筛选条件过滤后的记录。
+function exportRequests() {
+  const entries = (state.requests && state.requests.entries) || [];
+  if (!entries.length) { toast('暂无请求记录可导出', 'warn'); return; }
+  const filtered = filterRequestEntries(entries);
+  if (!filtered.length) { toast('当前筛选条件下没有可导出的记录', 'warn'); return; }
+  const header = ['时间', '模型', '调度模式', 'API 形态', '调度原因', '渠道', '线上模型',
+    '计费形态', '结果', 'HTTP 状态', '尝试次数', '耗时(ms)', 'Tokens', '缓存 Tokens', '输入 Tokens'];
+  const body = filtered.map((e) => {
+    const at = logTime(e.ts);
+    return [
+      at.date ? `${at.date} ${at.time}` : at.time,
+      e.model || '', e.mode || '', e.api || '', reasonText(e.reason),
+      e.channel || '', e.wire_model || '',
+      BILLING_LABELS[e.billing] || e.billing || '',
+      REQUEST_STATUS_LABELS[e.status] || e.status || '',
+      e.http_status ?? '', e.attempt ?? 0, e.ms ?? 0, e.tokens ?? 0,
+      e.cached_tokens ?? '', e.input_tokens ?? '',
+    ];
+  });
+  downloadCsv(`facet-requests-${todayStamp()}.csv`, header, body);
+  toast(`已导出 ${filtered.length} 条请求记录`);
+}
+
 function renderNotifications() {
   const data = state.notify;
   if (!data) return;
@@ -3563,17 +3587,18 @@ function renderChannelFilter(entries) {
     + names.map((n) => `<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`).join('');
 }
 
-function renderRequests() {
-  const data = state.requests;
-  const tbody = $('requests-body');
-  renderChannelFilter((data && data.entries) || []);
-  if (!data || !data.entries || !data.entries.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
-    $('requests-note').textContent = (data && data.note) || '请求审计未启用';
-    return;
-  }
+// 请求结果的人话标签：表格与 CSV 导出共用。
+const REQUEST_STATUS_LABELS = {
+  ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
+  no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
+  cooldown: '额度冷却',
+};
+
+// 请求日志的窗口内筛选（status/range/query；channel 已由后端跨归档筛选）。
+// 渲染与 CSV 导出共用同一套条件。
+function filterRequestEntries(entries) {
   const f = state.requestFilter;
-  const entries = data.entries.filter((e) => {
+  return entries.filter((e) => {
     if (f.status && e.status !== f.status) return false;
     if (f.range !== 'all') {
       const ts = new Date(e.ts).getTime();
@@ -3587,6 +3612,19 @@ function renderRequests() {
     }
     return true;
   });
+}
+
+function renderRequests() {
+  const data = state.requests;
+  const tbody = $('requests-body');
+  renderChannelFilter((data && data.entries) || []);
+  if (!data || !data.entries || !data.entries.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
+    $('requests-note').textContent = (data && data.note) || '请求审计未启用';
+    return;
+  }
+  const f = state.requestFilter;
+  const entries = filterRequestEntries(data.entries);
   if (!entries.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="sub-note">没有符合筛选条件的请求。'
       + ' <button type="button" class="btn small ghost" data-clear-filter="requests-query">清除筛选</button></td></tr>';
@@ -3594,11 +3632,7 @@ function renderRequests() {
     return;
   }
   $('requests-note').textContent = `${data.note} · 共 ${data.entries.length} 条，筛选后 ${entries.length} 条 · ${(data.size / 1024).toFixed(1)} KB · 点击行查看详情`;
-  const labels = {
-    ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
-    no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
-    cooldown: '额度冷却',
-  };
+  const labels = REQUEST_STATUS_LABELS;
   tbody.innerHTML = entries.map((e, i) => {
     const cls = e.status === 'ok' || e.status === 'local' ? 'active'
       : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
@@ -3698,11 +3732,7 @@ function openRequestDetail(rid, idx) {
   attempts = attempts.slice().sort((a, b) => (a.attempt ?? 0) - (b.attempt ?? 0));
   const last = attempts[attempts.length - 1];
   const at = logTime(last.ts);
-  const labels = {
-    ok: '成功', upstream_error: '上游错误', network_error: '网络错误',
-    no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
-    cooldown: '额度冷却',
-  };
+  const labels = REQUEST_STATUS_LABELS;
   // 审计里的布尔标记此前只入库不展示；明细里补出来，排障时一眼
   // 看出这次尝试是流式、被粘性会话固定渠道、带图像或模型名未验证。
   const flagLabels = { stream: '流式', sticky: '粘性', vision: '含图像', model_unverified: '模型未验证' };
@@ -3759,6 +3789,7 @@ async function exportDiagnostics() {
 
 $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));
 $('btn-export-diagnostics').onclick = exportDiagnostics;
+$('btn-export-requests').onclick = exportRequests;
 $('requests-status-filter').addEventListener('change', (e) => {
   state.requestFilter.status = e.target.value;
   rememberSelection('facet_requests_filter', state.requestFilter);

@@ -1062,6 +1062,7 @@
               <p>最近请求与转发的完整审计。只记录选路元数据，不含 prompt、密钥与模型输出。点击任意一行可查看该次请求的完整尝试时间线与排障建议。</p>
             </div>
             <div class="actions">
+              <button class="btn ghost" id="btn-export-requests" title="把当前已取回并筛选后的请求记录导出为 CSV 文件（审计归档最多 500 条）">导出 CSV</button>
               <button class="btn ghost" id="btn-export-diagnostics" title="导出脱敏诊断包：含掩码后的配置、渠道状态与最近请求记录，可安全附在问题反馈里">导出诊断包</button>
               <button class="btn ghost" id="btn-more-requests" title="向后端多取 200 条历史（审计归档最多回溯 500 条）">加载更多</button>
               <button class="btn ghost" id="btn-refresh-requests">刷新</button>
@@ -1125,7 +1126,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts" aria-live="polite"></div>
-  <script src="/static/app.js?v=20261122-20"></script>
+  <script src="/static/app.js?v=20261122-21"></script>
   <script src="/static/setup.js?v=20261118-2"></script>
 </body>
 </html>
