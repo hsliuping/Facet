@@ -281,16 +281,31 @@ function readDraft(key) {
   try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
 }
 
-// Shared by every copy button on the page.
+// Shared by every copy button on the page. navigator.clipboard only exists
+// in secure contexts (https / localhost); plain-http LAN access (the
+// non-loopback scenario the console itself warns about) falls back to a
+// hidden textarea + execCommand so copying still works.
 function copyText(value) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(value).then(
       () => toast('已复制到剪贴板'),
-      () => toast('复制失败，请手动选中复制', 'warn'),
+      () => copyViaExecCommand(value),
     );
   } else {
-    toast('当前环境不支持自动复制，请手动选中复制', 'warn');
+    copyViaExecCommand(value);
   }
+}
+
+// Fallback for non-secure contexts: select into a hidden textarea, then
+// remove it so no DOM garbage is left behind.
+function copyViaExecCommand(value) {
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); toast('已复制到剪贴板'); }
+  catch (_) { toast('复制失败，请手动选中复制', 'warn'); }
+  ta.remove();
 }
 
 // The channel config persists on its own after every edit; there is no

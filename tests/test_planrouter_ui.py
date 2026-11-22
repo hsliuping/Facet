@@ -405,6 +405,18 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("saveSettings(true, e.currentTarget)", js)
         self.assertIn("async function saveSettings(withTest, submitBtn)", js)
 
+    def test_copy_button_falls_back_on_plain_http(self):
+        """非安全上下文（局域网 http://IP）复制降级 execCommand，不再永远失败。"""
+        from facet.gateway.ui import STATIC_DIR
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function copyViaExecCommand(value)", js)
+        self.assertIn("document.execCommand('copy')", js)
+        # copyText 两条路径都落到降级：clipboard API 缺失、或 writeText 被拒绝
+        self.assertIn("() => copyViaExecCommand(value),", js)
+        self.assertIn("  copyViaExecCommand(value);", js)
+        # 降级实现必须移除临时 textarea，不留 DOM 垃圾
+        self.assertIn("ta.remove();", js)
+
     def test_connection_badge_is_honest_about_disconnects(self):
         """断连后徽章必须说实话：轮询失败翻成「已断开」，恢复后提示并撤销横幅。"""
         from facet.gateway.ui import STATIC_DIR
