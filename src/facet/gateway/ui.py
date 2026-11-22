@@ -125,7 +125,11 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             limit = int(parts[3]) if len(parts) > 3 and parts[3] else 50
         except ValueError:
             limit = 50
-        _json(h, 200, app.request_log_payload(limit))
+        # ?channel= 让控制台跨归档回溯某个渠道的失败历史（audit.recent
+        # 原生支持该过滤），空值表示不过滤。
+        query = dict(p.split("=", 1) for p in urlsplit(h.path or "").query.split("&") if "=" in p)
+        channel = unquote(query.get("channel", "")).strip() or None
+        _json(h, 200, app.request_log_payload(limit, channel=channel))
         return True
 
     if path == "/api/diagnostics" and method == "GET":

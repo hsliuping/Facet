@@ -60,7 +60,10 @@ const state = {
   backups: null,
   dashUsage: null,
   channelUsage: null,
-  requestFilter: { status: '', query: '', range: 'all' },
+  // 请求日志：channel 由后端跨归档筛选，其余条件在已取回的窗口内过滤。
+  // requestsLimit 是「加载更多」逐级抬高的取回条数（上限 500，与后端一致）。
+  requestFilter: { status: '', query: '', range: 'all', channel: '' },
+  requestsLimit: 200,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -3211,7 +3214,9 @@ $('brand-list').addEventListener('click', (e) => {
 });
 
 async function loadRequests() {
-  state.requests = await api('/api/requests/50');
+  const channel = state.requestFilter.channel;
+  const qs = channel ? `?channel=${encodeURIComponent(channel)}` : '';
+  state.requests = await api(`/api/requests/${state.requestsLimit}${qs}`);
   renderRequests();
   refreshModelInsights().catch(() => {});
 }
@@ -3230,9 +3235,21 @@ function logTime(ts) {
   };
 }
 
+// 渠道下拉跟随取回的记录重建；当前筛选值即使本轮没有记录也保留，
+// 让用户改筛选时不被静默重置。
+function renderChannelFilter(entries) {
+  const sel = $('requests-channel-filter');
+  const current = state.requestFilter.channel;
+  const names = [...new Set(entries.map((e) => e.channel).filter(Boolean))].sort();
+  if (current && !names.includes(current)) names.unshift(current);
+  sel.innerHTML = '<option value="">全部渠道</option>'
+    + names.map((n) => `<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`).join('');
+}
+
 function renderRequests() {
   const data = state.requests;
   const tbody = $('requests-body');
+  renderChannelFilter((data && data.entries) || []);
   if (!data || !data.entries || !data.entries.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="sub-note">还没有请求记录，发起一次调用后会显示每次转发的结果。</td></tr>';
     $('requests-note').textContent = (data && data.note) || '请求审计未启用';
@@ -3368,13 +3385,20 @@ function openRequestDetail(rid, idx) {
     no_candidate: '无可用渠道', rejected: '模型被拒绝', local: '本地估算',
     cooldown: '额度冷却',
   };
+  // 审计里的布尔标记此前只入库不展示；明细里补出来，排障时一眼
+  // 看出这次尝试是流式、被粘性会话固定渠道、带图像或模型名未验证。
+  const flagLabels = { stream: '流式', sticky: '粘性', vision: '含图像', model_unverified: '模型未验证' };
+  const flagTags = (e) => Object.entries(flagLabels)
+    .filter(([k]) => e[k])
+    .map(([, label]) => ` <span class="tag">${label}</span>`)
+    .join('');
   const timeline = attempts.map((e) => {
     const t = logTime(e.ts);
     const cls = e.status === 'ok' || e.status === 'local' ? 'active'
       : (e.status === 'upstream_error' || e.status === 'network_error' || e.status === 'rejected') ? 'expired' : 'unknown';
     return `<li>
       <div><strong>第 ${(Number(e.attempt ?? 0)) + 1} 次</strong> · ${esc(t.time)}${t.date ? ` <span class="sub-note">${esc(t.date)}</span>` : ''}</div>
-      <div class="sub-note">${esc(e.channel || '—')}${e.billing && BILLING_LABELS[e.billing] ? `（${BILLING_LABELS[e.billing]}）` : ''} · ${esc(e.wire_model || '')} · <span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span>${e.http_status ? ` HTTP ${esc(e.http_status)}` : ''} · ${esc(e.ms ?? 0)} ms${e.cooldown_seconds ? ` · 冷却 ${fmtCooldown(e.cooldown_seconds)}` : ''}</div>
+      <div class="sub-note">${esc(e.channel || '—')}${e.billing && BILLING_LABELS[e.billing] ? `（${BILLING_LABELS[e.billing]}）` : ''} · ${esc(e.wire_model || '')} · <span class="tag ${cls}">${esc(labels[e.status] || e.status || '—')}</span>${flagTags(e)}${e.http_status ? ` HTTP ${esc(e.http_status)}` : ''} · ${esc(e.ms ?? 0)} ms${e.cooldown_seconds ? ` · 冷却 ${fmtCooldown(e.cooldown_seconds)}` : ''}</div>
     </li>`;
   }).join('');
   const diag = translateRequest(last);
@@ -3421,6 +3445,17 @@ $('requests-status-filter').addEventListener('change', (e) => {
   state.requestFilter.status = e.target.value;
   renderRequests();
 });
+// 渠道筛选交给后端（audit 归档里的历史也能回溯），所以这里重新拉取。
+$('requests-channel-filter').addEventListener('change', (e) => {
+  state.requestFilter.channel = e.target.value;
+  loadRequests().catch((err) => toast(err.message, 'bad'));
+});
+// 「加载更多」抬高取回窗口（200 → 400 → 500，与后端上限一致）。
+$('btn-more-requests').onclick = () => {
+  state.requestsLimit = Math.min(state.requestsLimit + 200, 500);
+  $('btn-more-requests').disabled = state.requestsLimit >= 500;
+  loadRequests().catch((err) => toast(err.message, 'bad'));
+};
 $('requests-range-filter').addEventListener('change', (e) => {
   state.requestFilter.range = e.target.value;
   renderRequests();

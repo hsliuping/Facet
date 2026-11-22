@@ -15,6 +15,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from facet.gateway import subscriptions as subs
+from facet.gateway.audit import RequestLog
 from facet.gateway.core import load_config
 from facet.gateway.keys import KeyStore
 from facet.gateway.server import App, Handler
@@ -111,6 +112,52 @@ class ConsoleTests(unittest.TestCase):
         # .banner 的 display:flex 会压过 UA 的 [hidden] 样式，必须显式覆盖，
         # 否则回环地址下警告条仍然渲染（冒烟发现过的回归）
         self.assertIn(".banner[hidden]", css)
+
+    def test_request_log_supports_channel_filter_and_limit(self):
+        """请求日志 API 支持按渠道筛选（跨归档回溯）并与 limit 参数组合。"""
+        base = self.start()
+        app = self.httpd.app  # type: ignore[union-attr]
+        audit_path = self.path.parent / "audit-channel-test.jsonl"
+        self.addCleanup(lambda: audit_path.unlink(missing_ok=True))
+        app.audit = RequestLog(audit_path)
+        app.audit.record(channel="plan-a", status="ok", attempt=0)
+        app.audit.record(channel="plan-b", status="ok", attempt=0)
+        app.audit.record(channel="plan-a", status="network_error", attempt=1)
+
+        _, _, body = self.call(base, "GET", "/api/requests")
+        payload = json.loads(body)
+        self.assertEqual(len(payload["entries"]), 3)
+
+        _, _, body = self.call(base, "GET", "/api/requests?channel=plan-a")
+        payload = json.loads(body)
+        self.assertEqual(len(payload["entries"]), 2)
+        self.assertTrue(all(e["channel"] == "plan-a" for e in payload["entries"]))
+
+        _, _, body = self.call(base, "GET", "/api/requests/2")
+        self.assertEqual(len(json.loads(body)["entries"]), 2)
+
+        # 渠道筛选与路径 limit 参数可组合
+        _, _, body = self.call(base, "GET", "/api/requests/1?channel=plan-a")
+        payload = json.loads(body)
+        self.assertEqual(len(payload["entries"]), 1)
+        self.assertEqual(payload["entries"][0]["channel"], "plan-a")
+
+    def test_request_log_page_offers_channel_filter_and_history(self):
+        """请求日志页提供渠道筛选、更多历史入口与尝试明细的附加标记。"""
+        from facet.gateway.ui import STATIC_DIR
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        # 渠道筛选下拉 + 加载更多按钮
+        self.assertIn('id="requests-channel-filter"', html)
+        self.assertIn('id="btn-more-requests"', html)
+        # 前端把渠道筛选透传给后端（跨归档），并维护可调的加载数量
+        self.assertIn("requestsLimit", js)
+        self.assertIn("requests-channel-filter", js)
+        self.assertIn("btn-more-requests", js)
+        # 尝试时间线补渲染审计里已有但未展示的字段标记
+        self.assertIn("模型未验证", js)
+        self.assertIn("含图像", js)
+        self.assertIn("粘性", js)
 
     def test_page_and_static_assets(self):
         base = self.start()

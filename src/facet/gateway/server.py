@@ -1286,12 +1286,12 @@ class App:
         if self.audit:
             self.audit.record(**fields)
 
-    def request_log_payload(self, limit: int = 50) -> dict:
+    def request_log_payload(self, limit: int = 50, channel: str | None = None) -> dict:
         if not self.audit:
             return {"entries": [], "path": None, "size": 0,
                     "note": "请求审计未启用（启动时未指定 --audit-file）"}
         return {
-            "entries": self.audit.recent(limit),
+            "entries": self.audit.recent(limit, channel=channel),
             "path": str(self.audit.path),
             "size": self.audit.size(),
             "note": "仅记录选路元数据，不含 prompt、密钥与模型输出",

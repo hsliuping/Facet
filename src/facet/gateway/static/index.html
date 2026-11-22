@@ -1058,11 +1058,15 @@
             </div>
             <div class="actions">
               <button class="btn ghost" id="btn-export-diagnostics" title="导出脱敏诊断包：含掩码后的配置、渠道状态与最近请求记录，可安全附在问题反馈里">导出诊断包</button>
+              <button class="btn ghost" id="btn-more-requests" title="向后端多取 200 条历史（审计归档最多回溯 500 条）">加载更多</button>
               <button class="btn ghost" id="btn-refresh-requests">刷新</button>
             </div>
           </div>
           <div class="free-toolbar">
             <div class="filter-row">
+              <select id="requests-channel-filter" class="filter-input" aria-label="按渠道筛选">
+                <option value="">全部渠道</option>
+              </select>
               <select id="requests-status-filter" class="filter-input" aria-label="按结果筛选">
                 <option value="">全部结果</option>
                 <option value="ok">成功</option>
@@ -1113,7 +1117,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts"></div>
-  <script src="/static/app.js?v=20261122-2"></script>
+  <script src="/static/app.js?v=20261122-3"></script>
   <script src="/static/setup.js?v=20261118-1"></script>
 </body>
 </html>
