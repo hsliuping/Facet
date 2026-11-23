@@ -68,8 +68,7 @@ Facet 把它们收敛成三件事：
 | **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.0b1-py3-none-any.whl`，再 `pip install` 该文件 |
 | **源码** | 开发者 | `git clone https://github.com/hsliuping/Facet.git && cd Facet && pip install -e .` |
 
-> ⚠️ **不要用 `pip install facet-models` 安装 1.x**：PyPI 上的该包停留在
-> 2026.9.1 旧版（网关功能上线之前），与本版本无关；1.x 发布 PyPI 后此处同步更新。
+> ⚠️ `pip install facet-models` 默认解析到 PyPI 上的 **2026.9.1** 旧版（日期版号在 PEP 440 排序里更高），若要安装本地版本 **1.0.0b1**，请使用 `pip install facet-models==1.0.0b1`，或从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.0b1-py3-none-any.whl` 进行安装。
 
 ### macOS 一键安装（launchd 服务）
 
