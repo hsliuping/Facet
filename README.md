@@ -54,22 +54,22 @@ Facet 把它们收敛成三件事：
 
 ## 安装
 
-需要 Python 3.10+（Windows 安装包与 macOS/Linux 一键脚本会自动处理，无需自备）。网关与事实表都是纯标准库实现，**零第三方依赖**。
+需要 Python 3.10+（Windows 安装包与 macOS/Linux 一键脚本会自动处理，无需自备）。
+网关与事实表都是纯标准库实现，**零第三方依赖**。
 
-- Windows：Inno Setup 安装包（含托盘、开机自启），本地 `python tools/build_windows.py` 构建；
-- macOS / Linux：见下方一键安装小节（缺失或过旧时自动装 Python：Homebrew/系统包管理器 → 独立 CPython 兜底）；
-- 容器：见下文[「Docker 部署」](#docker-部署)。
+当前版本 **1.0.0b1（Beta）**：功能完整、可日常试用；正式版 1.0.0 待试用验证
+通过后发布。按需选一种渠道：
 
-```bash
-pip install facet-models     # PyPI 包名沿用历史名，装出来的命令是 facet
-```
+| 渠道 | 适合谁 | 怎么装 |
+|---|---|---|
+| **Windows 安装包** | Windows 桌面用户 | 到 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `Facet-Setup-1.0.0b1.exe` 双击安装，自带托盘与开机自启，数据在 `%LOCALAPPDATA%\Facet`。安装包未代码签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
+| **Docker 镜像** | 服务器 / NAS | `docker pull hsliup/facet:beta`（锁定版本用 `:1.0.0b1`），详见 [Docker 部署](#docker-部署) |
+| **macOS / Linux 一键脚本** | 有 shell 环境 | 克隆仓库后执行 `tools/macos/install.sh` 或 `tools/linux/install.sh`，自动装 Python 并注册常驻服务 |
+| **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.0b1-py3-none-any.whl`，再 `pip install` 该文件 |
+| **源码** | 开发者 | `git clone https://github.com/hsliuping/Facet.git && cd Facet && pip install -e .` |
 
-或从源码安装：
-
-```bash
-git clone https://github.com/hsliuping/Facet && cd Facet
-pip install -e .
-```
+> ⚠️ **不要用 `pip install facet-models` 安装 1.x**：PyPI 上的该包停留在
+> 2026.9.1 旧版（网关功能上线之前），与本版本无关；1.x 发布 PyPI 后此处同步更新。
 
 ### macOS 一键安装（launchd 服务）
 
@@ -97,8 +97,6 @@ tools/linux/install.sh            # venv 装到 ~/.facet，注册开机自启 + 
 - 配置与数据在 `~/.facet/`（`data/router.json`）；日志：`journalctl -u facet -f`。
 - 自定义：`FACET_HOME`/`FACET_PORT`/`FACET_HOST` 环境变量，或 `install.sh <路径|git URL>` 换安装源。
 - 卸载：`tools/linux/uninstall.sh`（数据保留；`--purge` 连 `~/.facet` 一起删）。
-
-容器部署见下文[「Docker 部署」](#docker-部署)。
 
 ## 快速开始
 
@@ -133,6 +131,23 @@ facet serve --check                      # 校验配置、打印路由链，不�
 ```
 
 ## Docker 部署
+
+### 公开镜像（推荐，免源码）
+
+```bash
+docker run -d --name facet -p 8787:8787 \
+  -e TZ=Asia/Shanghai -v facet-data:/data \
+  hsliup/facet:beta
+```
+
+- 浏览器打开 <http://localhost:8787> 进入管理控制台；配置、状态、用量都落在
+  `facet-data` 卷（容器内 `/data`），升级镜像不丢数据。
+- 首次启动自动种子化厂家预置渠道（均为禁用态，填 Key 后启用）；未设置
+  `ROUTER_ADMIN_KEY` 时随机生成管理密钥，只在日志打印一次（`docker logs facet`），
+  登录后到「管理密钥」修改。
+- 镜像 tag：`:beta` 跟随最新 Beta；`:1.0.0b1` 锁定版本；正式 1.0.0 起提供 `:latest`。
+
+### 仓库 compose（自带 mock 上游，开箱冒烟）
 
 ```bash
 docker compose up -d         # 控制台 http://localhost:8787（ROUTER_PORT 可改）
