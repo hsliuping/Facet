@@ -3392,8 +3392,12 @@ class App:
         if result.get("ok") and result.get("models"):
             # Catalogs are alphabetical: speech/embedding ids can lead, and a
             # chat-completion test against them is rejected upstream. Callers
-            # (setup wizard, console) use this instead of models[0].
-            result["suggested"] = pick_probe_model(result["models"])
+            # (setup wizard, console) use this instead of models[0]. 免费
+            # 渠道先挑 :free/-free 对话模型——字母序头部常全是付费模型
+            # （openrouter 的 aion-labs/amazon 块），默认测试模型不能落在
+            # 付费模型上。
+            result["suggested"] = pick_probe_model(
+                result["models"], prefer_free=str(merged.get("tier") or "") == "free")
         result.setdefault("name", name)  # some probe paths omit the echo
         return result
 

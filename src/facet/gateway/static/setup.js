@@ -380,11 +380,18 @@ const WIZARD_STEPS = [
               + (cat.hint ? ' — ' + cat.hint : ''));
           }
           // auto 指向第一个可对话模型（目录是字母序，asr/tts/embedding 可能
-          // 排在前面，拿它们做对话测试会被上游拒绝）。
+          // 排在前面，拿它们做对话测试会被上游拒绝）。免费偏好渠道服务端
+          // 已把 suggested 指向 :free/-free 对话模型，映射也按免费优先填
+          // 满坑位——否则字母序头部全是付费模型（openrouter 的
+          // aion/amazon 块），:free 模型进不了映射，免费额度无从生效。
+          const FREE_ID = /(:free|-free)$/i;
+          const limit = 20;
           const ids = cat.suggested ? [cat.suggested] : [];
-          cat.models.slice(0, 20).forEach((m) => {
-            if (!ids.includes(m)) ids.push(m);
-          });
+          const push = (m) => { if (ids.length < limit && !ids.includes(m)) ids.push(m); };
+          if (draft.tier === 'free') {
+            (cat.models || []).filter((m) => FREE_ID.test(m)).forEach(push);
+          }
+          (cat.models || []).forEach(push);
           ids.forEach((m) => { models[m] = m; });
           models.auto = ids[0];
         }

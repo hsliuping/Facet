@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from facet.gateway.core import ModelDecision, StateStore, load_config
 from facet.gateway.persistence import StatePersistence, capture, restore
-from facet.gateway.probe import models_path_for, parse_model_list, probe_models
+from facet.gateway.probe import (models_path_for, parse_model_list,
+                                 pick_probe_model, probe_models)
 from facet.gateway.server import App, Handler
 
 
@@ -94,6 +95,22 @@ class CatalogUnitTests(unittest.TestCase):
         self.assertEqual(parse_model_list({}), [])
         self.assertEqual(parse_model_list("nope"), [])
         self.assertEqual(parse_model_list(None), [])
+
+    def test_pick_probe_model_prefers_free_chat_ids(self):
+        """prefer_free skips paid leaders and non-chat free ids (asr/tts)."""
+        catalog = ["aion-labs/aion-2.0", "amazon/nova-lite-v1",
+                   "minimax/speech-02-hd-free", "google/gemma-4-31b-it:free",
+                   "baidu/ernie-5.5-flash-preview:free"]
+        self.assertEqual(pick_probe_model(catalog),
+                         "aion-labs/aion-2.0")
+        self.assertEqual(pick_probe_model(catalog, prefer_free=True),
+                         "google/gemma-4-31b-it:free")
+        # no free ids → same choice as the default path
+        self.assertEqual(pick_probe_model(["m-a", "m-b"], prefer_free=True), "m-a")
+        # free-only catalog → free id wins; empty catalog → empty string
+        self.assertEqual(pick_probe_model(["tiny:free"], prefer_free=True),
+                         "tiny:free")
+        self.assertEqual(pick_probe_model([], prefer_free=True), "")
 
     def test_probe_models_against_upstream(self):
         with UpstreamServer() as up:
@@ -313,6 +330,25 @@ class CatalogAppTests(unittest.TestCase):
         # catalogs persist alphabetically; the pull order is free_ids order
         self.assertEqual(self.app.store.catalog_view("plan-a")["models"],
                          ["hy3", "hy4-flash"])
+
+    def test_fetch_catalog_suggested_prefers_free_for_free_tier(self):
+        """免费渠道的 suggested 必须落在 :free 对话模型上——目录字母序头部
+        常全是付费模型（openrouter 的 aion/amazon 块），默认测试模型不能
+        因排序靠前就落在付费模型上；付费渠道维持首个可对话模型。"""
+        catalog_ids = ["aion-labs/aion-2.0", "amazon/nova-lite-v1",
+                       "baidu/ernie-5.5-flash-preview:free",
+                       "google/gemma-4-31b-it:free"]
+
+        def fake_probe(_channel):
+            # probe_models 每次返回新 dict：_fetch_catalog 会往里写 suggested，
+            # 共享引用会让两次调用的断言互相污染。
+            return {"ok": True, "models": list(catalog_ids)}
+
+        with mock.patch("facet.gateway.server.probe_models", side_effect=fake_probe):
+            free = self.app._fetch_catalog({"name": "plan-a", "tier": "free"})
+            paid = self.app._fetch_catalog({"name": "plan-b"})
+        self.assertEqual(free["suggested"], "baidu/ernie-5.5-flash-preview:free")
+        self.assertEqual(paid["suggested"], "aion-labs/aion-2.0")
 
     def test_probe_channel_models_free_subset_stale_falls_back_to_full(self):
         self.app.providers = [{

@@ -316,15 +316,28 @@ def is_chat_model(model: str) -> bool:
     return not any(p in low for p in NON_CHAT_PATTERNS)
 
 
-def pick_probe_model(models) -> str:
+# OpenRouter-style free variants end with ":free"; some vendors use "-free".
+FREE_ID_RE = re.compile(r"(:free|-free)$", re.IGNORECASE)
+
+
+def pick_probe_model(models, prefer_free: bool = False) -> str:
     """First chat-capable id for a probe/wizard test.
 
     Catalogs come back sorted alphabetically, so speech or embedding ids
     (xiaomi's mimo-v2.5-asr, openrouter's MiniMax/speech-02-hd, ...) can lead
     the list and a chat-completion probe against them is rejected upstream.
     Falls back to the first id when nothing looks like a chat model.
+
+    prefer_free picks the first chat-capable free-tier id (":free"/"-free")
+    before falling back — a 免费 channel whose catalog leads with paid ids
+    (openrouter's aion-labs/amazon block) must not get a paid default test
+    model just because it sorts first.
     """
     ids = [str(m) for m in (models or []) if m]
+    if prefer_free:
+        for model in ids:
+            if FREE_ID_RE.search(model) and is_chat_model(model):
+                return model
     for model in ids:
         if is_chat_model(model):
             return model
