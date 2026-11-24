@@ -1,6 +1,6 @@
 # 主流模型跑分汇总与解读（设计稿 v0）
 
-状态：设计，未实施
+状态：V0 数据底座已实施；V1 自动来源（Vals Terminal-Bench 4.0，开发期 sync + 运行时自动刷新）已实施（见 §9）
 日期：2026-11-18
 关联：[planrouter-model-status-and-scoring.md](planrouter-model-status-and-scoring.md)（稳定性评分，不是本文）、[planrouter-competitive-analysis.md](planrouter-competitive-analysis.md) §7.2
 
@@ -40,6 +40,8 @@ Facet 已有的三层能力里：
 
 > 源文件放在 `registry/`（`registry/benchmarks.json`、`registry/model-scores.json`、`registry/model-coverage.json`），
 > 由 `tools/build_package.py` 在构建时拷贝进 `src/facet/data/`（该目录被 .gitignore 忽略，是打包快照）。
+>
+> **运行时叠加层**：网关启动后，`BenchmarkRefreshRunner` 定时从公开榜单（默认每周）抓取最新分数，写入用户配置目录的 `model-scores.override.json`，由 `benchmarks.py` 叠加在打包快照之上——新分数无需重装即生效，且只覆盖对应 `(bench, harness)` 条目，不冻结其它来源的打包数据（详见 §9）。
 
 ### 3.1 `registry/benchmarks.json` → `src/facet/data/benchmarks.json` —— 榜单词典
 
@@ -253,10 +255,10 @@ comparable_group = bench_id + bench_version + setting + harness
 | 阶段 | 做法 |
 | --- | --- |
 | V0 | 人工录入 + 种子数据。约 30 模型 × 8 榜 = 240 条，一周内可完成。配 `tools/validate_benchmarks.py` 校验。 |
-| V1 | `tools/sync_benchmarks.py` 接 1-2 个结构化来源（人工跑，产出 diff 待审）。不自动合并。 |
+| V1（已实施） | `tools/sync_benchmarks.py` 接 Vals Terminal-Bench 4.0（开发期人工跑，校验后合入 registry 快照，随版本发布）；运行时 `BenchmarkRefreshRunner` 定时抓取写入用户目录 `model-scores.override.json`，由 `benchmarks.py` 自动叠加。 |
 | V2 | 接 `watch.py` 的模型集合变更事件：新旗舰出现 → 标记为"待补数据" → 控制台提示。 |
 
-V1 强调"产出 diff、人工审"，不做无人值守写入——录错一条数据的代价比省那点人力大得多。
+V1 双轨：registry 快照仍走「产出 diff → 校验 → 人工审」后合入，保证随版本发布的数据可控；运行时 override 是无人值守的增量刷新，只覆盖 vals harness 条目，且不修改打包快照（新版本发布时快照更新会自然取代旧 override）。录错一条数据的代价比省那点人力大得多，所以 registry 合入必须人工审。
 
 ## 10. 校验（V0 必须做）
 
@@ -273,7 +275,7 @@ V1 强调"产出 diff、人工审"，不做无人值守写入——录错一条�
 ## 11. 分期
 
 - **V0**：三个数据文件 + 校验脚本 + 只读面板（表格 + 详情）。约 30 模型。
-- **V1**：场景适配视图 + 画像文案补齐 + 一个自动来源。
+- **V1**（已实施）：场景适配视图 + 画像文案补齐 + 一个自动来源（Vals Terminal-Bench 4.0，开发期 `tools/sync_benchmarks.py` + 运行时 `BenchmarkRefreshRunner` 自动刷新）。
 - **V2**：watch 联动 + 来源扩充 + 对外可分享的榜单页。
 
 ## 12. 开放问题
