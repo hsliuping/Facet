@@ -5648,16 +5648,25 @@ function applyCatalogSelection() {
   const f = $('editor-form');
   const modelsField = f.elements.namedItem('models');
   const current = parseModels(modelsField.value);
+  // 空值行（如历史遗留的「auto=」）不保留：保存校验也不放行，留着只会卡提交。
   const keep = Object.entries(current).filter(([k, v]) =>
-    k === 'auto' || k === '*' || k !== v);
-  const picked = Array.from(
-    $('catalog-list').querySelectorAll('input[type="checkbox"]:checked'),
-    (node) => node.value);
+    k === '*' || (!!v && (k === 'auto' || k !== v)));
+  const boxes = Array.from(
+    $('catalog-list').querySelectorAll('#catalog-items input[type="checkbox"]'));
+  const picked = boxes.filter((b) => b.checked).map((b) => b.value);
   const merged = Object.fromEntries(keep);
   picked.forEach((m) => { merged[m] = m; });
+  // auto 没有落点时指向第一个勾选的模型，优先试通打勾的——与向导自动
+  // 选型同一口径：auto 请求有实测可用的上游，而不是空着卡保存。
+  if (!merged.auto && picked.length) {
+    const okSet = new Set(boxes
+      .filter((b) => b.checked && b.parentElement.querySelector('.tag.probe-ok'))
+      .map((b) => b.value));
+    merged.auto = picked.find((m) => okSet.has(m)) || picked[0];
+  }
   modelsField.value = serializeModels(merged);
   renderModelTierRows();
-  toast(`已写入 ${picked.length} 个模型，记得保存渠道`);
+  toast(`已写入 ${picked.length} 个模型${merged.auto ? `，auto → ${merged.auto}` : ''}，记得保存渠道`);
 }
 
 function testSubscriptionEditor() {

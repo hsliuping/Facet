@@ -98,6 +98,19 @@ def test_catalog_probe_unchecks_broken_models(admin_page, mock_upstream):
     title = page.locator(".tag.probe-bad").first.get_attribute("title") or ""
     assert title  # 失败原因写进悬停提示
 
+    # 遗留「auto=」空值行的渠道：写入映射时 auto 自动落到试通可用的模型，
+    # 不再把空行带进映射卡住保存
+    page.evaluate(
+        """() => { document.getElementById('f-models').value = 'auto=\\nstale-model'; }""")
+    console.el("#catalog-apply").click()
+    console.wait_toast("已写入", kind="ok")
+    lines = [s.strip() for s in console.el("#f-models").input_value().splitlines()
+             if s.strip()]
+    assert "auto=fresh-model" in lines
+    assert "fresh-model=fresh-model" in lines
+    assert not any(s.endswith("=") for s in lines)  # 不留空值行
+    assert "stale-model" not in lines  # 未勾选的身份映射不复活
+
     # 会话首次访问会自动弹出使用指南（guide-backdrop 同属 modal-backdrop，
     # 其捕获层还会拦截 Escape）：先关指南，再关编辑器。
     guide = page.locator("#guide-close")

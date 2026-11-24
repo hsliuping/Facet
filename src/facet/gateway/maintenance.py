@@ -1692,6 +1692,11 @@ def _free_quota_sync_note(app, channel) -> str:
         app, "provider_mode") else {}
     if not mode.get("free_quota_cmd"):
         return ""
+    # The sweep itself skips disabled channels, so they can never appear in
+    # any report — warning about them would be noise: re-enable first, the
+    # note comes back on its own if a real sync gap shows up then.
+    if not channel.enabled:
+        return ""
     reports = getattr(app, "free_align_reports", None) or []
     if not reports:
         return _UNSYNCED_NOTE

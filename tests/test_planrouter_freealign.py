@@ -1195,6 +1195,20 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         payload = maint.free_models_payload(self.app)
         self.assertIn("尚未同步", payload["channels"][0]["quota_sync"])
 
+    def test_sync_note_stays_silent_for_disabled_channels(self):
+        # 同步巡检本身跳过停用渠道，它们永远不会出现在任何报告里；
+        # 停用期间不再提示「额度未同步」，重新启用后若真有缺口会自然再现。
+        raw = volc_config()
+        raw["channels"][0]["enabled"] = False
+        app = App(parse_config(raw), usage_file=self.path)
+        app.providers = volc_registry()
+        app.free_align_reports = [
+            {"trigger": "scheduled", "quota": ["other"]},
+        ]
+        payload = maint.free_models_payload(app)
+        self.assertEqual(payload["channels"][0]["quota_sync"], "")
+        self.assertEqual(payload["summary"]["quota_unsynced"], 0)
+
     def test_payload_carries_vendor_free_limits_and_counts(self):
         self.app.providers = [{
             "id": "volcengine", "name": "火山引擎方舟",
