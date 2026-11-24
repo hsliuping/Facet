@@ -176,6 +176,51 @@ class DshProfileTest(unittest.TestCase):
         self.assertEqual(data["dsh"]["profile"]["bundles"],
                          ["@deepseek-ai/dsh-base"])
 
+    def test_ensure_profile_moves_a_stale_base_url_to_this_gateway(self):
+        # The profile is seeded once and never rewritten wholesale, so a
+        # gateway whose port changed (installer port page) kept DSH pointing
+        # at the old address forever. The facet provider's baseURL is
+        # functional wiring: ensure_profile rewrites just that one line.
+        directory = self.home / "profiles" / "facet-web"
+        directory.mkdir(parents=True)
+        (directory / "cordis.patch.yml").write_text(
+            "- id: agent-default-model\n"
+            "  config:\n"
+            "    provider: facet\n"
+            "    model: facet-auto\n"
+            "- id: llm-pi-ai\n"
+            "  config:\n"
+            "    providers:\n"
+            "      facet:\n"
+            "        apiKeyEnv: ROUTER_API_KEY\n"
+            "        baseURL: http://127.0.0.1:8784/v1\n"
+            "        models:\n"
+            "          - id: \"facet-auto\"\n"
+            "            name: \"自动 · 默认链\"\n"
+            "- id: ui-settings-general\n"
+            "  config:\n"
+            "    welcomeNoticeVersion: 2026-09-28.1\n",
+            encoding="utf-8")
+        dsh.ensure_profile(base_url="http://127.0.0.1:8788")
+        text = (directory / "cordis.patch.yml").read_text(encoding="utf-8")
+        self.assertIn("baseURL: http://127.0.0.1:8788/v1", text)
+        self.assertNotIn("8784", text)
+        # Everything the operator may have touched stays as-is.
+        self.assertIn("welcomeNoticeVersion: 2026-09-28.1", text)
+        self.assertIn('name: "自动 · 默认链"', text)
+        self.assertIn("- id: agent-default-model", text)
+        self.assertIn("apiKeyEnv: ROUTER_API_KEY", text)
+
+    def test_ensure_profile_leaves_a_patch_without_the_facet_provider_alone(self):
+        directory = self.home / "profiles" / "facet-web"
+        directory.mkdir(parents=True)
+        (directory / "cordis.patch.yml").write_text("keep: true\n",
+                                                    encoding="utf-8")
+        dsh.ensure_profile(base_url="http://127.0.0.1:8788")
+        self.assertEqual(
+            (directory / "cordis.patch.yml").read_text(encoding="utf-8"),
+            "keep: true\n")
+
 
 class DshModelsTest(unittest.TestCase):
     """The picker is fed from the profile's static list, not GET /v1/models."""

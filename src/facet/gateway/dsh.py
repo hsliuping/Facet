@@ -83,6 +83,8 @@ _PROFILE_PATCH = (
     "            name: \"自动 · 默认链\"\n"
     "          - id: \"facet-cheap\"\n"
     "            name: \"自动 · 省钱链\"\n"
+    "          - id: \"facet-free\"\n"
+    "            name: \"自动 · 免费链\"\n"
     "- id: ui-settings-general\n"
     "  name: \"@deepseek-ai/dsh-client-ui-settings-general\"\n"
     "  config:\n"
@@ -106,6 +108,11 @@ def ensure_profile(profile: str = WEB_PROFILE,
         # The operator (or dsh itself) already created this profile; never
         # overwrite a hand-edited patch layer with the generated wiring.
         _upgrade_bundles(manifest)
+        # One thing does follow this gateway: the facet provider's baseURL.
+        # A profile seeded while the gateway ran on another port (installer
+        # port page, later wizard change) would otherwise keep sending DSH
+        # to the dead address forever.
+        _sync_base_url(base_url, profile)
         return
     directory.mkdir(parents=True, exist_ok=True)
     patch.write_text(_PROFILE_PATCH.format(base_url=base_url.rstrip("/")),
@@ -526,6 +533,54 @@ def sync_models(models: list[dict], profile: str = WEB_PROFILE) -> bool:
         return False
     updated = lines[:start] + rendered + lines[end:]
     updated_text = "".join(updated)
+    if updated_text == text:
+        return True
+    tmp = patch.with_name(patch.name + ".tmp")
+    try:
+        tmp.write_text(updated_text, encoding="utf-8")
+        os.replace(tmp, patch)
+    except OSError:
+        return False
+    return True
+
+
+def _sync_base_url(base_url: str, profile: str = WEB_PROFILE) -> bool:
+    """Point the facet provider at this gateway when its address moved.
+
+    The patch layer is seeded once and hand edits are preserved, so a
+    profile created while the gateway listened on another port keeps
+    sending DSH to that dead address long after the port changed. The
+    facet provider's baseURL is functional wiring rather than a hand-edit
+    surface: sync_models already rewrites the models block before every
+    launch, and this keeps the address on the same footing. Only the
+    baseURL inside the `llm-pi-ai` block is touched; anything else the
+    operator edited stays as-is.
+    """
+    patch = profile_dir(profile) / "cordis.patch.yml"
+    try:
+        text = patch.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lines = text.splitlines(keepends=True)
+    entry = next((i for i, line in enumerate(lines)
+                  if line.strip() == "- id: llm-pi-ai"), None)
+    if entry is None:
+        return False
+    # Top-level entries start at column 0; the provider's list items are
+    # indented, so `- id:` without leading spaces ends the block.
+    end = next((i for i in range(entry + 1, len(lines))
+                if lines[i].startswith("- id:")), len(lines))
+    target = next((i for i in range(entry, end)
+                   if BASE_URL_LINE.match(lines[i])), None)
+    if target is None:
+        return False
+    # Keep the original line ending: the seeded patch carries CRLF on
+    # Windows, and rewriting it as LF would flag an unchanged address as a
+    # modification on every launch.
+    eol = "\r\n" if lines[target].endswith("\r\n") else "\n"
+    lines[target] = (f"{' ' * _indent(lines[target])}"
+                     f"baseURL: {base_url.rstrip('/')}/v1{eol}")
+    updated_text = "".join(lines)
     if updated_text == text:
         return True
     tmp = patch.with_name(patch.name + ".tmp")

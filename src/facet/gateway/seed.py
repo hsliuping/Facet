@@ -136,18 +136,20 @@ def build_seed() -> dict:
         },
         "routes": [
             {"name": "default", "protocol": "openai",
-             "channels": ["nvidia-nim", "siliconflow"]},
+             "channels": ["nvidia-nim", "siliconflow", "$free"]},
             # 免费优先链（facet-cheap）：所有免费层模板都排进来，
             # 包括一次性体验包；将来用户加付费渠道时会排在免费之后。
-            # 不能用 "$free" 宏：种子渠道全部 enabled=false，宏展开为空会报错，
-            # 用户启用一个免费模板后它才自动并入（见 core.FREE_CHANNEL_MACRO）。
             {"name": "cheap", "protocol": "openai",
              "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
-                          "siliconflow", "teleai-xing", "scnet"]},
+                          "siliconflow", "teleai-xing", "scnet", "$free"]},
             # 纯免费链（facet-free）：只保留长期 0 元模型，不含会用完的体验包。
             {"name": "free", "protocol": "openai",
              "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
-                          "siliconflow"]},
+                          "siliconflow", "$free"]},
+            # 尾部的 "$free" 让控制台新加的免费渠道（如魔搭）自动进链兜底：
+            # 种子模板全部 enabled=false 时宏展开为空、无害（链里还有显式
+            # 渠道，不会触发「宏未命中」报错）；未带显式宏的老配置则由
+            # core 的隐式垫底兜底，两条路径行为一致。
             {"name": "default", "protocol": "anthropic",
              "channels": ["anthropic-template"]},
             # facet-embedding 的默认落点（core.DEFAULT_BRANDED_MODELS）；

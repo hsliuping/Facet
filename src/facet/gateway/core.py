@@ -37,6 +37,19 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # without any further configuration; paid channels are always hand-placed.
 FREE_CHANNEL_MACRO = "$free"
 
+
+def _embedding_only(channel) -> bool:
+    """True when a channel's whole model table points at embedding models.
+
+    Embedding chains are hand-placed (facet-embedding brands the
+    "embedding" route), so such channels must never sneak into chat
+    scheduling through the "$free" macro: their wire models would 404 on
+    /v1/chat/completions. A single non-embedding mapping (or the "*"
+    wildcard) keeps the channel eligible.
+    """
+    targets = [v for v in channel.models.values() if v and v != "*"]
+    return bool(targets) and all("embed" in v.lower() for v in targets)
+
 # Safety margin kept in front of the free gate, in tokens, keyed by provider.
 # Volcengine keeps serving after a model's free grant runs dry whenever the
 # account holds any balance — no 429, no error code, no header — so the only
@@ -618,9 +631,12 @@ class Defaults:
     # chain order (only known-bad pairs sink), "weighted" ranks candidates
     # by success rate, latency EWMA, consecutive errors and stability score.
     lb_strategy: str = "order"
-    # Background health probing of cooled channels: 0 disables the prober.
-    # Only channel-level cooldowns that should end soon get probed.
-    probe_interval_seconds: int = 0
+    # Background health probing of cooled channels: probed with GET /models
+    # (free), so the default keeps it on — a sparse-traffic install has no
+    # requests to fire the half-open check, and without the prober a short
+    # cooldown (a 30s network blip) idles the channel until the timer runs
+    # out, which reads as "this channel randomly stops working".
+    probe_interval_seconds: int = 60
     # Probe request type: "models" (GET /models, free) or "chat" (1-token
     # chat via the maintenance direct-call path).
     probe_mode: str = "models"
@@ -1080,6 +1096,15 @@ def parse_config(raw: dict) -> Config:
             raise ValueError(f"route {name}：protocol 必须是 {PROTOCOLS} 之一")
         if not names:
             raise ValueError(f"route {name}：channels 列表为空")
+        # The three main openai chains (the landing spots of facet-auto /
+        # facet-cheap / facet-free) get "$free" appended automatically, so
+        # free channels always exist as a last-resort tier without the
+        # operator dragging the macro into every chain by hand. A macro the
+        # operator placed explicitly keeps its exact position and disables
+        # the implicit tail: hand-ranked free channels win over automation.
+        if (protocol == OPENAI and name in ("default", "cheap", "free")
+                and FREE_CHANNEL_MACRO not in names):
+            names = names + (FREE_CHANNEL_MACRO,)
         # "$free" is resolved against the already-sorted channel table, so
         # the expansion order doubles as the attempt order inside the macro.
         # A channel listed explicitly keeps its exact position, wherever it
@@ -1090,7 +1115,8 @@ def parse_config(raw: dict) -> Config:
             if channel_name == FREE_CHANNEL_MACRO:
                 for channel in channels:
                     if (channel.protocol == protocol and channel.tier == "free"
-                            and channel.enabled and channel.name not in named):
+                            and channel.enabled and channel.name not in named
+                            and not _embedding_only(channel)):
                         expanded.append(channel.name)
             else:
                 expanded.append(channel_name)

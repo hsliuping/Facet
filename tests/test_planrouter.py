@@ -13,10 +13,10 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from facet.gateway.core import (OPENAI, StateStore, body_has_vision,
-                             channel_takes_images, load_config,
-                             open_with_proxy, parse_cooldown, vision_wire,
-                             wire_model)
+from facet.gateway.core import (OPENAI, FREE_CHANNEL_MACRO, StateStore,
+                             body_has_vision, channel_takes_images,
+                             load_config, open_with_proxy, parse_cooldown,
+                             vision_wire, wire_model)
 from facet.gateway.keys import KeyStore, normalize_limits
 from facet.gateway.server import App, HealthProber
 
@@ -820,6 +820,68 @@ class EmbeddingRoutingTests(unittest.TestCase):
         self.assertIn("text-embedding-ada-002", ids)
         # Branded alias
         self.assertIn("facet-embedding", ids)
+
+
+class AutoFreeTailTests(unittest.TestCase):
+    """主链尾部的隐式 "$free"：三条 openai 主链自动垫免费兜底，
+    显式排进链里的宏保留原位置且不再重复垫。"""
+
+    def setUp(self):
+        data = json.loads(json.dumps(BASE))
+        # 未被任何主链列出的免费渠道：只能经隐式宏进入调度。
+        data["channels"].append({
+            "name": "free2", "protocol": "openai",
+            "base_url": "http://127.0.0.1:9007",
+            "models": {"auto": "model-free2"}, "priority": 40,
+            "tier": "free",
+        })
+        # 纯 embedding 渠道：免费但不得经宏混进 chat 候选。
+        data["channels"].append({
+            "name": "emb-free", "protocol": "openai",
+            "base_url": "http://127.0.0.1:9008",
+            "models": {"auto": "text-embedding-3-small",
+                       "text-embedding-3-small": "text-embedding-3-small"},
+            "priority": 45, "tier": "free",
+        })
+        self.data = data
+
+    def _pick_default(self, app):
+        candidates, route = app.store.pick(OPENAI, "default", "auto", None, time.time())
+        return [c.name for c, _ in candidates], route
+
+    def test_main_chain_appends_free_tail(self):
+        app = App(load_config(write_config(self.data)))
+        names, route = self._pick_default(app)
+        self.assertEqual(route.name, "default")
+        # free2 未显式列出 → 隐式宏垫尾；emb-free 是纯 embedding 渠道，不入列。
+        self.assertEqual(names, ["plan-a", "plan-b", "free", "free2"])
+
+    def test_explicit_macro_keeps_position_no_double_tail(self):
+        # 显式把宏放在链首：宏展开的免费渠道占头部，显式渠道保持原位，
+        # 且不再隐式垫尾（否则 free2 会重复出现）。BASE 的 free 渠道没标
+        # tier，不参与宏展开——宏只认显式 tier=free 的渠道。
+        self.data["routes"][0]["channels"] = [FREE_CHANNEL_MACRO, "plan-a"]
+        app = App(load_config(write_config(self.data)))
+        names, _ = self._pick_default(app)
+        self.assertEqual(names, ["free2", "plan-a"])
+
+    def test_anthropic_chain_never_gets_tail(self):
+        # 隐式垫底只针对三条 openai 主链；anthropic 链保持显式配置原样。
+        self.data["channels"].append({
+            "name": "claude-free", "protocol": "anthropic",
+            "base_url": "http://127.0.0.1:9009",
+            "models": {"auto": "claude-haiku"}, "priority": 40,
+        })
+        app = App(load_config(write_config(self.data)))
+        candidates, _ = app.store.pick("anthropic", "default", "auto", None, time.time())
+        self.assertEqual([c.name for c, _ in candidates], ["claude"])
+
+    def test_embedding_only_never_enters_macro(self):
+        # 纯 embedding 免费渠道即使显式放进带宏的链，宏展开也不补进别的链。
+        self.data["routes"][0]["channels"] = ["plan-a", FREE_CHANNEL_MACRO]
+        app = App(load_config(write_config(self.data)))
+        names, _ = self._pick_default(app)
+        self.assertNotIn("emb-free", names)
 
 
 class _FakeHandler:
