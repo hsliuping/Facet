@@ -9,6 +9,7 @@
 import io
 import json
 import tempfile
+import time
 import unittest
 from email.message import Message
 from pathlib import Path
@@ -282,6 +283,24 @@ class VerifySetupCallTests(unittest.TestCase):
         self.assertIn("openai:测试", result["channel_status"])
         self.assertEqual(result["channel_status"]["openai:测试"], "disabled")
         self.assertTrue(result["hints"])
+        self.assertEqual(result["attempts"], [])
+
+    def test_model_level_cooldown_reported_not_ok(self):
+        # 渠道级可用、但这次要打的 wire 模型被单独冷却（典型：验收 429 只冻结
+        # 模型）——面板必须如实显示「模型冷却中 + 剩余时间」，不能一边显示
+        # 「成功」一边报「链上没有可调度的渠道」，把用户逼去删好渠道。
+        app = self._app()
+        with app.store.lock:
+            app.store.states["测试"].mark_cooldown(
+                600.0, "rate_limit", time.time(), per_model=True, wire="m1")
+        result = app.verify_setup_call()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["kind"], "no_candidate")
+        status = result["channel_status"]["openai:测试"]
+        self.assertIn("模型冷却中", status)
+        self.assertIn("m1", status)
+        self.assertIn("分钟", status)
+        self.assertTrue(any("模型冷却中" in h for h in result["hints"]))
         self.assertEqual(result["attempts"], [])
 
     def test_openai_success_hit_and_attempts(self):

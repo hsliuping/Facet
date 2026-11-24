@@ -47,7 +47,8 @@ from .core import (
     QUOTA_MARKERS, Config,
     StateStore, channel_ref,
     apply_upstream_headers,
-    body_has_vision, channel_takes_images, ensure_channel_ids, explicit_models,
+    body_has_vision, channel_takes_images, dispatch_wire_model,
+    ensure_channel_ids, explicit_models,
     open_with_proxy, parse_cooldown, parse_config, parse_free_quota,
     resolve_model, resolve_secret, upstream_path_for, vision_wire,
 )
@@ -2882,12 +2883,19 @@ class App:
 
     # ------------------------------------------------------ wizard verify
     def _verify_route_status(self, protocol: str, route_name: str,
-                             blocked: dict) -> dict[str, str]:
+                             blocked: dict, requested: str = AUTO_MODEL) -> dict[str, str]:
         """Per-channel schedulability for the wizard's verify endpoint.
 
         Same vocabulary as the no-candidate gateway reply: missing/disabled/
         blocked, or whatever the state machine reports (cooldown windows,
         rate limits, free-quota freezes) — the console renders it verbatim.
+
+        An otherwise-healthy channel can still be unschedulable at the wire
+        level: a 429 from the acceptance call itself cools only the mapped
+        model (5h default, no Retry-After), and reporting plain "ok" while
+        pick comes back empty is exactly the contradiction that once sent a
+        user deleting a working channel. When the wire model this request
+        would dispatch is cooling, the map says so with the minutes left.
         """
         route = self.config.route(protocol, route_name)
         status: dict[str, str] = {}
@@ -2902,8 +2910,19 @@ class App:
                 status[f"{protocol}:{name}"] = "blocked"
             else:
                 with self.store.lock:
-                    ok, why = self.store.states[name].available(now, channel.rate)
-                status[f"{protocol}:{name}"] = "ok" if ok else why
+                    state = self.store.states[name]
+                    ok, why = state.available(now, channel.rate)
+                    if not ok:
+                        status[f"{protocol}:{name}"] = why
+                        continue
+                    wire = dispatch_wire_model(channel, requested)
+                    until = state.model_cooldown_until.get(wire or "", 0.0)
+                    if wire and until > now:
+                        minutes = max(1, int((until - now + 59) // 60))
+                        status[f"{protocol}:{name}"] = (
+                            f"模型冷却中：{wire}（剩约 {minutes} 分钟）")
+                    else:
+                        status[f"{protocol}:{name}"] = "ok"
         return status
 
     @staticmethod
@@ -2915,6 +2934,9 @@ class App:
                 "没有可调度的渠道：在「渠道配置」页检查渠道是否启用、Key 是否填写完整。",
                 "确认路由链包含该渠道（向导保存的渠道会自动追加进 default 链）。",
                 "渠道处于冷却/限速/免费额度耗尽状态时同样不可调度，稍后点「重新验收」。",
+                "若渠道显示「模型冷却中」：该模型刚被上游限速/额度冷却（OpenRouter 免费模型"
+                "尤其常见，通常几十秒到几分钟就恢复），可等冷却结束再验收，或在「渠道配置」页"
+                "把 auto 映射换一个模型。",
             ]
         hints: list[str] = []
         if http_status == 401:
@@ -2971,7 +2993,7 @@ class App:
             status: dict[str, str] = {}
             for protocol in (OPENAI, ANTHROPIC):
                 status.update(self._verify_route_status(
-                    protocol, plans[protocol][2], blocked))
+                    protocol, plans[protocol][2], blocked, requested))
             return {
                 "ok": False, "kind": "no_candidate", "model": requested,
                 "attempts": [],
