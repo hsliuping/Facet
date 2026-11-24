@@ -31,6 +31,9 @@ def config_dict() -> dict:
 def rotation_config() -> dict:
     return {
         "listen": {"host": "127.0.0.1", "port": 0},
+        # 本文件测的是轮转/粘性/快照机制，pick 的模型名只是载体：
+        # 显式开启 fallback_unknown 保持旧行为，避免依赖已翻转的默认值。
+        "models": {"fallback_unknown": True},
         "channels": [
             {"name": "a", "protocol": "openai", "base_url": "http://127.0.0.1:9201",
              "models": {"auto": "model-a"}},

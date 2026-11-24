@@ -27,6 +27,9 @@ def config_for(upstream_url: str, gateway_key=None, admin_key=None,
         listen["admin_key"] = admin_key
     return {
         "listen": listen,
+        # 转发用例拿 "model-a"（auto 的 wire 名）当请求模型测路径拼接：
+        # 显式开启 fallback_unknown 保持按链调度，不依赖已翻转的默认值。
+        "models": {"fallback_unknown": True},
         "channels": [
             {"name": "plan-a", "protocol": "openai", "base_url": upstream_url,
              "api_key": key, "models": {"auto": "model-a"}, "priority": 10},

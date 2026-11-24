@@ -126,6 +126,10 @@ def start_upstream():
 def config_for(url: str) -> dict:
     return {
         "listen": {"host": "127.0.0.1", "port": 0},
+        # 本文件测的是 Responses 桥接/流转/故障转移机制，请求里的 "wire-a"
+        # 等只是载体名字：显式开启 fallback_unknown 保持按链调度，不依赖
+        # 已翻转的默认值（fallback_unknown 现默认拒绝未知名）。
+        "models": {"fallback_unknown": True},
         "channels": [
             {"name": "plan-a", "protocol": "openai", "base_url": url,
              "models": {"auto": "wire-a"}, "priority": 10},

@@ -13,6 +13,9 @@ def scoring_config() -> dict:
     key = "sk-fixture"
     return {
         "listen": {"host": "127.0.0.1", "port": 0},
+        # PickOrderingTests 用 "whatever" 这个无映射名字当载体测排序：
+        # 显式开启 fallback_unknown 保持按链调度，不依赖已翻转的默认值。
+        "models": {"fallback_unknown": True},
         "channels": [
             # "auto" drives internal scheduling; "m1"/"m2" are explicit
             # mappings visible to the model-state aggregation.
