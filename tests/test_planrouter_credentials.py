@@ -348,5 +348,54 @@ class AppDuplicateChannelTests(unittest.TestCase):
             self.app.duplicate_channel("nope")
 
 
+class RouteChannelDedupeTests(unittest.TestCase):
+    """同一条链不允许重复渠道：运行时 parse_config 去重（调度不重复尝试），
+    存储层 apply_config 去重（落盘文件不残留脏数据）。重复渠道会让 failover
+    反复撞同一个已失败的渠道，必须在两层都消除。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "router.json"
+        self.path.write_text(json.dumps(base_config()), encoding="utf-8")
+        self.app = App(parse_config(base_config()), config_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _raw_with_openai_default(self, channels):
+        """只改 openai:default 链的 channels，保留 base_config 其余路由
+        （anthropic:default 是必需路由，不能丢）。"""
+        raw = json.loads(json.dumps(base_config()))
+        for r in raw["routes"]:
+            if r["protocol"] == "openai" and r["name"] == "default":
+                r["channels"] = channels
+        return raw
+
+    def test_apply_config_dedupes_route_channels_on_persist(self):
+        raw = self._raw_with_openai_default(
+            ["ark-free", "ark-free", "claude", "ark-free"])
+        self.app.apply_config(raw)
+        disk = json.loads(self.path.read_text(encoding="utf-8"))
+        openai_default = next(r for r in disk["routes"]
+                              if r["protocol"] == "openai" and r["name"] == "default")
+        # 保序去重，保留首次出现的位置；自动补的 $free 不落盘。
+        self.assertEqual(openai_default["channels"], ["ark-free", "claude"])
+
+    def test_parse_config_runtime_dedupes(self):
+        raw = self._raw_with_openai_default(["ark-free", "ark-free"])
+        cfg = parse_config(raw)
+        route = cfg.routes["openai:default"]
+        # 运行时调度列表里 ark-free 只出现一次（default 链会自动补 $free 尾部）。
+        self.assertEqual(route.channels.count("ark-free"), 1)
+
+    def test_dedup_keeps_first_occurrence_order(self):
+        raw = self._raw_with_openai_default(["claude", "ark-free", "claude"])
+        self.app.apply_config(raw)
+        disk = json.loads(self.path.read_text(encoding="utf-8"))
+        openai_default = next(r for r in disk["routes"]
+                              if r["protocol"] == "openai" and r["name"] == "default")
+        self.assertEqual(openai_default["channels"], ["claude", "ark-free"])
+
+
 if __name__ == "__main__":
     unittest.main()

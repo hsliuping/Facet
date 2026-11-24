@@ -32,6 +32,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from urllib.request import Request
 
 from . import providers as providers_mod
+from . import benchmarks as benchmarks_mod
 from .core import AUTO_MODEL, QUOTA_MARKERS, open_with_proxy
 from .probe import is_chat_model
 
@@ -1781,6 +1782,7 @@ def free_models_payload(app) -> dict:
                     skip = "仅目录候选，未映射到渠道"
                 entries.append({
                     "model": model, "source": source,
+                    "ability": benchmarks_mod.agent_score(model),
                     "in_queue": model in queue,
                     "test": dict(test) if test else None,
                     "dead": dict(label) if label else None,

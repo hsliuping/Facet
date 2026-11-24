@@ -18,15 +18,64 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 # build-time snapshot directory and is gitignored).
 REPO_DATA = DATA.parent.parent.parent / "registry"
 
+# Runtime override: a user-writable file (next to config.json) holding scores
+# fetched by the self-maintenance task, layered on top of the bundled snapshot
+# so new public scores appear without reinstalling. Merged at the
+# (bench, setting, harness) level so a refreshed value replaces the old one
+# while other sources' entries are preserved.
+_override_path: Path | None = None
+
+
+def set_override_path(path: "Path | str | None") -> None:
+    """Point the loader at a user-dir override file (or None to disable)."""
+    global _override_path
+    _override_path = Path(path) if path else None
+    clear_cache()
+
+
+def clear_cache() -> None:
+    """Drop cached score maps so a freshly written override is picked up."""
+    _agent_score_map.cache_clear()
+    payload.cache_clear()
+
+
+def _apply_override(data: dict) -> dict:
+    if not _override_path:
+        return data
+    try:
+        override = json.loads(_override_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return data
+    models = data.setdefault("models", {})
+    for key, omodel in (override.get("models") or {}).items():
+        base = models.setdefault(key, {})
+        base_scores = base.setdefault("scores", [])
+        idx = {(s.get("bench"), s.get("setting"), s.get("harness")): i
+               for i, s in enumerate(base_scores)}
+        for s in (omodel.get("scores") or []):
+            k = (s.get("bench"), s.get("setting"), s.get("harness"))
+            if k in idx:
+                base_scores[idx[k]] = s
+            else:
+                base_scores.append(s)
+                idx[k] = len(base_scores) - 1
+    return data
+
 
 def _load(name: str, fallback: dict) -> dict:
+    data: dict | None = None
     for d in (DATA, REPO_DATA):
         try:
             with open(d / name, encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            break
         except (OSError, ValueError):
             continue
-    return fallback
+    if data is None:
+        return fallback
+    if name == "model-scores.json":
+        _apply_override(data)
+    return data
 
 
 def _norm_base(key: str) -> str:

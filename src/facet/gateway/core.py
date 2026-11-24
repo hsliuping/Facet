@@ -648,6 +648,11 @@ class Defaults:
     # line, paid candidates are skipped (free channels keep serving).
     # 0 disables the budget.
     paid_budget_tokens: int = 0
+    # 0 disables the scheduled public-benchmark refresh sweep: Vals
+    # Terminal-Bench 4.0 scores are fetched and layered over the bundled
+    # snapshot so new scores appear without reinstalling. Fractional hours
+    # allowed; default weekly.
+    benchmark_refresh_hours: float = 168
 
 
 @dataclass(frozen=True)
@@ -926,6 +931,7 @@ def parse_config(raw: dict) -> Config:
         probe_mode=probe_mode,
         probe_max_cooldown_seconds=int(d.get("probe_max_cooldown_seconds", 600)),
         paid_budget_tokens=int(d.get("paid_budget_tokens", 0)),
+        benchmark_refresh_hours=float(d.get("benchmark_refresh_hours", 168)),
     )
 
     # Vendor management credentials: {provider: {ENV_NAME: value}}. Values

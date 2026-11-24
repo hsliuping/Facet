@@ -28,7 +28,9 @@
         { "id": "google/gemini-4-carbon", "label": "Gemini 4 Carbon", "tier": "flagship" },
         { "id": "google/gemini-4-argon", "label": "Gemini 4 Argon", "tier": "flagship" },
         { "id": "google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview", "tier": "previous" },
-        { "id": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash", "tier": "light" }
+        { "id": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash", "tier": "light" },
+        { "id": "google/gemma-4-31b-it", "label": "Gemma 4 31B IT", "tier": "previous" },
+        { "id": "google/gemma-4-26b-a4b-it", "label": "Gemma 4 26B A4B IT", "tier": "light" }
       ]
     },
     {
@@ -44,7 +46,8 @@
       "display": "DeepSeek 深度求索",
       "models": [
         { "id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro", "tier": "flagship" },
-        { "id": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash", "tier": "previous" }
+        { "id": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash", "tier": "previous" },
+        { "id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "tier": "light" }
       ]
     },
     {
@@ -53,7 +56,8 @@
       "models": [
         { "id": "qwen/qwen3.8-max", "label": "Qwen3.8-Max", "tier": "flagship" },
         { "id": "qwen/qwen3.7-plus", "label": "Qwen3.7-Plus", "tier": "previous" },
-        { "id": "qwen/qwen3-coder-plus", "label": "Qwen3 Coder Plus", "tier": "specialist" }
+        { "id": "qwen/qwen3-coder-plus", "label": "Qwen3 Coder Plus", "tier": "specialist" },
+        { "id": "alibaba/qwen3.8-max", "label": "Qwen3.8-Max", "tier": "flagship" }
       ]
     },
     {
@@ -91,6 +95,20 @@
       "display": "字节跳动 豆包",
       "models": [
         { "id": "bytedance/doubao-seed-1-8", "label": "Doubao Seed 1.8", "tier": "flagship" }
+      ]
+    },
+    {
+      "vendor": "baidu",
+      "display": "百度 文心一言",
+      "models": [
+        { "id": "baidu/ernie-5.5-flash-preview", "label": "Ernie 5.5 Flash Preview", "tier": "light" }
+      ]
+    },
+    {
+      "vendor": "mistralai",
+      "display": "Mistral AI",
+      "models": [
+        { "id": "mistralai/mistral-large-4", "label": "Mistral Large 4", "tier": "flagship" }
       ]
     }
   ]

@@ -251,8 +251,10 @@ class BenchmarkCompareEndpointTests(unittest.TestCase):
             self.assertIn("setting", s)
         self.assertGreaterEqual(opus["channel_count"], 1)
         self.assertTrue(all("channel" in c and "provider" in c for c in opus["channels"]))
-        empty = next(m for m in data["models"] if m["id"] == "xai/grok-4.5")
-        self.assertEqual(empty["score_count"], 0)
+        # 没有公开评测分的模型也必须出现在 joined payload 里（具体哪个模型无分会随
+        # 公开榜单补数据而变化，所以动态找首个 score_count==0 的，不硬编码模型名）
+        empty = next((m for m in data["models"] if m["score_count"] == 0), None)
+        self.assertIsNotNone(empty, "joined payload 应包含至少一个无评测分的模型")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,8 @@ const state = {
   snapshot: null,
   tab: 'dashboard',
   channelFilter: '',
+  // 渠道页状态下拉：'' 全部 / ok 可用 / unconfigured 未配置 / off 已停用。
+  channelStatusFilter: '',
   keysFilter: '',
   vendorFilter: '',
   key: readStoredKey('gateway'),
@@ -56,6 +58,7 @@ const state = {
   maintenance: null,
   freeFilter: 'all',
   freeQuery: '',
+  freeSort: 'status', // 'status' 可用优先 | 'ability' 能力分优先
   maintlog: null,
   freealignLogs: null,
   backups: null,
@@ -684,7 +687,9 @@ function channelCard(c, i) {
     ? `${entries.slice(0, SHOW).map(bit).join(' · ')} <button type="button" class="btn small ghost" data-action="toggle-models" data-total="${entries.length}">… 共 ${entries.length} 个</button><span class="models-more" hidden>${entries.slice(SHOW).map(bit).join(' · ')}</span>`
     : entries.map(bit).join(' · ');
   const ptag = providerTag(c);
-  return `<article class="card row-card${cooling ? ' cooling' : ''}">
+  // 停用的渠道整卡泛黄，与冷却卡同一警示色系——列表里扫一眼就知道谁不在服务。
+  const disabled = c.enabled === false;
+  return `<article class="card row-card${cooling ? ' cooling' : ''}${disabled ? ' ch-disabled' : ''}">
     <div class="row-head">
       <h3 class="ch-name ${c.enabled === false ? 'off' : esc(c.tier === 'free' ? 'free' : c.tier === 'paid' ? 'paid' : '')}">${esc(c.name)}</h3>
       <span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span>
@@ -771,32 +776,54 @@ function renderConfigHealth() {
         + `会原样发给上游并被拒绝；请改填明文密钥或 env:VAR 引用`);
     }
   }
-  el.hidden = !issues.length;
-  if (!issues.length) return;
+  // 「知道了」关闭后 sessionStorage 记住当时的问题数；同类数量不再打扰，
+  // 但新问题（数量增加）会重新弹出——清除 ≠ 永久静音。
+  let dismissed = 0;
+  try { dismissed = parseInt(sessionStorage.getItem('health_dismissed') || '0', 10) || 0; } catch (_) { /* private mode */ }
+  el.hidden = !issues.length || issues.length <= dismissed;
+  if (el.hidden) return;
   el.innerHTML = `<span class="banner-title">配置体检发现 ${issues.length} 个问题</span>`
-    + `<span class="banner-items">${issues.map((t) => `<span class="banner-item">${esc(t)}</span>`).join('')}</span>`;
+    + `<span class="banner-items">${issues.map((t) => `<span class="banner-item">${esc(t)}</span>`).join('')}</span>`
+    + `<button type="button" class="btn small ghost banner-close" data-dismiss-health title="本次会话不再显示；出现新问题时会再次提醒">知道了</button>`;
 }
 
 function renderChannels() {
   renderConfigHealth();
   const list = $('channel-list');
   const kw = (state.channelFilter || '').trim().toLowerCase();
+  const status = state.channelStatusFilter || '';
+  // 状态分档与行内标记同口径：可用 = 启用且密钥就绪（冷却中仍算可用，
+  // 冷却只是暂缓）；未配置 = 启用但缺密钥；停用 = 手动关掉。快照未就绪时
+  // configured 未知，宁可归入可用也不误伤。
+  const byStatus = ([c]) => {
+    if (!status) return true;
+    const st = (state.snapshot?.channels || []).find((x) => x.name === c.name);
+    if (status === 'off') return c.enabled === false;
+    if (c.enabled === false) return false;
+    if (status === 'unconfigured') return !!st && st.configured === false;
+    return !st || st.configured !== false; // ok
+  };
   // Enabled channels first, then the config order (priority; the backend
   // sort stays untouched because it also drives $free expansion and retry
   // order). Array.prototype.sort is stable, so ties keep their order.
   const shown = state.config.channels
     .map((c, i) => [c, i])
     .filter(([c]) => !kw || channelHaystack(c).includes(kw))
+    .filter(byStatus)
     .sort((a, b) => (a[0].enabled === false ? 1 : 0) - (b[0].enabled === false ? 1 : 0));
   list.innerHTML = shown.length
     ? shown.map(([c, i]) => channelCard(c, i)).join('')
-    : `<div class="card"><p class="hint">${state.config.channels.length
-        ? `没有匹配「${esc(kw)}」的渠道 <button type="button" class="btn small ghost" data-clear-filter="channel-filter">清除筛选</button>`
+    : `<div class="card"><p class="hint">${(kw || status)
+        ? `没有匹配条件的渠道 <button type="button" class="btn small ghost" data-clear-filter="channel-filter">清除筛选</button>`
         : '还没有渠道，点击「新增渠道」开始。'}</p></div>`;
 }
 
 function routeCard(r, ri) {
   const nodes = r.channels || [];
+  // 检测链内重复渠道（下拉已防新增，但历史遗留/导入的脏数据仍可能存在）。
+  const dupCounts = {};
+  nodes.forEach((n) => { dupCounts[n] = (dupCounts[n] || 0) + 1; });
+  const dupes = Object.entries(dupCounts).filter(([, c]) => c > 1);
   const options = state.config.channels.filter((c) => c.protocol === r.protocol && !nodes.includes(c.name));
   // "$free" expands server-side to every enabled free channel speaking this
   // protocol (and follows the channel table as it changes). Offer it in the
@@ -805,11 +832,18 @@ function routeCard(r, ri) {
     && c.tier === 'free' && c.enabled !== false);
   const macroOpt = (hasFree && !nodes.includes('$free'))
     ? '<option value="$free">$free · 所有免费渠道（自动跟随）</option>' : '';
-  return `<article class="card">
+  // 排序模式三态：'' 继承全局 defaults.lb_strategy，'order'/'weighted' 强制覆盖。
+  const lbCur = r.lb || '';
+  const eff = effectiveLb(r);
+  return `<article class="card route-card">
     <div class="card-top">
       <div><span class="pill ${esc(r.protocol)}">${esc(r.protocol)}</span><h3>${esc(r.name)}</h3></div>
-      <button class="btn small danger" data-action="delete-route" data-index="${ri}">删除链</button>
+      <div class="route-head-actions">
+        <button class="btn small" data-action="set-strategy" data-index="${ri}">策略</button>
+        <button class="btn small danger" data-action="delete-route" data-index="${ri}">删除链</button>
+      </div>
     </div>
+    ${dupes.length ? `<div class="route-warn"><span>链内有重复渠道：${dupes.map(([n, c]) => `${esc(n)} ×${c}`).join('，')}</span><button class="btn small" data-action="dedupe-route" data-index="${ri}">去重（保留首次出现）</button></div>` : ''}
     <ol class="chain">
       ${nodes.length ? nodes.map((n, ci) => `<li>
         <span class="order">${ci + 1}</span><span>${n === '$free' ? '<span class="tag mixed">$free</span> 所有免费渠道' : esc(n)}</span>
@@ -826,6 +860,13 @@ function routeCard(r, ri) {
       </select>
       <button class="btn small" data-action="add-node" data-index="${ri}">添加渠道</button>
     </div>
+    <p class="hint chain-preview">实际请求顺序：${esc(strategyPreviewText(r, nodes))}${eff === 'weighted' ? '（候选按效果优先重排）' : ''}</p>
+    <div class="lb-row">
+      <span class="lb-label">排序模式</span>
+      <button class="btn small ${lbCur === '' ? 'primary' : 'ghost'}" data-action="set-lb" data-index="${ri}" data-lb="">继承全局${lbCur === '' ? `（实际：${eff === 'weighted' ? '按效果优先' : '按链顺序'}）` : ''}</button>
+      <button class="btn small ${lbCur === 'order' ? 'primary' : 'ghost'}" data-action="set-lb" data-index="${ri}" data-lb="order">按链顺序</button>
+      <button class="btn small ${lbCur === 'weighted' ? 'primary' : 'ghost'}" data-action="set-lb" data-index="${ri}" data-lb="weighted">按效果优先</button>
+    </div>
   </article>`;
 }
 
@@ -833,13 +874,13 @@ function renderRoutes() {
   $('route-list').innerHTML = state.config.routes.length
     ? state.config.routes.map(routeCard).join('')
     : '<div class="card"><p class="hint">还没有路由链。</p></div>';
-  renderRoutePresets();
+  renderRouteGlobal();
 }
 
-// ---- 免费/付费策略预设 ------------------------------------------------
-// 三种典型策略一键落到 default 链：只用免费、免费优先+付费兜底（二次
-// 确认）、固定渠道（把 $free 宏固化成当前免费渠道名单）。自定义链不动，
-// 「固定渠道」例外——它作用于所有含 $free 的链。预览实时反映当前链。
+// ---- 单链策略 ----------------------------------------------------------
+// 每条路由链独立设置策略：只用免费 / 免费优先+付费兜底 / 固定渠道 / 保持
+// 自定义。策略本质是一键重排「这一条链」的 channels——不碰其它链，也不
+// 批量改写。全局只有付费预算上限一处（对所有链生效），放在顶部全局设置。
 const BILLING_LABELS = { free: '免费', plan: '套餐', payg: '按量' };
 
 function enabledChannelsOf(protocol, tier) {
@@ -847,107 +888,129 @@ function enabledChannelsOf(protocol, tier) {
     && c.enabled !== false && (tier === 'paid' ? c.tier !== 'free' : c.tier === 'free'));
 }
 
-function defaultRoutes() {
-  return (state.config.routes || []).filter((r) => r.name === 'default');
-}
-
-function routeChainPreview(route) {
-  const parts = (route.channels || []).map((name) => {
+// 把链的 channels 解析成人话（卡片预览 + 策略弹窗预览共用）。
+function strategyPreviewText(route, channels) {
+  const list = channels || route.channels || [];
+  const parts = list.map((name) => {
     if (name === '$free') {
       const free = enabledChannelsOf(route.protocol, 'free');
       return free.length
-        ? `免费（${free.length} 家：${free.slice(0, 3).map((c) => c.name).join('、')}${free.length > 3 ? ' 等' : ''}），全部不可用再`
-        : '免费宏（当前没有可用免费渠道！）再';
+        ? `免费（${free.length} 家：${free.slice(0, 3).map((c) => c.name).join('、')}${free.length > 3 ? ' 等' : ''}）`
+        : '免费宏（当前没有可用免费渠道！）';
     }
     const c = (state.config.channels || []).find((x) => x.name === name);
     if (!c) return `${name}（缺失）`;
     return c.tier === 'free' ? `${name}（免费）` : `${name}（可能产生费用）`;
   });
-  return `${route.protocol}:${route.name}：${parts.join(' → ') || '（空链）'}`;
+  return parts.join(' → ') || '（空链）';
 }
 
-function renderRoutePresets() {
-  const box = $('route-preview');
-  if (!box) return;
-  const lines = (state.config.routes || [])
-    .filter((r) => r.name === 'default' || (r.channels || []).includes('$free'))
-    .map(routeChainPreview);
-  box.innerHTML = lines.length
-    ? lines.map((l) => esc(l)).join('<br>')
-    : '还没有路由链。';
+// 某策略下这条链会变成什么 channels；返回 null 表示该策略无法套用。
+function computeStrategyChannels(route, kind) {
+  const free = enabledChannelsOf(route.protocol, 'free');
+  const paid = enabledChannelsOf(route.protocol, 'paid');
+  if (kind === 'free-only') {
+    return free.length ? ['$free'] : null;
+  }
+  if (kind === 'free-first') {
+    if (free.length) return ['$free', ...paid.map((c) => c.name)];
+    return paid.length ? paid.map((c) => c.name) : null;
+  }
+  if (kind === 'fixed') {
+    let changed = false;
+    const out = [];
+    (route.channels || []).forEach((name) => {
+      if (name === '$free') { changed = true; out.push(...free.map((c) => c.name)); }
+      else out.push(name);
+    });
+    return changed ? out : null;
+  }
+  return null; // custom: 保持当前列表不变
+}
+
+// 打开单链策略弹窗：选策略 → 实时预览 → 确认后只改这一条链。
+function openStrategyModal(ri) {
+  const route = state.config.routes[ri];
+  if (!route) return;
+  const paid = enabledChannelsOf(route.protocol, 'paid');
+  const opts = [
+    ['custom', '保持自定义', '不自动管理，渠道列表完全按你手动排的顺序'],
+    ['free-only', '只用免费', '只走免费渠道（$free 宏自动跟随），免费全挂则请求失败，不产生费用'],
+    ['free-first', '免费优先 + 付费兜底', '免费不可用时才交给付费渠道，可能产生真实费用'],
+    ['fixed', '固定渠道', '把链里的 $free 展开成当前免费渠道名单，之后新增免费渠道不再自动加入'],
+  ];
+  // 默认选中：当前链恰好匹配哪种就高亮哪种，否则 custom（保守，不掩盖手动编辑）。
+  const cur = route.channels || [];
+  const freeCh = enabledChannelsOf(route.protocol, 'free');
+  let selected = 'custom';
+  if (cur.length === 1 && cur[0] === '$free' && freeCh.length) selected = 'free-only';
+  else if (cur[0] === '$free'
+    && cur.slice(1).length === paid.length
+    && cur.slice(1).every((n) => paid.some((c) => c.name === n))) selected = 'free-first';
+  const previewFor = (kind) => {
+    if (kind === 'custom') return strategyPreviewText(route, cur);
+    const next = computeStrategyChannels(route, kind);
+    return next ? strategyPreviewText(route, next) : '（该策略无法套用：没有匹配的可用渠道）';
+  };
+  const html = `<form id="strategy-form">
+    <div class="strategy-options">
+      ${opts.map(([k, label, desc]) => `
+        <label class="strategy-opt">
+          <input type="radio" name="skind" value="${k}" ${k === selected ? 'checked' : ''}>
+          <span class="strategy-label">${esc(label)}</span>
+          <span class="strategy-desc">${esc(desc)}</span>
+        </label>`).join('')}
+    </div>
+    <div class="field"><label>应用后实际请求顺序</label>
+      <p class="hint strategy-preview" id="strategy-preview">${esc(previewFor(selected))}</p></div>
+    <div class="modal-foot">
+      <button type="button" class="btn ghost" id="strategy-cancel">取消</button>
+      <button type="submit" class="btn primary">应用到此链</button>
+    </div>
+  </form>`;
+  openModal(`修改「${route.name}」链策略`, html);
+  const form = $('strategy-form');
+  const preview = $('strategy-preview');
+  form.querySelectorAll('input[name="skind"]').forEach((radio) => {
+    radio.addEventListener('change', () => { preview.textContent = previewFor(radio.value); });
+  });
+  $('strategy-cancel').onclick = () => closeModal();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const kind = form.querySelector('input[name="skind"]:checked').value;
+    if (kind === 'custom') { closeModal(); return; }
+    const next = computeStrategyChannels(route, kind);
+    if (!next) { toast('该策略无法套用：没有匹配的可用渠道', 'bad'); return; }
+    if (kind === 'free-first') {
+      const paidList = paid.map((c) => c.name);
+      if (!(await askConfirm('启用付费兜底？',
+        '免费渠道全部不可用时，请求会按顺序交给付费渠道（'
+        + (paidList.join('、') || '当前无付费渠道') + '），可能产生真实费用。'))) return;
+    }
+    route.channels = next;
+    closeModal(true);
+    markDirty();
+    renderRoutes();
+    toast(`「${route.name}」链已切换为「${opts.find((o) => o[0] === kind)[1]}」`);
+  };
+}
+
+function effectiveLb(route) {
+  // '' 继承全局；老配置没有 lb_strategy 字段时兜底 order。
+  const own = (route.lb || '').trim().toLowerCase();
+  if (own === 'order' || own === 'weighted') return own;
+  const glob = ((state.config.defaults && state.config.defaults.lb_strategy) || 'order').trim().toLowerCase();
+  return glob === 'weighted' ? 'weighted' : 'order';
+}
+
+function renderRouteGlobal() {
   const budget = $('paid-budget');
   if (budget && document.activeElement !== budget) {
     budget.value = (state.config.defaults && state.config.defaults.paid_budget_tokens) || 0;
   }
-}
-
-async function applyRoutePreset(kind) {
-  const routes = state.config.routes || [];
-  if (kind === 'fixed') {
-    const backup = JSON.stringify(routes);
-    let changed = 0;
-    routes.forEach((r) => {
-      const out = [];
-      (r.channels || []).forEach((name) => {
-        if (name === '$free') {
-          changed += 1;
-          out.push(...enabledChannelsOf(r.protocol, 'free').map((c) => c.name));
-        } else {
-          out.push(name);
-        }
-      });
-      r.channels = out;
-    });
-    if (!changed) {
-      toast('当前路由链没有 $free 宏可固化', 'warn');
-      return;
-    }
-    if (routes.some((r) => !(r.channels || []).length)) {
-      state.config.routes = JSON.parse(backup);
-      toast('有协议没有可用免费渠道，固化后会得到空链，已取消', 'bad');
-      return;
-    }
-    const ok = await saveConfig();
-    if (ok) toast('已固化为固定渠道：新增免费渠道不再自动加入');
-    return;
-  }
-  if (kind === 'free-first') {
-    const paidList = defaultRoutes().flatMap((r) =>
-      enabledChannelsOf(r.protocol, 'paid').map((c) => `${r.protocol}:${c.name}`));
-    const okGo = await askConfirm('启用付费兜底？',
-      '免费渠道全部不可用时，请求会按顺序交给付费渠道（'
-      + (paidList.join('、') || '当前无付费渠道，仅写免费宏') + '），可能产生真实费用。');
-    if (!okGo) return;
-  }
-  const backup = JSON.stringify(routes);
-  const skipped = [];
-  defaultRoutes().forEach((r) => {
-    const free = enabledChannelsOf(r.protocol, 'free');
-    const paid = enabledChannelsOf(r.protocol, 'paid');
-    if (kind === 'free-only') {
-      if (free.length) r.channels = ['$free'];
-      else skipped.push(`${r.protocol}: 无免费渠道`);
-    } else if (free.length) {
-      r.channels = ['$free', ...paid.map((c) => c.name)];
-    } else if (paid.length) {
-      r.channels = paid.map((c) => c.name);
-      skipped.push(`${r.protocol}: 无免费渠道，仅保留付费链`);
-    } else {
-      skipped.push(`${r.protocol}: 无可用渠道`);
-    }
-  });
-  if ((defaultRoutes().some((r) => !(r.channels || []).length))) {
-    state.config.routes = JSON.parse(backup);
-    toast('预设会得到空链，已取消（先启用或配置渠道）', 'bad');
-    renderRoutes();
-    return;
-  }
-  const ok = await saveConfig();
-  if (ok) {
-    toast(kind === 'free-only'
-      ? '已切换为「只用免费」'
-      : '已切换为「免费优先+付费兜底」（免费不可用时才走付费）');
-    skipped.forEach((s) => toast(s, 'warn'));
+  const lb = $('lb-strategy');
+  if (lb && document.activeElement !== lb) {
+    lb.value = effectiveLb({ lb: '' });
   }
 }
 
@@ -4386,11 +4449,21 @@ function freeRows(free) {
   const rows = [];
   (free.channels || []).forEach((ch) => {
     (ch.models || []).forEach((m) => {
-      rows.push({ ch, m, status: freeModelState(m, ch) });
+      rows.push({ ch, m, status: freeModelState(m, ch), ability: m.ability });
     });
   });
+  // 能力分：null（未评测）排到有分的后面，用 -1 兜底。
+  const ab = (r) => (r.ability == null ? -1 : Number(r.ability));
+  const byStatusThenName = (a, b) =>
+    a.ch.name.localeCompare(b.ch.name) || a.m.model.localeCompare(b.m.model);
+  if (state.freeSort === 'ability') {
+    // 能力优先：有分的按分降序在前，无分的在后仍按可用状态排。
+    return rows.sort((a, b) => (ab(b) - ab(a))
+      || FREE_RANK[a.status] - FREE_RANK[b.status] || byStatusThenName(a, b));
+  }
+  // 默认：可用优先，同一状态内能力高的排前面——「哪些免费模型现在能用且最强」。
   return rows.sort((a, b) => FREE_RANK[a.status] - FREE_RANK[b.status]
-    || a.ch.name.localeCompare(b.ch.name) || a.m.model.localeCompare(b.m.model));
+    || (ab(b) - ab(a)) || byStatusThenName(a, b));
 }
 
 function freeQuotaCell(q) {
@@ -4495,7 +4568,10 @@ function renderFreePage(free) {
   ];
   $('free-filters').innerHTML = filters.map(([key, label, n]) =>
     `<button class="btn small ${state.freeFilter === key ? 'active' : ''}" data-free-filter="${key}">`
-    + `${label} ${n}</button>`).join('');
+    + `${label} ${n}</button>`).join('')
+    + `<span class="free-sort"><span class="sub-note">排序</span>`
+    + `<button class="btn small ${state.freeSort === 'status' ? 'active' : ''}" data-free-sort="status">可用优先</button>`
+    + `<button class="btn small ${state.freeSort === 'ability' ? 'active' : ''}" data-free-sort="ability">能力优先</button></span>`;
 
   const q = (state.freeQuery || '').trim().toLowerCase();
   const visible = rows.filter((r) => {
@@ -4512,12 +4588,12 @@ function renderFreePage(free) {
 
   const box = $('free-body');
   if (!rows.length) {
-    box.innerHTML = '<tr><td colspan="7" class="sub-note">还没有免费渠道。到「渠道配置」把渠道的套餐设为「免费」，'
+    box.innerHTML = '<tr><td colspan="8" class="sub-note">还没有免费渠道。到「渠道配置」把渠道的套餐设为「免费」，'
       + '它的模型就会出现在这里。</td></tr>';
     return;
   }
   if (!visible.length) {
-    box.innerHTML = '<tr><td colspan="7" class="sub-note">没有符合筛选条件的模型。'
+    box.innerHTML = '<tr><td colspan="8" class="sub-note">没有符合筛选条件的模型。'
       + ' <button type="button" class="btn small ghost" data-clear-filter="free-filter">清除筛选</button></td></tr>';
     return;
   }
@@ -4536,10 +4612,16 @@ function renderFreePage(free) {
         + `${new Date((m.test.tested_at || 0) * 1000).toLocaleString()}：`
         + `${esc(m.test.error || '未通过')}（仍可路由，测验失败不等于模型失效）</div>`
       : '';
+    // 能力分：来自公开评测（SWE/Tau2/BrowseComp 等 Agent 榜单），null 表示未收录。
+    const ab = m.ability;
+    const abCell = ab == null
+      ? '<span class="sub-note" title="暂无公开评测数据，以实际调用表现为准">未评测</span>'
+      : `<span class="ability-score" title="Agent 能力综合分（公开评测，越高越强）">${Number(ab).toFixed(1)}</span>`;
     return '<tr>'
       + `<td><code>${esc(m.model)}</code> <button class="btn small ghost free-copy" `
       + `title="复制模型名" data-model="${esc(m.model)}">复制</button>`
       + (m.in_queue ? ' <span class="tag active">队列中</span>' : '') + '</td>'
+      + `<td>${abCell}</td>`
       + `<td><strong>${esc(ch.provider_name || ch.provider)}</strong>`
       + `<div class="sub-note">${esc(ch.name)}${ch.mode ? ` · ${esc(ch.mode)}` : ''}</div></td>`
       + `<td><span class="tag ${cls}">${label}</span>${reason}${testNote}</td>`
@@ -4586,6 +4668,12 @@ $('btn-retest-failed').onclick = async (e) => {
 };
 
 $('free-filters').addEventListener('click', (e) => {
+  const sort = e.target.closest('[data-free-sort]');
+  if (sort) {
+    state.freeSort = sort.dataset.freeSort;
+    renderFreePage((state.maintenance && state.maintenance.free_models) || {});
+    return;
+  }
   const b = e.target.closest('[data-free-filter]');
   if (!b) return;
   state.freeFilter = b.dataset.freeFilter;
@@ -4704,6 +4792,27 @@ $('btn-run-maintenance').onclick = async (e) => {
     await loadMaintenance();
     toast(r.busy ? (r.message || '上一次自维护仍在运行，本次已跳过') : '运维分析完成',
       r.busy ? 'warn' : 'ok');
+  } catch (err) {
+    toast(err.message, 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = label;
+  }
+};
+
+$('btn-refresh-benchmarks').onclick = async (e) => {
+  const b = e.target;
+  const label = b.textContent;
+  b.disabled = true;
+  b.textContent = '刷新中…';
+  try {
+    const r = await api('/api/maintenance/refresh-benchmarks', { method: 'POST' });
+    const matched = Object.keys(r.matched || {}).length;
+    const ok = matched > 0 || (!r.busy && !(r.errors && r.errors.length));
+    const tone = r.busy ? 'warn' : (ok ? 'ok' : 'bad');
+    toast(r.summary || '能力分已刷新', tone);
+    await loadTasks();
+    await loadRecommendations().catch(() => {});
   } catch (err) {
     toast(err.message, 'bad');
   } finally {
@@ -6479,6 +6588,20 @@ function bindEvents() {
     renderChannels();
   });
   $('channel-filter').addEventListener('input', (e) => applyChannelFilter(e.target.value));
+  $('channel-status-filter').addEventListener('change', (e) => {
+    state.channelStatusFilter = e.target.value;
+    renderChannels();
+  });
+  // 体检横幅「知道了」：横幅内容每次重渲染都会重建，事件挂在容器上委托。
+  const healthBanner = $('config-health');
+  healthBanner.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-dismiss-health]')) return;
+    try {
+      const count = healthBanner.querySelectorAll('.banner-item').length;
+      sessionStorage.setItem('health_dismissed', String(count));
+    } catch (_) { /* private mode：关掉本次渲染即可 */ }
+    healthBanner.hidden = true;
+  });
   const applyKeysFilter = debounce((value) => {
     state.keysFilter = value;
     renderApiKeys(state.keysPayload);
@@ -6490,13 +6613,17 @@ function bindEvents() {
   });
   $('vendor-filter').addEventListener('input', (e) => applyVendorFilter(e.target.value));
   $('btn-add-route').onclick = openRouteModal;
-  document.querySelectorAll('[data-preset]').forEach((btn) => {
-    btn.onclick = () => applyRoutePreset(btn.dataset.preset);
-  });
   $('paid-budget').addEventListener('change', (e) => {
     state.config.defaults = state.config.defaults || {};
     state.config.defaults.paid_budget_tokens = Math.max(0, Number(e.target.value) || 0);
     markDirty();
+  });
+  $('lb-strategy').addEventListener('change', (e) => {
+    state.config.defaults = state.config.defaults || {};
+    const v = e.target.value === 'weighted' ? 'weighted' : 'order';
+    state.config.defaults.lb_strategy = v;
+    markDirty();
+    renderRoutes(); // 继承全局的链卡片要刷新「实际：」标注
   });
   $('btn-refresh').onclick = () => loadState().catch((e) => toast(e.message, 'bad'));
   $('btn-reload').onclick = async () => {
@@ -6665,6 +6792,13 @@ function bindEvents() {
     const pos = Number(b.dataset.pos);
     const route = state.config.routes[ri];
     const action = b.dataset.action;
+    if (action === 'set-strategy') { openStrategyModal(ri); return; }
+    if (action === 'set-lb') {
+      route.lb = b.dataset.lb || '';
+      markDirty();
+      renderRoutes();
+      return;
+    }
     if (action === 'delete-route') {
       if (!(await askConfirmTyped({ title: '删除链',
         message: `删除链「${route.name}」？`, expected: route.name }))) return;
@@ -6675,11 +6809,22 @@ function bindEvents() {
       [route.channels[pos + 1], route.channels[pos]] = [route.channels[pos], route.channels[pos + 1]];
     } else if (action === 'remove-node') {
       route.channels.splice(pos, 1);
+    } else if (action === 'dedupe-route') {
+      const seen = new Set();
+      const before = route.channels.length;
+      route.channels = route.channels.filter((n) => {
+        if (seen.has(n)) return false;
+        seen.add(n);
+        return true;
+      });
+      if (route.channels.length < before) toast('已去除重复渠道，保留首次出现的位置');
     } else if (action === 'add-node') {
       const value = $('add-select-' + ri).value;
+      if (!value) return toast('请先选择渠道', 'bad');
+      // 下拉已排除链内已有渠道，这里再兜底一层：任何来源都不允许同链重复。
+      if (route.channels.includes(value)) return toast(`「${value}」已在链中，无需重复添加`, 'bad');
       const picked = state.config.channels.find((c) => c.name === value);
       if (!picked || picked.protocol !== route.protocol) return toast('渠道协议与链协议不一致', 'bad');
-      if (!value) return toast('请先添加同协议的渠道', 'bad');
       route.channels.push(value);
     }
     markDirty();

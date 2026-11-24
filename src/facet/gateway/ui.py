@@ -621,6 +621,14 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, app.run_maintenance("manual"))
         return True
 
+    if path == "/api/maintenance/refresh-benchmarks" and method == "POST":
+        # Fetch public benchmark scores (Vals Terminal-Bench 4.0) now and
+        # layer them over the bundled snapshot. A busy sweep answers 200
+        # with busy: true — the console api() helper throws on non-2xx, and
+        # the busy toast is an expected outcome, not an error.
+        _json(h, 200, app.refresh_benchmarks("manual"))
+        return True
+
     if path == "/api/changes" and method == "GET":
         # Change events (newest first) + per-source state, optional ?limit=N.
         query = urlsplit(h.path or "").query

@@ -155,6 +155,8 @@ PERSIST_KIND_LABELS = {
     "config_backup": "配置备份 config.json.bak",
     "maintenance_pool": "维护模型池 maintenance_models.json",
     "change_log": "变更事件 change-events.jsonl",
+    "benchmark_override": "能力分覆盖 model-scores.override.json",
+    "benchmark_refresh_log": "能力分刷新日志 benchmark_refresh.jsonl",
 }
 # Report logs grow one line per sweep; past this size they keep only the last
 # REPORT_LOG_KEEP lines (audit.jsonl rotates by bytes, usage.json by retention).
@@ -1014,6 +1016,31 @@ class ModelScopeCheckinRunner(ScheduledTask):
         return 3600.0
 
 
+class BenchmarkRefreshRunner(ScheduledTask):
+    """Scheduled public-benchmark refresh (benchmark_sync).
+
+    Vals Terminal-Bench 4.0 scores are fetched from the public leaderboard
+    and written to a user-dir override file that benchmarks.py layers over
+    the bundled snapshot, so new scores appear without reinstalling. Only
+    models already known to the registry are updated; the override carries
+    only the vals-harness entries, so a future bundled update to other
+    sources is never frozen by a stale override. Shares
+    App.benchmark_refresh_lock with the console button, so the two never
+    overlap. Runs once after startup settles, then every
+    defaults.benchmark_refresh_hours (0 disables).
+    """
+
+    key = "benchmark_refresh"
+    label = "能力分刷新"
+    description = "抓取公开榜单 Terminal-Bench 4.0 分数，覆盖到本地能力分快照"
+    hours_key = "benchmark_refresh_hours"
+    FIRST_DELAY = 600.0
+
+    def run_once(self) -> str:
+        report = self.app.refresh_benchmarks("scheduled")
+        return report.get("summary") or "能力分刷新完成"
+
+
 class HealthProber:
     """Background liveness probes for channels sitting in a short cooldown.
 
@@ -1145,6 +1172,12 @@ class App:
         keys_file: str | Path | None = None,
     ):
         self.config_path = Path(config_path) if config_path else None
+        # Point the benchmark loader at a user-dir override file (next to
+        # config.json) where the refresh sweep writes freshly fetched public
+        # scores; layered on top of the bundled snapshot by benchmarks.py.
+        bench_mod.set_override_path(
+            self.config_path.parent / "model-scores.override.json"
+            if self.config_path else None)
         self.raw = self._read_raw()
         # Channel ids are the stable anchors subscriptions link to; assign and
         # persist them once so later console renames cannot break the links.
@@ -1263,6 +1296,7 @@ class App:
         self.free_verify_runner: "FreeVerifyRunner | None" = None
         self.watch_runner: "WatchRunner | None" = None
         self.modelscope_checkin_runner: "ModelScopeCheckinRunner | None" = None
+        self.benchmark_refresh_runner: "BenchmarkRefreshRunner | None" = None
         self.maintenance_reports: list[dict] = self._load_report_history("maintenance.jsonl")
         self.free_align_reports: list[dict] = self._load_report_history("freealign.jsonl")
         self.maintenance_lock = threading.Lock()
@@ -1278,6 +1312,8 @@ class App:
         self.free_verify_lock = SerialGate()
         # Same for the source-watch sweep (scheduled + button).
         self.watch_lock = SerialGate()
+        # Same for the public-benchmark refresh sweep (scheduled + button).
+        self.benchmark_refresh_lock = SerialGate()
         # Verified maintenance-model queue (see maintenance.probe_maintenance_models).
         self.maintenance_pool = maint.load_maintenance_pool(self)
         self.maintenance_pool_lock = threading.Lock()
@@ -1325,6 +1361,7 @@ class App:
         self.free_verify_runner = FreeVerifyRunner(self)
         self.watch_runner = WatchRunner(self)
         self.modelscope_checkin_runner = ModelScopeCheckinRunner(self)
+        self.benchmark_refresh_runner = BenchmarkRefreshRunner(self)
         if self.config.defaults.catalog_refresh_hours:
             self.catalog_refresher.start()
         if self.config.defaults.maintenance_hours:
@@ -1337,6 +1374,8 @@ class App:
             self.watch_runner.start()
         if self.config.defaults.modelscope_checkin_hours:
             self.modelscope_checkin_runner.start()
+        if self.config.defaults.benchmark_refresh_hours:
+            self.benchmark_refresh_runner.start()
         # Created even when switched off, so the console can list the sweep;
         # the thread only runs with a positive probe_interval_seconds.
         self.health_prober = HealthProber(self, self.config.defaults.probe_interval_seconds)
@@ -2576,6 +2615,14 @@ class App:
         ensure_channel_ids(merged)
         config = parse_config(merged)  # validate before touching the file
         self._check_vendor_binding(config)
+        # 存储层去重：同一条链里重复同一渠道没有意义（failover 会反复撞同一
+        # 个已经失败的渠道）。运行时 parse_config 在 $free 展开后已经去重，
+        # 这里把落盘文件也清干净——无论重复从哪混进来（旧版批量改写、直接
+        # 编辑文件、导入迁移包），任意一次保存都会自动修复，前端展示随之干净。
+        for route in merged.get("routes") or []:
+            ch = route.get("channels")
+            if isinstance(ch, list) and len(ch) != len(set(ch)):
+                route["channels"] = list(dict.fromkeys(ch))
         if persist and self.config_path:
             tmp = self.config_path.with_name(self.config_path.name + ".tmp")
             tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -3762,6 +3809,92 @@ class App:
         finally:
             self.watch_lock.release()
 
+    # -------------------------------------------------- benchmark refresh
+    def refresh_benchmarks(self, trigger: str = "manual") -> dict:
+        """One public-benchmark refresh sweep: fetch Vals TB4, write override.
+
+        The scheduled sweep and the console button share
+        App.benchmark_refresh_lock — both fetch the same public page and
+        rewrite the same override file, so two overlapping sweeps would race
+        on the atomic replace. A contender arriving mid-sweep queues instead
+        of being dropped. Never raises; failures land in the returned report
+        (and the task table's last_error via the runner).
+        """
+        if not self.benchmark_refresh_lock.acquire():
+            return {"busy": True, "trigger": trigger,
+                    "summary": "已有能力分刷新在运行，本次跳过",
+                    "matched": {}, "errors": ["busy"]}
+        try:
+            from .. import benchmark_sync as bs
+            live = bench_mod._load("model-scores.json", {"models": {}})
+            new_live, report = bs.sync_terminal_bench(live)
+            summary = self._apply_benchmark_override(new_live, report)
+            report["trigger"] = trigger
+            report["summary"] = summary
+            if trigger == "manual" and self.benchmark_refresh_runner:
+                self.benchmark_refresh_runner.note_run(summary)
+            return report
+        except Exception as exc:  # noqa: BLE001 — a broken sweep must not kill the gateway
+            return {"trigger": trigger, "matched": {},
+                    "errors": [f"{exc!r}"],
+                    "summary": f"能力分刷新失败：{exc}"}
+        finally:
+            self.benchmark_refresh_lock.release()
+
+    def _apply_benchmark_override(self, new_live: dict, report: dict) -> str:
+        """Persist the refreshed Vals scores to the user-dir override file.
+
+        Only the vals-harness score entries are written, so non-Vals sources
+        keep coming from the bundled snapshot (and stay fresh across
+        releases). A failed/empty match never blanks the existing file.
+        Returns a one-line summary for the task table.
+        """
+        from .. import benchmark_sync as bs
+        matched = report.get("matched") or {}
+        errors = report.get("errors") or []
+        if not matched:
+            if errors:
+                return "能力分刷新失败：" + "；".join(errors[:2])
+            return "没有匹配到可更新的模型"
+        override_models: dict = {}
+        for key in matched:
+            mdl = (new_live.get("models") or {}).get(key) or {}
+            vals_scores = [s for s in (mdl.get("scores") or [])
+                           if s.get("bench") == bs.BENCH_ID
+                           and s.get("harness") == bs.VALS_HARNESS]
+            if vals_scores:
+                override_models[key] = {"scores": vals_scores}
+        if not override_models:
+            return "没有可写入的分数"
+        override = {"models": override_models}
+        if not self.config_path:
+            bench_mod.clear_cache()
+            return f"已刷新 {len(override_models)} 个模型（未持久化）"
+        path = self.config_path.parent / "model-scores.override.json"
+        try:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(override, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as exc:
+            self._note_write_failure("benchmark_override", exc)
+            return f"能力分写入失败：{exc}"
+        self._note_write_ok("benchmark_override")
+        bench_mod.clear_cache()
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "trigger": report.get("trigger"),
+            "matched": len(override_models),
+            "changes": dict(matched),
+            "errors": errors,
+        }
+        append_jsonl(self.config_path.parent / "benchmark_refresh.jsonl", entry,
+                     "benchmark_refresh_log", on_error=self._note_write_failure,
+                     on_ok=self._note_write_ok)
+        names = ", ".join(sorted(override_models)[:5])
+        more = f" 等 {len(override_models)} 个" if len(override_models) > 5 else ""
+        return f"已刷新 {len(override_models)} 个模型的能力分：{names}{more}"
+
     def changes_payload(self, limit: int = watch_mod.EVENTS_VIEW_LIMIT) -> dict:
         """Console payload: change events (newest first) + per-source state."""
         return watch_mod.changes_payload(self, limit)
@@ -4097,7 +4230,8 @@ class App:
         """The console's task list: cycle, latest outcome and next run."""
         runners = (self.catalog_refresher, self.maintenance_runner,
                    self.free_align_runner, self.free_verify_runner,
-                   self.watch_runner, self.modelscope_checkin_runner)
+                   self.watch_runner, self.modelscope_checkin_runner,
+                   self.benchmark_refresh_runner)
         tasks = [runner.status() for runner in runners if runner]
         if self.notifier:
             tasks.append(self._notifier_task())

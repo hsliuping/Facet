@@ -29,6 +29,7 @@ with one-click apply in the self-maintenance page).
 stdlib only. Usage:
     python tools/weekly_maintenance.py                     # full run (network)
     python tools/weekly_maintenance.py --skip-sync         # reuse the live table
+    python tools/weekly_maintenance.py --skip-bench-sync   # skip public score fetch
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ import sync_models_dev  # noqa: E402  (identity, FIRST_PARTY)
 import validate_registry  # noqa: E402
 
 SYNC_SCRIPT = TOOLS / "sync_models_dev.py"
+BENCH_SYNC_SCRIPT = TOOLS / "sync_benchmarks.py"
 BUILD_SCRIPT = TOOLS / "build_package.py"
 STAGING = REPO / "registry" / ".staging-model-registry.json"
 SUGGESTIONS = REPO / "registry" / "route-suggestions.json"
@@ -257,6 +259,8 @@ def main(argv=None) -> int:
     ap.add_argument("--registry", default="registry/model-registry.json")
     ap.add_argument("--skip-sync", action="store_true",
                     help="skip the upstream fetch; reuse the live table")
+    ap.add_argument("--skip-bench-sync", action="store_true",
+                    help="skip fetching public benchmark scores (Vals)")
     args = ap.parse_args(argv)
 
     registry_path = _path(REPO, args.registry)
@@ -291,6 +295,22 @@ def main(argv=None) -> int:
                 "dangling_annotations": int(m.group(1)) if m else 0,
             }
             live = table
+
+        # Refresh public benchmark scores (Vals Terminal-Bench) into
+        # registry/model-scores.json before the snapshot is copied, so the
+        # bundled data ships the latest scores. Non-fatal: a network/parse
+        # failure keeps the last-good table and is logged, never blocks the run.
+        if not args.skip_bench_sync:
+            bp = subprocess.run([sys.executable, str(BENCH_SYNC_SCRIPT)],
+                                cwd=REPO, capture_output=True, text=True)
+            log["steps"]["bench_sync"] = {
+                "rc": bp.returncode,
+                "tail": (bp.stdout or "")[-300:],
+            }
+            if bp.returncode != 0:
+                log.setdefault("warnings", []).append(
+                    f"bench_sync failed rc={bp.returncode}: "
+                    f"{(bp.stderr or bp.stdout or '')[-200:]}")
 
         proc = subprocess.run([sys.executable, str(BUILD_SCRIPT), "--skip-build"],
                               cwd=REPO, capture_output=True, text=True)

@@ -270,7 +270,7 @@ class ConsoleTests(unittest.TestCase):
         css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
         # 八个筛选入口：渠道/厂家/用量模型/请求日志/免费模型/API Keys/对比 + 目录弹窗
         for anchor in [
-            "没有匹配「${esc(kw)}」的渠道",
+            "没有匹配条件的渠道",  # 渠道空态：关键字 + 状态下拉双条件，文案不再回显 kw
             "没有匹配「${esc(kw)}」的厂家",
             "没有匹配「${esc(kw)}」的 Key",
             "没有匹配的模型。",

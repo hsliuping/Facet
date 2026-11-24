@@ -109,8 +109,8 @@ def test_d1_free_models_table_has_expected_columns(free_console, free_api):
     # 注意：表头在 <thead> 中，通过查找父元素的 thead th
     headers = free_console.page.locator("#free-body").locator("xpath=../..").locator("thead th")
     header_texts = [headers.nth(i).inner_text() for i in range(headers.count())]
-    # 根据实际 DOM 结构，表头关键词（实际列为：模型、免费来源、状态、免费额度、限速、近 30 天、（最后一列空/操作）
-    expected_keywords = ["模型", "免费来源", "状态", "免费额度", "限速", "近 30 天"]
+    # 根据实际 DOM 结构，表头关键词（实际列为：模型、能力分、免费来源、状态、免费额度、限速、近 30 天、操作）
+    expected_keywords = ["模型", "能力分", "免费来源", "状态", "免费额度", "限速", "近 30 天"]
     for expected in expected_keywords:
         assert any(expected in h for h in header_texts), \
             f"缺少表头列: {expected} (实际: {header_texts})"
@@ -134,31 +134,38 @@ def test_d1_free_models_table_has_expected_columns(free_console, free_api):
         code_text = code_el.inner_text().strip()
         assert code_text, f"第 {i} 行模型名应非空，实际: '{code_text}'"
 
-        # 第 2 列：来源 - 包含提供商名称和渠道名
-        source_el = row.locator("td").nth(1)
+        # 第 2 列：能力分 - 公开评测 Agent 分，未收录显示「未评测」
+        ability_el = row.locator("td").nth(1)
+        expect(ability_el).to_be_visible()
+        ability_text = ability_el.inner_text().strip()
+        assert ability_text == "未评测" or ability_text.replace(".", "", 1).isdigit(), \
+            f"第 {i} 行能力分应为「未评测」或数字，实际: '{ability_text}'"
+
+        # 第 3 列：来源 - 包含提供商名称和渠道名
+        source_el = row.locator("td").nth(2)
         expect(source_el).to_be_visible()
         # 检查来源文本包含已知标识
         source_text = source_el.inner_text()
         assert "test" in source_text.lower(), f"来源文本应包含 test 标识: {source_text}"
 
-        # 第 3 列：状态标签
-        status_el = row.locator("td").nth(2)
+        # 第 4 列：状态标签
+        status_el = row.locator("td").nth(3)
         expect(status_el).to_be_visible()
 
-        # 第 4 列：额度 - 有免费额度条或文本
-        quota_el = row.locator("td").nth(3)
+        # 第 5 列：额度 - 有免费额度条或文本
+        quota_el = row.locator("td").nth(4)
         expect(quota_el).to_be_visible()
 
-        # 第 5 列：限速 - 有厂家 + 网关限速信息
-        rate_el = row.locator("td").nth(4)
+        # 第 6 列：限速 - 有厂家 + 网关限速信息
+        rate_el = row.locator("td").nth(5)
         expect(rate_el).to_be_visible()
 
-        # 第 6 列：近 30 天用量 - 有用量数据
-        usage_el = row.locator("td").nth(5)
+        # 第 7 列：近 30 天用量 - 有用量数据
+        usage_el = row.locator("td").nth(6)
         expect(usage_el).to_be_visible()
 
-        # 第 7 列：测试按钮存在
-        test_btn = row.locator("td").nth(6).locator("button.free-test")
+        # 第 8 列：测试按钮存在
+        test_btn = row.locator("td").nth(7).locator("button.free-test")
         expect(test_btn).to_be_visible()
 
 
@@ -171,7 +178,7 @@ def test_d1_free_models_empty_state(console):
     free_body = console.el("#free-body")
     expect(free_body).to_be_visible()
 
-    # 空态行：colspan=7，包含提示文案
+    # 空态行：colspan=8，包含提示文案
     empty_row = free_body.locator("tr:has(td.sub-note)")
     expect(empty_row).to_be_visible()
     expect(empty_row).to_contain_text("还没有免费渠道")

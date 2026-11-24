@@ -213,12 +213,15 @@ class PolicyWiringTests(unittest.TestCase):
 
     def test_console_has_preset_ui(self):
         html = (SRC / "static" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("route-presets", html)
+        # 顶部全局设置卡片（付费预算 + 默认排序模式）；每条链的免费/付费策略
+        # 与排序模式在对应链卡片里单独设置，不再是顶部批量按钮。
+        self.assertIn("route-global", html)
         self.assertIn("paid-budget", html)
+        self.assertIn("lb-strategy", html)
         js = (SRC / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("data-preset", js)
         self.assertIn("BILLING_LABELS", js)
-        self.assertIn("route-preview", js)
+        self.assertIn("set-strategy", js)  # 单链策略入口
 
 
 if __name__ == "__main__":
