@@ -256,6 +256,62 @@ class AppCredentialsTests(unittest.TestCase):
             "VOLC_ACCESSKEY": "ak-plain", "VOLC_SECRETKEY": "sk-rotated"})
 
 
+class ConfigVersionTests(unittest.TestCase):
+    """乐观锁版本只锁可见配置：密钥变化不得触发版本漂移。
+
+    首装向导的撞版本 bug：控制台 GET 之后设置管理密码，listen.admin_key
+    从「无」变「有（掩码 ***）」，掩码式哈希必变，向导保存时拿旧版本直接
+    被拒。哈希应剔除密钥本身，只锁可见配置。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "router.json"
+        self.path.write_text(json.dumps(base_config()), encoding="utf-8")
+        self.app = App(parse_config(base_config()), config_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_setting_admin_key_keeps_config_version(self):
+        before = self.app._compute_config_version(self.app.raw)
+        self.app.rotate_admin_key("sk-admin-secret", old_key="")
+        self.assertEqual(self.app._compute_config_version(self.app.raw), before)
+
+    def test_version_ignores_secrets_and_tracks_visible_changes(self):
+        version = self.app._compute_config_version
+        before = version(self.app.raw)
+        # 换密钥/新增渠道凭据都不动版本（含「无→有」的键出现场景）。
+        raw = dict(self.app.raw)
+        raw["channels"][0]["api_key"] = "rotated-plain-key"
+        raw["channels"][0]["creds"] = {"VOLC_ACCESSKEY": "ch-ak"}
+        self.app.apply_config(raw)
+        self.assertEqual(version(self.app.raw), before)
+        # 可见配置（档位）变化才推进版本。
+        raw = dict(self.app.raw)
+        raw["channels"][0]["tier"] = "paid"
+        self.app.apply_config(raw)
+        self.assertNotEqual(version(self.app.raw), before)
+
+    def test_version_ignores_wizard_flag(self):
+        """向导状态是服务端自持状态：完成向导不得使页面持有的版本过期，
+        否则向导后的第一次保存必撞 version mismatch。"""
+        before = self.app._compute_config_version(self.app.raw)
+        self.app.raw.setdefault("setup", {})["wizard_done"] = True
+        self.assertEqual(self.app._compute_config_version(self.app.raw), before)
+
+    def test_apply_config_preserves_wizard_flag(self):
+        """保存配置不得覆盖向导状态：控制台回放的 setup 段永远是旧值，
+        采纳它会 wizard_done 被打回 False，向导反复弹出。"""
+        self.app.raw["setup"] = {"wizard_done": True}
+        raw = json.loads(json.dumps(base_config()))
+        raw["setup"] = {"wizard_done": False}  # 模拟前端回放旧状态
+        self.app.apply_config(raw)
+        self.assertTrue(self.app.raw["setup"]["wizard_done"])
+        disk = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertTrue(disk["setup"]["wizard_done"])
+
+
 class AppDuplicateChannelTests(unittest.TestCase):
     """复制渠道：端点/密钥/映射整体克隆，新名去重后紧跟源渠道落盘。"""
 

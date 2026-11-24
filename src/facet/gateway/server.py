@@ -2451,40 +2451,56 @@ class App:
         """Compute a stable hash of the visible config (excluding secrets).
 
         Used for optimistic locking: the console sends the version it saw on GET,
-        and POST fails with 409 if the server version has changed.
+        and POST fails with 409 if the server version has changed. Secret values
+        are dropped before hashing instead of masked: a mask keeps the key
+        present, so a first-run password change (listen.admin_key going from
+        absent to "***") would read as a config edit and reject the wizard's
+        save with a version mismatch. env: references stay in the hash — they
+        are visible config, not secrets.
         """
         import hashlib
         visible = copy.deepcopy(raw)
-        # Mask secrets before hashing
+        # The wizard flag is server-held state written by /api/setup/wizard,
+        # not config the console edits; finishing the wizard must not
+        # invalidate the version a page already holds, or its next save
+        # fails with a version mismatch.
+        visible.pop("setup", None)
+
+        def drop_secret(mapping: dict, field: str) -> None:
+            value = mapping.get(field)
+            if value and not str(value).startswith("env:"):
+                mapping.pop(field, None)
+
+        def drop_cred_map(creds: dict) -> None:
+            for env_name, value in list(creds.items()):
+                if value and not str(value).startswith("env:"):
+                    creds.pop(env_name, None)
+
         for channel in (visible.get("channels") or []):
-            key = channel.get("api_key")
-            if key and not str(key).startswith("env:"):
-                channel["api_key"] = "***"
+            drop_secret(channel, "api_key")
             own_creds = channel.get("creds")
             if isinstance(own_creds, dict):
-                for env_name, value in own_creds.items():
-                    if value and not str(value).startswith("env:"):
-                        own_creds[env_name] = "***"
+                drop_cred_map(own_creds)
+                if not own_creds:
+                    channel.pop("creds", None)
         listen = visible.get("listen") or {}
-        for field in ("api_key", "admin_key"):
-            if listen.get(field) and not str(listen[field]).startswith("env:"):
-                listen[field] = "***"
+        drop_secret(listen, "api_key")
+        drop_secret(listen, "admin_key")
         creds = visible.get("credentials")
         if isinstance(creds, dict):
-            for vendor_map in creds.values():
-                if not isinstance(vendor_map, dict):
-                    continue
-                for env_name, value in vendor_map.items():
-                    if value and not str(value).startswith("env:"):
-                        vendor_map[env_name] = "***"
+            for vendor, vendor_map in list(creds.items()):
+                if isinstance(vendor_map, dict):
+                    drop_cred_map(vendor_map)
+                    if not vendor_map:
+                        creds.pop(vendor, None)
         for account in (visible.get("accounts") or []):
             if not isinstance(account, dict):
                 continue
             acc_creds = account.get("credentials")
             if isinstance(acc_creds, dict):
-                for env_name, value in acc_creds.items():
-                    if value and not str(value).startswith("env:"):
-                        acc_creds[env_name] = "***"
+                drop_cred_map(acc_creds)
+                if not acc_creds:
+                    account.pop("credentials", None)
         # Stable JSON representation for hashing
         serialized = json.dumps(visible, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
@@ -2549,6 +2565,14 @@ class App:
                     f"please refresh and re-apply your changes"
                 )
         merged = merge_secrets(raw, self.raw)
+        # The wizard flag lives server-side only: /api/setup/wizard owns it,
+        # and the console always replays the setup section it fetched earlier
+        # — stale by definition. Keep the in-memory truth, otherwise the
+        # first save after finishing the wizard flips wizard_done back to
+        # False and the wizard pops up again on the next visit.
+        merged.pop("setup", None)
+        if isinstance(self.raw.get("setup"), dict):
+            merged["setup"] = copy.deepcopy(self.raw["setup"])
         ensure_channel_ids(merged)
         config = parse_config(merged)  # validate before touching the file
         self._check_vendor_binding(config)
@@ -3790,7 +3814,20 @@ class App:
 
     def dsh_status(self) -> dict:
         """Report whether the DeepSeek Harness client shares this host."""
-        return dsh_mod.status()
+        state = dsh_mod.status()
+        base_url = state.get("base_url") or ""
+        if base_url:
+            host = (self.config.listen.host or "").strip()
+            if host in ("", "0.0.0.0", "::"):
+                host = "127.0.0.1"
+            own = f"http://{host}:{self.config.listen.port}/v1"
+            if base_url.rstrip("/") != own:
+                # Profile seeded on an earlier port: the console shows the
+                # stale address and the next 启动 DSH rewrites it in place.
+                state["stale_base_url"] = True
+                state["note"] = (f"DSH 档案还指向旧地址 {base_url}：点一次"
+                                 f"「启动 DSH」会自动改写为 {own} 并重启。")
+        return state
 
     def dsh_models(self) -> list[dict]:
         """Catalogue entries the DSH picker should offer.

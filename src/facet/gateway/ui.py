@@ -921,6 +921,23 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, payload)
         return True
 
+    if path == "/api/setup/wizard" and method == "GET":
+        # The console asks whether THIS server considers the wizard done before
+        # auto-reopening it: the browser's localStorage flag alone would
+        # suppress the wizard forever after a reinstall or directory move
+        # (fresh config, stale browser flag). The wizard POST writes the file
+        # directly without touching app.raw, so read the file here too.
+        router_path = Path(app.config_path or "router.json")
+        wizard_done = False
+        try:
+            existing = json.loads(router_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                wizard_done = (existing.get("setup") or {}).get("wizard_done") is True
+        except (OSError, ValueError):
+            wizard_done = False
+        _json(h, 200, {"ok": True, "wizard_done": wizard_done})
+        return True
+
     if path == "/api/setup/wizard" and method == "POST":
         incoming = {}
         if raw:
@@ -961,6 +978,12 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 500, {"ok": False,
                            "error": {"message": f"无法写入配置文件：{exc}"}})
             return True
+        # Keep the in-memory raw in step with the file: apply_config
+        # persists from memory, so a stale wizard_done=False there would
+        # silently undo this flag on the next console save and re-open
+        # the wizard.
+        if done is True:
+            app.raw.setdefault("setup", {})["wizard_done"] = True
         _json(h, 200, {"ok": True, "wizard_done": existing["setup"].get("wizard_done")})
         return True
 

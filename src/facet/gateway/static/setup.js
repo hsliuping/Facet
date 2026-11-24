@@ -289,10 +289,16 @@ const WIZARD_STEPS = [
             </div>
             ${typeof vendorCredHelp === 'function' ? vendorCredHelp(mode.credential_help) : ''}
           </div>` : '';
+      // 「免费」偏好落到渠道档位前先说清楚后果：赠送额度型厂家烧完额度
+      // 会按量扣费，透明告知比静默标注更安全。
+      const tierNote = wizardState.tier === 'free' && wizardHasFree(mode) && mode.tier !== 'free'
+        ? '<p class="hint">按您选择的「免费」偏好，保存后该渠道会标为免费档：进免费池与 $free 宏、参与免费额度对齐。注意：赠送额度用尽后厂家会按量扣费，请留意用量报表；也可在「渠道配置」编辑渠道改回收费档。</p>'
+        : '';
       return `
         <div class="wizard-step-content">
           <p>厂家：<strong>${esc(p.name)}</strong>（${esc(mode.label || p.modeKey)}）</p>
           ${docs}
+          ${tierNote}
           <div class="form-grid">
             <div class="field">
               <label>API Key</label>
@@ -352,9 +358,13 @@ const WIZARD_STEPS = [
         creds: wizardState.providerCreds,
         models,
         priority: 100,
-        // 注册表 mode.tier（free/paid）透传为渠道档位：控制台渠道卡与
-        // 免费池都按这个字段标注，向导建的渠道不能是「未标注」状态。
-        tier: mode.tier || '',
+        // 渠道档位：向导偏好「免费」且所选模式带免费额度时按偏好标 free
+        // （进免费池与 $free 宏、cheap/free 链，免费额度对齐/目录拉取/
+        // 额度包账本都按免费档生效）；其余透传注册表 mode.tier，向导建的
+        // 渠道不能是「未标注」状态。赠送额度型厂家额度烧完按量扣费，
+        // 渠道编辑器里可随时改档。
+        tier: (wizardState.tier === 'free' && wizardHasFree(mode))
+          ? 'free' : (mode.tier || ''),
         enabled: true,
       };
       try {
@@ -534,7 +544,8 @@ const WIZARD_BILLING_LABELS = {
 // 是否带免费额度：显式 free tier，或注册表登记了免费额度数据——
 // free_quota（新人赠额）、free_limits（赠金/速率/免费模型说明）、
 // free_models（官方免费模型清单）。赠送额度型厂家（火山/百炼/千帆）
-// 渠道档位仍标 paid（额度烧完按量扣费，不进免费池），但向导目录照样列出。
+// 注册表 mode.tier 标 paid（额度烧完按量扣费），但向导目录照样列出；
+// 用户在向导选了「免费」偏好时，生成的渠道按偏好标 free（test-save 步骤）。
 function wizardHasFree(mode) {
   return mode.tier === 'free' || !!mode.free_quota || !!mode.free_limits
     || !!(mode.free_models || []).length;
@@ -599,8 +610,8 @@ function wizardChannelName(base) {
 
 // 向导渠道落链：不加进任何路由链的渠道永远不会被排程到——facet-auto 测得
 // 再通也用不上。anthropic 渠道进 anthropic:default；openai 渠道进 default
-// 尾部，tier=free 的免费层渠道同时进 cheap / free 链（赠送额度型厂家注册表
-// 标 paid，只进 default，与渠道页「免费池」口径一致）。
+// 尾部，tier=free 的免费层渠道同时进 cheap / free 链（「免费」偏好下赠送
+// 额度型厂家也按偏好标 free，与渠道页「免费池」口径一致）。
 function wizardRouteAppend(draft) {
   const routes = state.config.routes || (state.config.routes = []);
   const ensure = (protocol, name) => {
@@ -624,24 +635,32 @@ function wizardRouteAppend(draft) {
 }
 
 // 把向导构造的渠道追加进配置并保存（沿用控制台的保存路径，带热加载）。
+// 每次提交前都现拉最新配置再追加：向导打开期间设管理密码等步骤会改
+// router.json，拿页面打开时的缓存一提交就会撞版本校验；提交瞬间仍可能
+// 被并发改动抢先，撞了就重拉重追加再试，最多三轮。
 async function wizardSaveChannel(draft) {
-  if (!state.config) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     state.config = await api('/api/config');
     if (state.config && typeof state.config === 'object') {
       state.config.channels = state.config.channels || [];
       state.config.routes = state.config.routes || [];
     }
+    state.config.channels.push(draft);
+    wizardRouteAppend(draft);
+    try {
+      await api('/api/config', { method: 'POST', body: state.config });
+      if (typeof loadConfig === 'function') await loadConfig();
+      if (typeof loadState === 'function') await loadState();
+      return;
+    } catch (e) {
+      lastError = e;
+      if (!/version mismatch/.test(e.message || '')) break;
+    }
   }
-  state.config.channels.push(draft);
-  wizardRouteAppend(draft);
-  try {
-    await api('/api/config', { method: 'POST', body: state.config });
-    if (typeof loadConfig === 'function') await loadConfig();
-    if (typeof loadState === 'function') await loadState();
-  } catch (e) {
-    if (typeof loadConfig === 'function') await loadConfig();
-    throw new Error('渠道已测试通过，但保存失败：' + e.message);
-  }
+  if (typeof loadConfig === 'function') await loadConfig();
+  throw new Error('渠道已测试通过，但保存失败：'
+    + (lastError ? lastError.message : '未知原因'));
 }
 
 // 端到端验收：用刚生成的网关 Key 走真实路由链发起一次最小调用。

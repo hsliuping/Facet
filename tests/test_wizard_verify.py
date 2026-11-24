@@ -176,6 +176,90 @@ class VerifyCallEndpointTests(unittest.TestCase):
         self.assertEqual(h.status, 404)
 
 
+class _FileApp:
+    """带 config_path + raw 的最小 stub：向导端点读写磁盘并同步内存。"""
+
+    def __init__(self, config_path):
+        self.config_path = config_path
+        self.raw = {}
+
+    def _authorized_admin(self, h):
+        return True
+
+
+class WizardStateEndpointTests(unittest.TestCase):
+    """重装/换目录后浏览器旧 localStorage 标记会压住首装向导，控制台改为
+    以服务端 router.json 的 setup.wizard_done 为准——这里覆盖该端点的读数。"""
+
+    def _get(self, existing=None, missing=False):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "router.json"
+        if not missing:
+            path.write_text(json.dumps(existing if existing is not None else {}),
+                            encoding="utf-8")
+        h = _FakeHandler()
+        ui.handle(_FileApp(path), h, "GET", "/api/setup/wizard", b"")
+        return h, json.loads(h.wfile.getvalue())
+
+    def test_seed_wizard_done_false(self):
+        h, body = self._get({"setup": {"wizard_done": False}})
+        self.assertEqual(h.status, 200)
+        self.assertFalse(body["wizard_done"])
+
+    def test_completed_wizard_done_true(self):
+        h, body = self._get({"setup": {"wizard_done": True}, "channels": []})
+        self.assertEqual(h.status, 200)
+        self.assertTrue(body["wizard_done"])
+
+    def test_missing_setup_section_is_false(self):
+        h, body = self._get({"channels": []})
+        self.assertEqual(h.status, 200)
+        self.assertFalse(body["wizard_done"])
+
+    def test_missing_file_is_false(self):
+        h, body = self._get(missing=True)
+        self.assertEqual(h.status, 200)
+        self.assertFalse(body["wizard_done"])
+
+    def test_corrupted_file_is_false(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "router.json"
+        path.write_text("{ not json", encoding="utf-8")
+        h = _FakeHandler()
+        ui.handle(_FileApp(path), h, "GET", "/api/setup/wizard", b"")
+        self.assertEqual(h.status, 200)
+        self.assertFalse(json.loads(h.wfile.getvalue())["wizard_done"])
+
+    def test_roundtrip_with_post(self):
+        # POST 写文件 → GET 读回：两端共享同一落盘状态。
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "router.json"
+        path.write_text(json.dumps({"channels": []}), encoding="utf-8")
+        app = _FileApp(path)
+        h = _FakeHandler()
+        ui.handle(app, h, "POST", "/api/setup/wizard", b'{"done": true}')
+        self.assertEqual(h.status, 200)
+        h2 = _FakeHandler()
+        ui.handle(app, h2, "GET", "/api/setup/wizard", b"")
+        self.assertTrue(json.loads(h2.wfile.getvalue())["wizard_done"])
+
+    def test_post_updates_in_memory_raw(self):
+        # 写盘后必须同步内存：apply_config 从内存落盘，不同步的话下一次
+        # 控制台保存会把 wizard_done 打回 False，向导再次弹出。
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name) / "router.json"
+        path.write_text(json.dumps({"channels": []}), encoding="utf-8")
+        app = _FileApp(path)
+        h = _FakeHandler()
+        ui.handle(app, h, "POST", "/api/setup/wizard", b'{"done": true}')
+        self.assertEqual(h.status, 200)
+        self.assertTrue(app.raw["setup"]["wizard_done"])
+
+
 # ----------------------------------------------------------- 3: 核心逻辑
 
 
