@@ -1,8 +1,9 @@
 """Benchmark data for GET /api/models/compare.
 
 Loads the three bundled data files (benchmark dictionary, per-model scores,
-coverage list) and joins them with the model registry so the console can show
-"which channels can actually call this model".
+coverage list). Which of the user's own channels can call each model is NOT
+part of this cached payload: it changes with the config, so the API handler
+overlays live channel rows on every request (see overlay_channels).
 """
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from functools import lru_cache
 from pathlib import Path
 
 from .._identity import identity
-from . import facts as facts_mod
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 # Repo checkout: same files, source of truth under registry/ (data/ is a
@@ -78,7 +78,7 @@ def _load(name: str, fallback: dict) -> dict:
     return data
 
 
-def _norm_base(key: str) -> str:
+def norm_base(key: str) -> str:
     """Normalize a registry key or model id to a bare model name.
 
     Drops the provider prefix, version decorations (``@default``, ``:low-cost``)
@@ -90,33 +90,38 @@ def _norm_base(key: str) -> str:
     return identity(base)
 
 
-def _channel_rows() -> list[tuple[str, str, str]]:
-    """(channel, provider, normalized basename) for every registry entry."""
-    table = getattr(facts_mod.snapshot(), "_models", {}) or {}
-    rows = []
-    for key, rec in table.items():
-        provider = (rec or {}).get("provider") or key.split("/", 1)[0]
-        rows.append((key, provider, _norm_base(key)))
-    return rows
+# Historical private alias (kept for in-package callers).
+_norm_base = norm_base
 
 
-def _resolve_channels(mid: str, rows: list[tuple[str, str, str]]) -> list[dict]:
-    """Channels that expose this model.
+def resolve_user_channels(mid: str, rows) -> list[dict]:
+    """The user's own channels able to call this model.
 
-    Exact normalized match plus vendor-namespaced variants such as
-    ``au.anthropic.claude-opus-5-5`` (short prefix only, to avoid counting
-    a different model that merely ends with the same name).
+    ``rows`` come from App.compare_channel_rows(): (name, provider, normalized
+    explicit model bases, wildcard) — already filtered to enabled channels
+    with a real key. A wildcard channel passes any model name through; an
+    explicit key matches when its normalized base equals the registry id's
+    (provider namespaces and ``:free``-style suffixes normalize away).
     """
-    norm = _norm_base(mid)
+    norm = norm_base(mid)
     out = []
-    for channel, provider, cnorm in rows:
-        if cnorm == norm or (
-            len(cnorm) > len(norm)
-            and cnorm.endswith(norm)
-            and len(cnorm) - len(norm) <= 20
-        ):
-            out.append({"channel": channel, "provider": provider})
+    for name, provider, bases, wildcard in rows:
+        if wildcard or norm in bases:
+            out.append({"channel": name, "provider": provider})
     return out
+
+
+def overlay_channels(data: dict, rows) -> None:
+    """Attach live channel availability to a compare payload, in place.
+
+    payload() is lru-cached static data (scores / coverage); which channels
+    can call a model changes with the config, so the API handler overlays
+    fresh rows on every request instead of caching them.
+    """
+    for m in data.get("models", []):
+        chs = resolve_user_channels(m.get("id", ""), rows)
+        m["channels"] = chs
+        m["channel_count"] = len(chs)
 
 
 #: Units that share a 0-100 percentage scale. Other units (usd amounts,
@@ -173,7 +178,6 @@ def payload() -> dict:
     benches = _load("benchmarks.json", {"benches": {}})
     scores = _load("model-scores.json", {"models": {}}).get("models", {})
     coverage = _load("model-coverage.json", {"groups": []}).get("groups", [])
-    channel_rows = _channel_rows()
     bench_meta = benches.get("benches", {})
 
     groups = []
@@ -206,7 +210,6 @@ def payload() -> dict:
                     "date": s.get("date", ""),
                     "note": s.get("note", ""),
                 })
-            channels = _resolve_channels(mid, channel_rows)
             entry = {
                 "id": mid,
                 "label": item.get("label") or mdl.get("display_name") or mid,
@@ -217,8 +220,6 @@ def payload() -> dict:
                 "notes": mdl.get("notes", ""),
                 "scores": enriched,
                 "score_count": len(enriched),
-                "channels": channels,
-                "channel_count": len(channels),
             }
             entries.append(entry)
             flat.append(entry)

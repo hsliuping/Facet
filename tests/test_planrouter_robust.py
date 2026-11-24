@@ -365,8 +365,7 @@ class BenchmarksPayloadTests(unittest.TestCase):
             {"id": "m1"}, {"id": ""}, {}, "junk"]},
         ]}
         loads = [benches, scores, coverage]
-        with mock.patch.object(bench_mod, "_load", side_effect=loads), \
-                mock.patch.object(bench_mod, "_channel_rows", return_value=[]):
+        with mock.patch.object(bench_mod, "_load", side_effect=loads):
             data = bench_mod.payload()
         self.assertEqual([m["id"] for m in data["models"]], ["m1"])
         self.assertEqual(len(data["groups"][0]["models"]), 1)

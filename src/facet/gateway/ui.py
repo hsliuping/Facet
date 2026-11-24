@@ -192,7 +192,10 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             return _json(h, 404, {"error": {"message": f"unresolved: {name}"}})
         return _json(h, 200, {"query": name, "key": key, "record": facts.record(key)})
     if path == "/api/models/compare" and method == "GET":
-        _json(h, 200, benchmarks_mod.payload())
+        data = benchmarks_mod.payload()
+        # 渠道列是活的：随配置启停/换 Key 实时变，不能跟着 payload 一起缓存。
+        benchmarks_mod.overlay_channels(data, app.compare_channel_rows())
+        _json(h, 200, data)
         return True
     if path == "/api/guide" and method == "GET":
         # ?doc=integration serves the agent integration guide and ?doc=user-guide

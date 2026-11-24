@@ -207,7 +207,10 @@ class BenchmarkCompareEndpointTests(unittest.TestCase):
                 {
                     "name": "plan-a", "protocol": "openai",
                     "base_url": "http://127.0.0.1:9001",
-                    "api_key": "top-secret", "models": {"auto": "model-a"}, "priority": 10,
+                    "api_key": "top-secret",
+                    "models": {"auto": "model-a",
+                               "anthropic/claude-opus-5-5": "wire-opus"},
+                    "priority": 10,
                 },
                 {
                     "name": "claude", "protocol": "anthropic",
@@ -251,6 +254,8 @@ class BenchmarkCompareEndpointTests(unittest.TestCase):
             self.assertIn("setting", s)
         self.assertGreaterEqual(opus["channel_count"], 1)
         self.assertTrue(all("channel" in c and "provider" in c for c in opus["channels"]))
+        # 渠道列来自实时配置叠加（启用 + 已配 Key 的渠道），不再是注册表变体。
+        self.assertIn("plan-a", [c["channel"] for c in opus["channels"]])
         # 没有公开评测分的模型也必须出现在 joined payload 里（具体哪个模型无分会随
         # 公开榜单补数据而变化，所以动态找首个 score_count==0 的，不硬编码模型名）
         empty = next((m for m in data["models"] if m["score_count"] == 0), None)

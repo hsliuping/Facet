@@ -5024,6 +5024,27 @@ class App:
             kept.append((channel, wire))
         return kept, skipped
 
+    def compare_channel_rows(self) -> list[tuple[str, str, frozenset, bool]]:
+        """Rows for the compare page's channel column, from the live config.
+
+        Only enabled channels with a real API key count: a disabled or keyless
+        channel cannot serve anything, and a masked-export ``***`` placeholder
+        is exactly the fake-usable trap ui_state already reports honestly.
+        Row shape: (name, provider, normalized explicit model bases, wildcard).
+        """
+        rows = []
+        for channel in self.config.channels:
+            if not channel.enabled or channel.api_key == "***":
+                continue
+            if not resolve_secret(channel.api_key):
+                continue
+            bases = frozenset(bench_mod.norm_base(key)
+                              for key in channel.models
+                              if key not in ("auto", "*"))
+            rows.append((channel.name, channel.provider, bases,
+                         "*" in channel.models))
+        return rows
+
     def ui_state(self) -> dict:
         snap = self.store.snapshot()
         blocked = self.blocked_channels()
