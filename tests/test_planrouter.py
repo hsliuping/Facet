@@ -317,10 +317,11 @@ class RoutingTests(unittest.TestCase):
         candidates, _ = self.store.pick(OPENAI, "default", "gpt-5.1-codex", None, self.now)
         self.assertEqual([c.name for c, _ in candidates], ["plan-a", "plan-b", "free"])
         self.assertEqual(candidates[0][1], "model-a")
-        # A cooling exact channel must not break the calling tool.
+        # 冷却的显式渠道没有同名渠道可转移时，不再降级到链内
+        # auto/通配符渠道：指定了模型名的请求宁可如实失败也不换模型。
         self.store.states["plan-a"].mark_cooldown(3600, "quota", self.now)
         candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
-        self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
+        self.assertEqual([c.name for c, _ in candidates], [])
 
 
 class CrossProtocolSkipTests(unittest.TestCase):
@@ -378,11 +379,13 @@ class ModelLevelCooldownTests(unittest.TestCase):
         candidates, _ = self.store.pick(OPENAI, "cheap", "auto", None, self.now)
         self.assertEqual([c.name for c, _ in candidates], ["plan-b"])
 
-    def test_exact_model_cooling_degrades_to_schedule(self):
+    def test_exact_model_cooling_fails_without_substitute(self):
+        # 模型级冷却同理：没有其他渠道映射该名字时如实返回空候选，
+        # 不再借链内其他渠道的 auto 模型顶班。
         self.store.states["plan-a"].mark_cooldown(
             3600, "http_404_not_found", self.now, per_model=True, wire="wire-a")
         candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
-        self.assertEqual([c.name for c, _ in candidates], ["plan-b", "free"])
+        self.assertEqual([c.name for c, _ in candidates], [])
 
     def test_success_clears_only_the_served_model(self):
         state = self.store.states["plan-a"]

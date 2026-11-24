@@ -115,6 +115,42 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(decision.mode, "fallback")
         self.assertEqual(decision.hint, "cheap")
 
+    def test_exact_match_spans_all_enabled_channels(self):
+        # 不带 X-Route 时，显式模型名扫全部启用渠道（配置顺序），
+        # 不在任何链里的渠道同样可命中，同名多渠道形成按名转移链。
+        raw = config_for("http://127.0.0.1:9000")
+        raw["channels"].append(
+            {"name": "standalone", "protocol": "openai",
+             "base_url": "http://127.0.0.1:9000",
+             "models": {"task-model": "wire-solo"}})
+        cfg = parse_config(raw)
+        decision = resolve_model(cfg, "openai", "task-model")
+        self.assertEqual(decision.mode, "exact")
+        self.assertEqual(decision.exact_channels, ("plan-a", "standalone"))
+
+    def test_exact_match_skips_disabled_channel(self):
+        raw = config_for("http://127.0.0.1:9000")
+        raw["channels"].append(
+            {"name": "standalone", "protocol": "openai", "enabled": False,
+             "base_url": "http://127.0.0.1:9000",
+             "models": {"task-model": "wire-solo"}})
+        cfg = parse_config(raw)
+        decision = resolve_model(cfg, "openai", "task-model")
+        self.assertEqual(decision.mode, "exact")
+        self.assertEqual(decision.exact_channels, ("plan-a",))
+
+    def test_header_hint_pins_exact_to_chain(self):
+        # X-Route 显式指定链时尊重调用方：匹配范围仍限定在该链内。
+        raw = config_for("http://127.0.0.1:9000")
+        raw["channels"].append(
+            {"name": "standalone", "protocol": "openai",
+             "base_url": "http://127.0.0.1:9000",
+             "models": {"task-model": "wire-solo"}})
+        cfg = parse_config(raw)
+        decision = resolve_model(cfg, "openai", "task-model", "cheap")
+        self.assertEqual(decision.mode, "fallback")
+        self.assertEqual(decision.hint, "cheap")
+
     def test_disabled_fallback_rejects_unknown_only(self):
         raw = config_for("http://127.0.0.1:9000")
         raw["models"]["fallback_unknown"] = False
@@ -265,16 +301,19 @@ class ModelGatewayTests(unittest.TestCase):
         self.assertEqual(hdrs["X-Routed-Via"], "plan-a/wire-exact")
         self.assertEqual(self.upstream.seen, ["wire-exact"])
 
-    def test_exact_channel_cooling_degrades_to_internal_schedule(self):
+    def test_exact_channel_cooling_returns_503_without_degrade(self):
+        # 指定了模型名且无其他同名渠道可转移：即使全部冷却也不降级到
+        # 链内 auto 模型，如实 503，状态表列出同名渠道的冷却原因。
         app = self.httpd.app  # type: ignore[attr-defined]
         app.store.states["plan-a"].mark_cooldown(3600, "quota", time.time())
-        status, hdrs, _ = self.completion("task-model")
-        self.assertEqual(status, 200)
-        self.assertEqual(hdrs["X-Routed-Via"], "plan-b/wire-b-auto")
-        self.assertEqual(hdrs["X-Routed-Model-Mode"], "fallback")
-        self.assertEqual(hdrs["X-Routed-Model-Reason"], "exact-channels-unavailable")
+        status, hdrs, payload = self.completion("task-model")
+        self.assertEqual(status, 503)
+        self.assertEqual(hdrs["X-Routed-Model-Mode"], "exact")
+        self.assertEqual(hdrs["X-Routed-Model-Reason"], "exact-model-match")
         self.assertEqual(hdrs["X-Failover-Count"], "0")
-        self.assertEqual(self.upstream.seen, ["wire-b-auto"])
+        self.assertEqual(
+            payload["error"]["channel_status"], {"plan-a": "cooling:quota"})
+        self.assertEqual(self.upstream.seen, [])
 
     def test_route_header_with_unknown_model(self):
         status, hdrs, _ = self.completion("tool-default-model", {"X-Route": "cheap"})

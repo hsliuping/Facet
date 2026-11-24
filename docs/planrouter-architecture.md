@@ -109,11 +109,16 @@
 2. **模型名解析**（`core.resolve_model`）→ ModelDecision：
    - branded 映射（如 `facet-auto` → default 链）；
    - `auto:` / `facet:` 前缀 → 指定链内部调度；
-   - 其余在各链渠道 `models` 键**精确匹配**（exact）；不匹配 → `fallback_unknown`
-     决定走 fallback 内部调度还是拒绝。
+   - 其余在渠道 `models` **显式键**里精确匹配（exact）：不带 `X-Route` 头时扫描
+     **全部启用渠道**（按 router.json 配置顺序；同名被多个渠道映射时构成隐式的
+     按名转移链，与渠道是否在某条链里无关），带 `X-Route` 头时只在指定链内匹配；
+     不匹配 → `fallback_unknown` 决定走 fallback 内部调度还是拒绝。
 3. **渠道选择**（`StateStore.pick`）：粘性会话优先 → free 档优先轮换
-   （`_rotate_tier`）→ 过滤冷却 / 限速 / 禁用渠道 → exact 全冷却时回退调度链 →
-   组内按时间衰减分数稳定排序；目录确证缺该模型则软跳过该渠道。
+   （`_rotate_tier`，仅内部调度参与）→ 过滤冷却 / 限速 / 禁用渠道 → exact 候选
+   按计费优先排序、内部调度候选按时间衰减分数稳定排序；目录确证缺该模型则软跳过
+   该渠道。**exact 候选全部冷却时不再降级到链内 auto 模型**：没有同名渠道可
+   转移就返回 503（`channel_status` 列出每个同名渠道的状态），指定的模型名
+   不会被偷换成别的模型。
    **显式模型名（exact）另有计费优先规则**：包月套餐（快到期的在前）→ 免费层 → 按量付费，
    内部别名（`facet-auto` / `facet-free`）不适用，详见
    [planrouter-billing-priority.md](planrouter-billing-priority.md)。
@@ -156,6 +161,11 @@
 | `models` | branded 映射、fallback_unknown、fallback_route |
 | `channels[]` | name / protocol / base_url / upstream_path / api_key / models / priority / cooldown_minutes / rate / proxy / tier / enabled |
 | `routes[]` | 命名路由链（protocol + channels，支持 `$free` 宏展开全部 free 渠道） |
+
+`models` 映射的键分三类：显式键是「对外可请求的名字 → 上游真实模型 id」（不指定
+`X-Route` 时在全部启用渠道间精确匹配，见第 5 节）；`auto` 键是内部调度该渠道时的
+默认上游模型；`"*": "*"` 通配符把任何未映射的名字原样透传给上游——通配符命中的
+请求不算 exact，不参与计费优先排序，只服务内部调度/降级前的兜底转发。
 
 `env:` 密钥机制在 `core.resolve_secret`：`env:VAR` 前缀查环境变量，缺失解析为 None；
 listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置文件。

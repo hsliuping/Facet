@@ -832,10 +832,13 @@ def resolve_model(
 ) -> ModelDecision:
     """Decide how a client-supplied model name is served.
 
-    Branded/reserved names always mean "schedule internally". Anything else is
-    first matched against the explicit `models` keys of the channels in the
-    selected route chain; when nothing matches, the same chain is scheduled
-    internally (unless `fallback_unknown` is disabled).
+    Branded/reserved names always mean "schedule internally". Anything else
+    is matched against the explicit `models` keys of enabled channels:
+    without an X-Route header every enabled channel is a candidate (config
+    order; a name mapped by several channels yields an implicit failover
+    list), while an X-Route header pins the match to that chain. When
+    nothing matches, `fallback_unknown` decides between internal
+    scheduling and a hard rejection.
     """
     policy = config.models
     requested = (model or "").strip() or AUTO_MODEL
@@ -859,8 +862,11 @@ def resolve_model(
         return ModelDecision(mode, route_hint, AUTO_MODEL, requested,
                              "internal-model-name")
 
+    # 未指定 X-Route 时，显式模型名在全部启用渠道里精确匹配（配置顺序，
+    # 同名多渠道形成隐式按名转移链）；X-Route 指定链时尊重调用方，只在该链内匹配。
+    pool = ordered if header_hint else tuple(c.name for c in config.channels)
     exact = tuple(
-        name for name in ordered
+        name for name in pool
         if name not in excluded
         and (channel := config.channel(name)) is not None
         and channel.enabled and channel.protocol == protocol
@@ -1596,9 +1602,10 @@ class StateStore:
     ) -> tuple[list[tuple[Channel, str]], Route | None]:
         """Return ([(channel, wire_model), ...], route) in attempt order.
 
-        `decision` comes from resolve_model. Exact matches get their own
-        channels first; if every exact channel is cooling, the router's own
-        schedule takes over so a quota window never breaks the calling tool.
+        `decision` comes from resolve_model. Exact matches are served only
+        by the channels that map the requested name (chain-agnostic, config
+        order); when all of them are cooling there is nowhere left to
+        transfer, so the caller gets an empty list and an honest 503.
 
         `agent` mode (decision.mode == "agent") uses `agent_candidates`, a
         pre-ranked [(channel_name, wire_model), ...] list of models that can
@@ -1622,13 +1629,16 @@ class StateStore:
                 print(f"[route] {protocol} model={model!r} mode={decision.mode} "
                       f"no-route hint={decision.hint!r}", flush=True)
                 return [], None
-            ordered = list(route.channels)
+            # exact 模式的候选是 resolve_model 给出的全局同名渠道（配置顺序），
+            # 链序只服务内部调度；免费档轮换也不参与显式模型名。
+            ordered = (list(decision.exact_channels) if decision.mode == "exact"
+                       else list(route.channels))
             sticky = self.session_channel(session_id, now)
             if sticky in ordered:
                 ordered.remove(sticky)
                 ordered.insert(0, sticky)
                 self.last_rotate = ""
-            else:
+            elif decision.mode != "exact":
                 ordered = self._rotate_tier(protocol, route, ordered)
             exact: list[tuple[Channel, str]] = []
             scheduled: list[tuple[Channel, str]] = []
@@ -1715,19 +1725,23 @@ class StateStore:
             # strategy additionally ranks by success rate, latency and
             # consecutive errors; "order" (default) is unchanged.
             strategy = route.lb or self.config.defaults.lb_strategy
-            if decision.mode == "exact" and exact:
+            if decision.mode == "exact":
+                if not exact:
+                    # 同名渠道全部冷却/不可用：指定了模型名的请求不再降级到
+                    # 链内 auto 模型，如实空手而归（503 明细含各渠道状态）。
+                    self._log_pick(protocol, route, model, decision, sticky,
+                                   skipped, "", [])
+                    self._debug_detail(protocol, route, ordered, detail, [])
+                    return [], route
                 # A request that names a model exactly prefers quota that
                 # would otherwise expire: monthly plans (soonest expiry
                 # first), then free tiers, then pay-as-you-go. Internal
                 # aliases (auto/free) keep the chain-order strategies below.
                 result = self._billing_order(exact, sticky)
             else:
-                ordered_pairs = exact or scheduled
-                if decision.mode != "exact":
-                    ordered_pairs = scheduled
-                result = (self._weighted_order(ordered_pairs, sticky, now)
+                result = (self._weighted_order(scheduled, sticky, now)
                           if strategy == "weighted"
-                          else self._by_score(ordered_pairs, sticky))
+                          else self._by_score(scheduled, sticky))
             self._log_pick(protocol, route, model, decision, sticky,
                            skipped, strategy, result)
             self._debug_detail(protocol, route, ordered, detail, result)

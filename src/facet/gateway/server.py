@@ -227,6 +227,18 @@ def _audit_headers(decision) -> dict:
     }
 
 
+def _status_channels(decision, route) -> tuple[str, ...]:
+    """Names to surface in a 503 channel_status map.
+
+    Exact-mode requests name their model, so the map lists the channels
+    that actually map that name (chain-agnostic) instead of the nominal
+    route members — the caller sees why every same-name channel is out.
+    """
+    if decision.mode == "exact":
+        return decision.exact_channels
+    return route.channels if route else ()
+
+
 def _rid() -> str:
     """Short per-request id for the audit trail.
 
@@ -5450,7 +5462,7 @@ class App:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             route = self.config.route(OPENAI, decision.hint)
             status_map: dict[str, str] = {}
-            for name in (route.channels if route else []):
+            for name in _status_channels(decision, route):
                 channel = self.config.channel(name)
                 if channel is None:
                     status_map[name] = "missing"
@@ -5725,7 +5737,7 @@ class App:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             route = self.config.route(OPENAI, decision.hint)
             status_map: dict[str, str] = {}
-            for name in (route.channels if route else []):
+            for name in _status_channels(decision, route):
                 channel = self.config.channel(name)
                 if channel is None:
                     status_map[name] = "missing"
@@ -6027,7 +6039,7 @@ class App:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             route = self.config.route(OPENAI, decision.hint)
             status_map: dict[str, str] = {}
-            for name in (route.channels if route else []):
+            for name in _status_channels(decision, route):
                 channel = self.config.channel(name)
                 if channel is None:
                     status_map[name] = "missing"
@@ -6356,7 +6368,7 @@ class App:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             route = self.config.route(OPENAI, decision.hint)
             status_map: dict[str, str] = {}
-            for name in (route.channels if route else []):
+            for name in _status_channels(decision, route):
                 channel = self.config.channel(name)
                 if channel is None:
                     status_map[name] = "missing"
@@ -6783,12 +6795,6 @@ class App:
             log_base["model_unverified"] = not self.store.catalog_knows(decision.requested)
             if log_base["model_unverified"]:
                 audit["X-Routed-Model-Unverified"] = "1"
-        if decision.mode == "exact" and candidates and not any(
-                channel.name in decision.exact_channels for channel, _ in candidates):
-            audit["X-Routed-Model-Mode"] = "fallback"
-            audit["X-Routed-Model-Reason"] = "exact-channels-unavailable"
-            log_base["mode"] = "fallback"
-            log_base["reason"] = "exact-channels-unavailable"
         if not candidates:
             self.log_request(**log_base, status="no_candidate", http_status=503, attempt=0)
             # Say *why* each route channel is out, so a fresh install (seeded
@@ -6796,7 +6802,7 @@ class App:
             # hint instead of a bare "no healthy channel".
             route = self.config.route(protocol, decision.hint)
             status_map: dict[str, str] = {}
-            for name in (route.channels if route else []):
+            for name in _status_channels(decision, route):
                 channel = self.config.channel(name)
                 if channel is None:
                     status_map[name] = "missing"
