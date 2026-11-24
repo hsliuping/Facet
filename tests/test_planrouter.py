@@ -313,10 +313,10 @@ class RoutingTests(unittest.TestCase):
         candidates, _ = self.store.pick(OPENAI, "default", "task-model", None, self.now)
         self.assertEqual([c.name for c, _ in candidates], ["plan-a"])
         self.assertEqual(candidates[0][1], "wire-a")
-        # An unknown model is scheduled internally instead of being rejected.
+        # 未知模型名默认拒绝（fallback_unknown=False）：指定了模型名的
+        # 请求匹配不上渠道就空手而归，绝不换模型——保底只属于内部名。
         candidates, _ = self.store.pick(OPENAI, "default", "gpt-5.1-codex", None, self.now)
-        self.assertEqual([c.name for c, _ in candidates], ["plan-a", "plan-b", "free"])
-        self.assertEqual(candidates[0][1], "model-a")
+        self.assertEqual([c.name for c, _ in candidates], [])
         # 冷却的显式渠道没有同名渠道可转移时，不再降级到链内
         # auto/通配符渠道：指定了模型名的请求宁可如实失败也不换模型。
         self.store.states["plan-a"].mark_cooldown(3600, "quota", self.now)

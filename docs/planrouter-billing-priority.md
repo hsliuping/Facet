@@ -30,7 +30,7 @@
 |---|---|---|
 | 命中某启用渠道 `models` 的显式键（如 `deepseek-v4.1-flash`、`glm-5.3-flash`；不带 `X-Route` 头时扫**全部启用渠道**，带 `X-Route` 头时只扫该链） | `exact` | **是** |
 | `facet-auto` / `facet-cheap` / `facet-free` / `facet-agent` / `auto:` / `facet:` 前缀 | `auto` / 内部调度 | 否，保持链序 |
-| 未匹配任何显式键，走 `fallback_unknown` | 内部调度 | 否 |
+| 未匹配任何显式键 | **拒绝（400）**——`fallback_unknown` 默认 `false`；老配置显式开启后才走内部调度 | 否 |
 
 注意：只有**显式键**算 exact；靠通配符（`*`）映射出来的模型不属于 exact，仍按原逻辑。
 

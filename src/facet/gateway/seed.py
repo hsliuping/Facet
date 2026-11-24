@@ -131,7 +131,9 @@ def build_seed() -> dict:
                 "facet-agent": "default",
                 "facet-embedding": "embedding",
             },
-            "fallback_unknown": True,
+            # 默认拒绝未知模型名：指定了名字的请求匹配不上渠道就直接 400，
+            # 不换模型（保底调度只属于 facet-auto 这类内部名）。
+            "fallback_unknown": False,
             "fallback_route": "default",
         },
         "routes": [

@@ -660,7 +660,11 @@ class ModelPolicy:
     """How a client-supplied model name maps to routing behaviour."""
 
     branded: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_BRANDED_MODELS))
-    fallback_unknown: bool = True
+    # 默认拒绝未知的显式模型名（如实 400）：指定了模型名的请求只由映射了
+    # 该名字的渠道服务，匹配不上绝不换模型——保底调度只属于内部名
+    # （facet-auto 等）。老配置想保留「未知名字也调度」的旧行为，显式
+    # 写 fallback_unknown: true 即可。
+    fallback_unknown: bool = False
     fallback_route: str = "default"
 
 
@@ -681,7 +685,7 @@ def parse_model_policy(raw) -> ModelPolicy:
         if key in (AUTO_MODEL, "facet") or key.startswith(INTERNAL_MODEL_PREFIXES):
             raise ValueError(f"models.branded：{key!r} 是保留的内部模型名")
         branded[key] = hint.strip()
-    fallback_unknown = raw.get("fallback_unknown", True)
+    fallback_unknown = raw.get("fallback_unknown", False)
     if not isinstance(fallback_unknown, bool):
         raise ValueError("models.fallback_unknown 必须是 true 或 false")
     fallback_route = raw.get("fallback_route") or "default"

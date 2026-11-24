@@ -112,7 +112,8 @@
    - 其余在渠道 `models` **显式键**里精确匹配（exact）：不带 `X-Route` 头时扫描
      **全部启用渠道**（按 router.json 配置顺序；同名被多个渠道映射时构成隐式的
      按名转移链，与渠道是否在某条链里无关），带 `X-Route` 头时只在指定链内匹配；
-     不匹配 → `fallback_unknown` 决定走 fallback 内部调度还是拒绝。
+     不匹配 → 默认直接拒绝（400），`fallback_unknown: true` 的老配置才走
+     fallback 内部调度（保底只属于内部名，见 §7）。
 3. **渠道选择**（`StateStore.pick`）：粘性会话优先 → free 档优先轮换
    （`_rotate_tier`，仅内部调度参与）→ 过滤冷却 / 限速 / 禁用渠道 → exact 候选
    按计费优先排序、内部调度候选按时间衰减分数稳定排序；目录确证缺该模型则软跳过
@@ -166,6 +167,11 @@
 `X-Route` 时在全部启用渠道间精确匹配，见第 5 节）；`auto` 键是内部调度该渠道时的
 默认上游模型；`"*": "*"` 通配符把任何未映射的名字原样透传给上游——通配符命中的
 请求不算 exact，不参与计费优先排序，只服务内部调度/降级前的兜底转发。
+
+`fallback_unknown` 默认 `false`：指定了具体模型名而没有任何渠道映射它时，网关
+直接返回 400 拒绝，绝不偷换模型——保底调度只属于内部名（`facet-auto`、
+`facet-free`、`auto:` / `facet:` 前缀、branded 映射）。老配置想保留「未知名字也
+按链调度」的旧行为，显式写 `"fallback_unknown": true`。
 
 `env:` 密钥机制在 `core.resolve_secret`：`env:VAR` 前缀查环境变量，缺失解析为 None；
 listen key / 渠道 key / 代理 / webhook 均经此解析，密钥不落配置文件。

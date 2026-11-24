@@ -547,8 +547,13 @@ class AudioEndpointTests(unittest.TestCase):
         # The captured URL will be the last one (plan-b)
         # We verify by checking that the first attempt failed and second succeeded
 
-    def test_audio_speech_no_tts_channel_returns_503(self):
-        """Test 503 when no channel has TTS model."""
+    def test_audio_speech_unknown_model_rejected(self):
+        """Unmatched model names are rejected (400) under the default policy.
+
+        fallback_unknown now defaults to false: a name no channel maps is a
+        hard 400, never re-scheduled onto the chain. (The 503 no-candidate
+        surface is covered by the chat endpoint's exact-cooling tests.)
+        """
         cfg = copy.deepcopy(BASE)
         cfg["channels"][0]["models"] = {"auto": "model-a"}  # no tts-1
         app = App(load_config(write_config(cfg)))
@@ -559,14 +564,9 @@ class AudioEndpointTests(unittest.TestCase):
                 "model": "tts-1",
                 "input": "test",
             }).encode())
-        self.assertEqual(h.status, 503)
+        self.assertEqual(h.status, 400)
         out = json.loads(h.body)
-        # When no channel has the model in catalog, it should say "no healthy channel with tts capability"
-        # If channels exist but all fail, it says "all channels failed"
-        self.assertTrue(
-            "tts capability" in out["error"]["message"].lower() or
-            "all channels failed" in out["error"]["message"].lower()
-        )
+        self.assertIn("unknown model", out["error"]["message"].lower())
 
     def test_audio_transcriptions_routes_to_correct_endpoint(self):
         """Test that /v1/audio/transcriptions routes to /v1/audio/transcriptions upstream."""

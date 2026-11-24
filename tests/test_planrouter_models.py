@@ -81,7 +81,16 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(self.cfg.models.branded["facet-auto"], "default")
         self.assertEqual(self.cfg.models.branded["facet-cheap"], "cheap")
         self.assertEqual(self.cfg.models.branded["facet-agent"], "default")
-        self.assertTrue(self.cfg.models.fallback_unknown)
+
+    def test_unknown_name_rejected_by_default(self):
+        # 代码默认关闭 fallback_unknown（seed 也不再开启）：指定了模型名的
+        # 请求匹配不上渠道就直接拒绝，绝不换模型——保底只属于内部名。
+        raw = config_for("http://127.0.0.1:9000")
+        del raw["models"]
+        cfg = parse_config(raw)
+        self.assertFalse(cfg.models.fallback_unknown)
+        decision = resolve_model(cfg, "openai", "gpt-unknown")
+        self.assertEqual(decision.mode, "rejected")
 
     def test_reserved_names_are_internal(self):
         names = ("auto", "auto:cheap", "facet", "facet:cheap", "facet-auto",
