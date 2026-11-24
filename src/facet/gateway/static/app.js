@@ -690,7 +690,8 @@ function channelCard(c, i) {
       <span class="pill ${esc(c.protocol)}">${esc(c.protocol)}</span>
       ${channelTierBadge(c.name, c.tier)}${billingBadge(c)}${ptag ? `<small class="provider-tag">${esc(ptag)}</small>` : ''}
       <span class="switch ${c.enabled === false ? 'off' : ''}">${c.enabled === false ? '已停用' : '启用'}</span>
-      ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>` : ''}
+      ${cooling ? `<span class="tag cooling">冷却中 · 剩 ${Math.max(1, Math.ceil((st.cooling_seconds || 0) / 60))} 分钟</span>`
+        : (c.enabled !== false && st && st.configured === false ? '<span class="tag warn" title="该渠道还没有可用的密钥/凭据，被调度到时会失败；在「编辑」里填好 Key 后此标记消失">未配置</span>' : '')}
       <span class="row-actions">
         <button class="btn small" data-action="edit" data-index="${i}">编辑</button>
         <button class="btn small ghost" data-action="duplicate" data-name="${esc(c.name)}">复制</button>
@@ -797,6 +798,13 @@ function renderChannels() {
 function routeCard(r, ri) {
   const nodes = r.channels || [];
   const options = state.config.channels.filter((c) => c.protocol === r.protocol && !nodes.includes(c.name));
+  // "$free" expands server-side to every enabled free channel speaking this
+  // protocol (and follows the channel table as it changes). Offer it in the
+  // picker whenever such channels exist and the chain has no macro yet.
+  const hasFree = state.config.channels.some((c) => c.protocol === r.protocol
+    && c.tier === 'free' && c.enabled !== false);
+  const macroOpt = (hasFree && !nodes.includes('$free'))
+    ? '<option value="$free">$free · 所有免费渠道（自动跟随）</option>' : '';
   return `<article class="card">
     <div class="card-top">
       <div><span class="pill ${esc(r.protocol)}">${esc(r.protocol)}</span><h3>${esc(r.name)}</h3></div>
@@ -804,7 +812,7 @@ function routeCard(r, ri) {
     </div>
     <ol class="chain">
       ${nodes.length ? nodes.map((n, ci) => `<li>
-        <span class="order">${ci + 1}</span><span>${esc(n)}</span>
+        <span class="order">${ci + 1}</span><span>${n === '$free' ? '<span class="tag mixed">$free</span> 所有免费渠道' : esc(n)}</span>
         <span class="chain-actions">
           <button class="icon" data-action="move-up" data-index="${ri}" data-pos="${ci}" ${ci === 0 ? 'disabled' : ''}>上移</button>
           <button class="icon" data-action="move-down" data-index="${ri}" data-pos="${ci}" ${ci === nodes.length - 1 ? 'disabled' : ''}>下移</button>
@@ -813,7 +821,8 @@ function routeCard(r, ri) {
     </ol>
     <div class="add-node">
       <select id="add-select-${ri}" aria-label="选择渠道">
-        ${options.length ? options.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') : '<option value="">无同协议可用渠道</option>'}
+        ${macroOpt}
+        ${options.length ? options.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') : (macroOpt ? '' : '<option value="">无同协议可用渠道</option>')}
       </select>
       <button class="btn small" data-action="add-node" data-index="${ri}">添加渠道</button>
     </div>
@@ -1106,9 +1115,17 @@ async function forceSetupAdminKey() {
 
   toast('管理密码已设置');
   await loadState().catch(() => {});
-  // 首次设置密码后直接进入新手配置向导（若该浏览器此前已完成向导则不再打扰）。
+  // 首次设置密码后直接进入新手配置向导。浏览器此前完成过向导通常不再打扰，
+  // 但重装/换目录后服务端配置仍是「未完成」——以服务端状态为准照样打开，
+  // 否则浏览器旧标记会把首装向导永久压住。
   let done = false;
   try { done = localStorage.getItem('setup_done') === 'true'; } catch (_) { /* private mode */ }
+  if (done) {
+    try {
+      const wizardState = await api('/api/setup/wizard');
+      done = !!(wizardState && wizardState.wizard_done === true);
+    } catch (_) { /* 查询失败按浏览器标记处理 */ }
+  }
   if (!done) renderWizard('welcome').catch(() => {});
 }
 
@@ -1606,6 +1623,9 @@ function renderDashboard() {
       + (dsh.profile_exists ? '' : ' <span class="days-left expired">缺失 · 启动时自动创建</span>')));
     dshRows.push(dashRow('指向网关', dsh.base_url
       ? esc(dsh.base_url)
+        + (dsh.stale_base_url
+          ? ' <span class="days-left expired">旧地址 · 点「启动 DSH」自动改写</span>'
+          : '')
       : (dsh.profile_exists ? '未写入网关地址' : '启动时自动指向本网关')));
     dshRows.push(dashRow('运行状态', dsh.running
       ? `运行中 · pid ${dsh.pid}`
@@ -6237,6 +6257,31 @@ class FieldError extends Error {
   }
 }
 
+// 手动新建的渠道也要落链：渠道不在任何路由链里就永远不会被排程到——
+// 控制台测得再通也用不上（与向导 wizardRouteAppend 同口径：anthropic 进
+// anthropic:default；openai 进 default 尾部，tier=free 的免费层渠道同时
+// 进 cheap / free 链，与渠道页「免费池」口径一致）。
+function appendChannelToRoutes(channel) {
+  const routes = state.config.routes || (state.config.routes = []);
+  const ensure = (protocol, name) => {
+    let route = routes.find((r) => r.protocol === protocol && r.name === name);
+    if (!route) {
+      route = { name, protocol, channels: [] };
+      routes.push(route);
+    }
+    route.channels = route.channels || [];
+    return route;
+  };
+  const targets = channel.protocol === 'anthropic'
+    ? [['anthropic', 'default']]
+    : [['openai', 'default'],
+       ...(channel.tier === 'free' ? [['openai', 'cheap'], ['openai', 'free']] : [])];
+  targets.forEach(([protocol, name]) => {
+    const route = ensure(protocol, name);
+    if (!route.channels.includes(channel.name)) route.channels.push(channel.name);
+  });
+}
+
 function saveChannelEditor() {
   const f = $('editor-form');
   const val = (n) => (f.elements.namedItem(n)?.value ?? '').trim();
@@ -6246,6 +6291,13 @@ function saveChannelEditor() {
     const models = parseModels(val('models'));
     if (!name) throw new FieldError(f.elements.namedItem('name'), '渠道名称不能为空');
     if (!Object.keys(models).length) throw new FieldError(f.elements.namedItem('models'), '至少配置一条模型映射');
+    // 「auto=」这类空值行会生成空映射，auto 请求会解析出空上游模型名，
+    // 渠道测得再通也用不了——保存时就拦下来。
+    const emptyModel = Object.entries(models).find(([, v]) => !v);
+    if (emptyModel) {
+      throw new FieldError(f.elements.namedItem('models'),
+        `模型映射「${emptyModel[0]}=」缺少上游模型名：等号后面要填模型 id`);
+    }
     const clash = state.config.channels.some(
       (c, i) => c.name === name && i !== state.editing);
     if (clash) throw new FieldError(f.elements.namedItem('name'), '渠道名称与已有渠道重复：' + name);
@@ -6318,6 +6370,7 @@ function saveChannelEditor() {
       }
     } else {
       state.config.channels.push(channel);
+      appendChannelToRoutes(channel);
     }
     closeModal(true);
     markDirty();
@@ -6339,6 +6392,7 @@ function openRouteModal() {
           </select></div>
         <div class="field wide"><label for="r-channel">首个渠道</label>
           <select id="r-channel" name="rchannel">
+            <option value="$free">$free · 所有免费渠道</option>
             ${state.config.channels.map((c) => `<option value="${esc(c.name)}" data-proto="${esc(c.protocol)}">${esc(c.name)} (${esc(c.protocol)})</option>`).join('')}
           </select></div>
       </div>
@@ -6358,7 +6412,11 @@ function openRouteModal() {
     const channel = f.elements.namedItem('rchannel').value;
     const picked = state.config.channels.find((c) => c.name === channel);
     if (!name) return failField(f.elements.namedItem('rname'), '链名称不能为空');
-    if (!picked || picked.protocol !== protocol) return failField(f.elements.namedItem('rchannel'), '渠道协议与链协议不一致');
+    // "$free" is a macro, not a concrete channel: the server expands it to
+    // every enabled free channel speaking this protocol at load time.
+    if (channel !== '$free' && (!picked || picked.protocol !== protocol)) {
+      return failField(f.elements.namedItem('rchannel'), '渠道协议与链协议不一致');
+    }
     if (state.config.routes.some((r) => r.name === name && r.protocol === protocol)) {
       return failField(f.elements.namedItem('rname'), '同名同协议的链已存在');
     }
