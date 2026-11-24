@@ -5536,6 +5536,8 @@ function renderCatalogList(models) {
       <button type="button" class="btn small" data-cat="none">全不选</button>
       <button type="button" class="btn small" data-cat="free">只选免费</button>
       ${inPlan ? '<button type="button" class="btn small" data-cat="plan">只选套餐内</button>' : ''}
+      <button type="button" class="btn small ghost" id="catalog-probe"
+        title="对勾选的模型逐个发一次 ping（单模型 10 秒超时），不可用的自动取消勾选">试通勾选</button>
     </div>
     <div id="catalog-items">${models.map((m) =>
       `<label class="pick"><input type="checkbox" value="${esc(m)}" ${precheck(m) ? 'checked' : ''}><span><strong>${esc(m)}</strong>${planModels.has(m) ? ' <span class="tag plan">套餐</span>' : ''}</span></label>`
@@ -5570,6 +5572,76 @@ function renderCatalogList(models) {
   });
   count();
   $('catalog-apply').onclick = applyCatalogSelection;
+  $('catalog-probe').onclick = probeCheckedCatalog;
+}
+
+// 试通勾选的目录模型（复用向导自动选型的轮询语义）：每批发 8 个草稿
+// （服务端一次上限，4 路并发），单模型 10 秒超时；结果按序号对齐回填。
+// 失败项自动取消勾选并标 ✗，之后「把勾选写入模型映射」就只写可用的。
+async function probeCheckedCatalog() {
+  const list = $('catalog-list');
+  const boxes = () => Array.from(
+    list.querySelectorAll('#catalog-items input[type="checkbox"]'));
+  const refreshCount = () => {
+    $('catalog-count').textContent =
+      `已勾选 ${boxes().filter((b) => b.checked).length} / ${boxes().length} 个`;
+  };
+  const btn = $('catalog-probe');
+  if (!btn || btn.disabled) return;
+  const targets = boxes().filter((b) => b.checked).map((b) => b.value);
+  if (!targets.length) { toast('先勾选要测试的模型', 'bad'); return; }
+  const draft = draftChannelFromEditor();
+  if (!draft.name) {
+    toast('先填渠道名称再试通（已保存的渠道按名字找回密钥）', 'bad');
+    return;
+  }
+  btn.disabled = true;
+  const label = btn.textContent;
+  const results = new Map();
+  const CHUNK = 8;
+  try {
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const chunk = targets.slice(i, i + CHUNK);
+      $('catalog-count').textContent =
+        `试通中 ${Math.min(i + CHUNK, targets.length)} / ${targets.length}…`;
+      const r = await api('/api/test/channels', {
+        method: 'POST',
+        body: { timeout: 10, channels: chunk.map((m) => ({
+          ...draft, models: { auto: m },
+        })) },
+      });
+      if (!r.results || r.results.length !== chunk.length) {
+        throw new Error(r.error || '试通请求返回异常');
+      }
+      r.results.forEach((res, j) => results.set(chunk[j], res));
+    }
+  } catch (err) {
+    toast(err.message, 'bad');
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+  let okCount = 0;
+  boxes().forEach((b) => {
+    const res = results.get(b.value);
+    if (!res) return;
+    const span = b.parentElement.querySelector('span');
+    span.querySelectorAll('.tag.probe-ok, .tag.probe-bad').forEach((t) => t.remove());
+    if (res.ok) {
+      okCount += 1;
+      span.insertAdjacentHTML('beforeend', ' <span class="tag probe-ok">可用</span>');
+    } else {
+      b.checked = false;
+      const why = String(res.error || '失败').replace(/\s+/g, ' ').slice(0, 140);
+      span.insertAdjacentHTML('beforeend',
+        ` <span class="tag probe-bad" title="${esc(why)}">不可用</span>`);
+    }
+  });
+  refreshCount();
+  const bad = results.size - okCount;
+  toast(`试通完成：可用 ${okCount}，不可用 ${bad}${bad ? '（已取消勾选）' : ''}`,
+    bad ? 'warn' : 'ok');
 }
 
 function applyCatalogSelection() {

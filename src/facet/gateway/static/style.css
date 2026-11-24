@@ -413,6 +413,9 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 /* Per-(channel, model) stability score badges: +N trusted, -N shaky. */
 .tag.score-pos { background: rgba(63, 191, 120, .14); color: var(--ok); }
 .tag.score-neg { background: rgba(235, 90, 90, .16); color: var(--bad); }
+/* 目录试通标记：勾选模型逐个 ping 后的可用性结论。 */
+.tag.probe-ok { background: rgba(63, 191, 120, .14); color: var(--ok); }
+.tag.probe-bad { background: rgba(242, 99, 107, .14); color: var(--bad); }
 /* Reset button embedded inside a score badge. */
 .tag .score-x { all: unset; cursor: pointer; margin-left: 4px; padding: 0 3px;
   border-radius: 3px; font-weight: 700; opacity: .5; }
