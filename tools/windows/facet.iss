@@ -24,6 +24,10 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=Facet
 DefaultDirName={localappdata}\Programs\Facet
+; DisableDirPage 默认 auto：检测到旧安装就静默跳过目录页，原地升级。
+; 这里固定显示——用户改过 AppData 位置（如迁到 D 盘）或想自选目录时，
+; 升级路径也能改；未改动的用户直接下一步即可（默认值沿用旧目录）。
+DisableDirPage=no
 DefaultGroupName=Facet
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest

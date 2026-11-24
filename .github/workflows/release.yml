@@ -82,6 +82,10 @@ jobs:
             if (-not $up) { throw "打包网关未在 :18787 判活" }
             curl.exe -sS --max-time 5 http://127.0.0.1:18787/health -o "$tmp/health.json"
             python -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print('health:', d.get('status')); assert d.get('status') in ('ok','all_channels_cooling'), d" "$tmp/health.json"
+            # 使用文档浮窗依赖随包手册（site-packages/facet/gateway/docs/），
+            # 缺了会降级成「不在运行环境中」提示——这里把可用性焊进冒烟。
+            curl.exe -sS --max-time 5 "http://127.0.0.1:18787/api/guide" -o "$tmp/guide.json"
+            python -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print('guide available:', d.get('available'), 'markdown:', len(d.get('markdown','')), 'chars'); assert d.get('available') is True and len(d.get('markdown','')) > 1000, d" "$tmp/guide.json"
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }

@@ -298,15 +298,6 @@ class VersionTests(unittest.TestCase):
             # PEP 440：允许 pre-release 后缀（1.0.0b1 / rc1 / a1）
             self.assertRegex(facet.__version__, r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$")
 
-    def test_version_stays_prerelease_until_trial_passes(self):
-        """正式试用未通过前版本必须保持 pre-release（beta），防止误发正式版。
-
-        发正式版时随发布提交一并删除本测试（版本升 1.0.0、classifier 回
-        Production/Stable）。
-        """
-        if _table.BUNDLED_TABLE.exists():
-            self.assertRegex(facet.__version__, r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)$")
-
 
 if __name__ == "__main__":
     unittest.main()

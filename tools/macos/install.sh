@@ -112,6 +112,42 @@ fi
 # 并进变量名（$PYTHON（ → 变量 "PYTHON（" 不存在），set -u 下直接报错。
 log "使用 Python：${PYTHON}（$("$PYTHON" --version 2>&1)）"
 
+# 随包手册：控制台「使用文档」浮窗与新手向导读 venv 里 site-packages 的
+# docs/（ui.py 的 wheel 候选路径），pip 安装不带仓库的 docs/，需补拷三份
+# 手册与其引用的截图（按引用收集，不整搬 docs/images）。SRC 是 git URL
+# 时本地没有 docs/，跳过并保持浮窗降级提示（与旧行为一致）。
+# pip 每次重装都会重写 facet 包目录，所以必须在每次 pip install 之后重拷。
+install_guide_docs() {
+  local dest
+  dest="$("$VENV/bin/python" -c 'import facet.gateway as g, pathlib; print(pathlib.Path(g.__file__).parent / "docs")')"
+  "$VENV/bin/python" - "${SRC}/docs" "$dest" <<'PY'
+import re, shutil, sys
+from pathlib import Path
+docs, dest = Path(sys.argv[1]), Path(sys.argv[2])
+names = ("api-key-guide.md", "user-guide.md", "agent-integration.md")
+if not (docs / names[0]).is_file():
+    print("  手册跳过：安装来源不含 docs/（git URL 安装），控制台手册走降级提示")
+    sys.exit(0)
+pattern = re.compile(r'(?:!\[[^\]]*\]\(|src="|src=)\s*(images/[^)\s"]+)')
+images, copied = set(), 0
+for name in names:
+    src = docs / name
+    if src.is_file():
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / name)
+        copied += 1
+        images.update(pattern.findall((dest / name).read_text(encoding="utf-8")))
+count = 0
+for rel in sorted(images):
+    src = docs / rel
+    if src.is_file():
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / rel)
+        count += 1
+print(f"  手册随包：{copied} 份手册，{count} 张截图")
+PY
+}
+
 # 2. venv + 安装（Facet 零第三方依赖，venv 只有标准库+本项目）
 log "安装 Facet 到 ${VENV}（来源：${SRC}）"
 mkdir -p "$FACET_HOME/data" "$FACET_HOME/logs"
@@ -123,6 +159,7 @@ fi
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet --force-reinstall "$SRC"
 "$VENV/bin/facet" --help >/dev/null 2>&1 || err "facet 命令不可用，安装失败"
+install_guide_docs
 
 # 3. 渲染并装载 launchd（重装先卸旧）
 log "注册 launchd 服务 ${LABEL}（端口 ${FACET_PORT}，开机自启 + 崩溃重启）"

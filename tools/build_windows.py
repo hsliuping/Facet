@@ -48,6 +48,10 @@ SITE = RUNTIME / "Lib" / "site-packages"
 
 PY_EMBED = "3.11.9"
 EMBED_URL = f"https://www.python.org/ftp/python/{PY_EMBED}/python-{PY_EMBED}-embed-amd64.zip"
+# 控制台「使用文档」浮窗与新手向导引用的三份手册（ui.py 的 wheel 候选路径
+# 是 site-packages/facet/gateway/docs/，拷到这里即命中，产品代码无需改动；
+# Docker 走 COPY docs/ 到 /opt/facet，源码 checkout 走 parents[3]）。
+GUIDE_DOCS = ("api-key-guide.md", "user-guide.md", "agent-integration.md")
 INNO_URL = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe"
 INNO_SEARCH = [
     Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -111,6 +115,37 @@ def prepare_runtime() -> None:
     log("runtime", f"CPython {PY_EMBED} embedded at {RUNTIME.relative_to(ROOT)}")
 
 
+def copy_guide_docs() -> None:
+    """Bundle the console manuals (+ referenced screenshots) into the wheel tree.
+
+    Must run after every pip install: `pip install --target --upgrade`
+    rewrites the facet package directory, so a docs copy from a previous
+    build would be wiped. Images are collected from the manuals themselves
+    (about 90 files) instead of shipping the whole docs/images tree.
+    """
+    dest_root = SITE / "facet" / "gateway" / "docs"
+    docs = ROOT / "docs"
+    bundled = [name for name in GUIDE_DOCS if (docs / name).is_file()]
+    for name in bundled:
+        dest_root.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(docs / name, dest_root / name)
+    pattern = re.compile(r'(?:!\[[^\]]*\]\(|src="|src=)\s*(images/[^)\s"]+)')
+    images: set[str] = set()
+    for name in bundled:
+        images.update(pattern.findall((dest_root / name).read_text(encoding="utf-8")))
+    missing = []
+    for rel in sorted(images):
+        src = docs / rel
+        if not src.is_file():
+            missing.append(rel)
+            continue
+        dest = dest_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    log("guide docs", f"{len(bundled)} manuals, {len(images)} images"
+        + (f" ({len(missing)} missing: {', '.join(missing[:3])}...)" if missing else ""))
+
+
 def install_project() -> None:
     """Just the local wheel: code + static assets, no third-party deps."""
     SITE.mkdir(parents=True, exist_ok=True)
@@ -121,6 +156,7 @@ def install_project() -> None:
     run([sys.executable, "-m", "pip", "install", "--upgrade",
          "--no-warn-script-location", "--target", str(SITE),
          "--no-deps", str(ROOT)])
+    copy_guide_docs()
 
 
 def install_packages() -> None:
