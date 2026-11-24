@@ -45,6 +45,13 @@
 | `(2, 0.0, 0.0)` | 免费层渠道（`channel.tier == "free"`） | 保持链序 |
 | `(3, 0.0, 0.0)` | 按量付费（payg）或未知 | 保持链序，最低 |
 
+**模型级细化（2026-11-24 起）**：非包月渠道额外为每个显式 wire 生成
+`"渠道名|wire"` 键，档位按 `model_tier`（模型级 `tiers` 覆盖 > 渠道级 tier，
+OpenRouter 仅 `:free` 后缀算免费）判定。这样同一个聚合渠道可以「`:free` 模型
+在免费组、收费模型在按量组」——请求收费模型时不会再抢在真正的免费渠道前面。
+`_billing_order` 先查 pair 键，回退渠道级键（包月渠道只留渠道级键：套餐窗口
+约束全渠道模型，无细化可言）。渠道级键保留，供控制台渠道卡片徽标使用。
+
 ### 3.1 数据来源与判定
 
 - **是否包月**：`channel.business_line or channel.mode` ∈ {`coding`, `agent`}；
@@ -71,7 +78,7 @@
 
 | 位置 | 内容 |
 |---|---|
-| [core.py](../src/facet/gateway/core.py) `StateStore.__init__` | 新增 `billing_ranks: dict[str, tuple[int, float, float]]`，键为渠道 name，初值空 |
+| [core.py](../src/facet/gateway/core.py) `StateStore.__init__` | 新增 `billing_ranks: dict[str, tuple[int, float, float]]`，键为渠道 name 及 `"渠道名\|wire"` 模型级键，初值空 |
 | [server.py](../src/facet/gateway/server.py) `_burn_ratio()` | 单条订阅的「剩余额度比例 / 剩余天数」，同日到期 tiebreak 用 |
 | [server.py](../src/facet/gateway/server.py) `App._refresh_billing_ranks()` | 读订阅与渠道配置，**整体替换** `store.billing_ranks`（快照式，无锁撕裂） |
 | [server.py](../src/facet/gateway/server.py) 调用点 | `App.__init__`（启动）、`_swap()`（配置热重载）、`save_subscriptions()`、`renew_subscription()` |

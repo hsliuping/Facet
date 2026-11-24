@@ -1779,15 +1779,24 @@ class StateStore:
         free-tier channels, then pay-as-you-go. Within one expiry day, plans
         holding more remaining quota per remaining day sort first (the
         subscription most at risk of going unused drains before it lapses).
-        Known-bad pairs still sink behind healthy ones, and the sticky
-        session channel stays pinned. The sort is stable, so equal ranks
-        keep the console chain order.
+        Non-plan channels carry per-wire entries ("channel|wire"), so a
+        channel can rank free for one wire model and payg for another; the
+        pair key wins, the channel key is the fallback. Known-bad pairs
+        still sink behind healthy ones, and the sticky session channel
+        stays pinned. The sort is stable, so equal ranks keep the console
+        chain order.
         """
         if len(pairs) < 2:
             return pairs
         head = 1 if (sticky and pairs and pairs[0][0].name == sticky) else 0
         body = pairs[head:]
-        rank = lambda pair: self.billing_ranks.get(pair[0].name, (3, 0.0, 0.0))
+
+        def rank(pair):
+            channel, wire = pair
+            pair_key = f"{channel.name}|{wire}"
+            if pair_key in self.billing_ranks:
+                return self.billing_ranks[pair_key]
+            return self.billing_ranks.get(channel.name, (3, 0.0, 0.0))
         healthy, bad = [], []
         for pair in body:
             if self.score(pair[0].name, pair[1]) <= DEMOTE_SCORE:

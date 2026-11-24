@@ -510,6 +510,13 @@ def model_tier(channel, subscriptions: list[dict], model: str) -> str:
     """Per-model tier wins (manual switching), then the channel default."""
     if model in channel.tiers:
         return channel.tiers[model]
+    # OpenRouter names freeness in the model id itself: only the ":free"
+    # suffix is the free variant, every other mapping bills the account. The
+    # wizard files the whole channel under tier "free" (its :free catalogue
+    # is the point), which would otherwise paint paid siblings like
+    # aion-labs/aion-2.0 as 免费可用 in the model table.
+    if channel.provider == "openrouter":
+        return "free" if model.endswith(":free") else "paid"
     return channel_tier(channel, subscriptions)
 
 
@@ -1899,6 +1906,10 @@ class App:
             eligible = explicit == "free"
         else:
             eligible = channel.tier == "free"
+            # Same OpenRouter rule as model_tier: without a ":free" wire id
+            # the call bills the account and must skip the free baseline.
+            if eligible and channel.provider == "openrouter":
+                eligible = wire.endswith(":free")
         if not eligible:
             return None
         pack = self._model_quota_for(channel, wire, exposed)
@@ -2380,6 +2391,12 @@ class App:
         tiebreak on remaining quota per remaining day (the plan most at risk
         of going unused drains first). Internal aliases (auto/free) ignore
         this map and keep the console chain order.
+
+        Non-plan channels additionally get per-wire entries keyed
+        "channel|wire": freeness can live on the wire id (see model_tier) —
+        an OpenRouter ":free" model stays in the free group while its paid
+        siblings rank pay-as-you-go, and a manual tiers entry flips either
+        way. The router resolves the pair key first, then the channel key.
         """
         ranks: dict[str, tuple[int, float, float]] = {}
         for channel in self.config.channels:
@@ -2408,12 +2425,18 @@ class App:
                 if when < expiry or (when == expiry and ratio > burn):
                     expiry, burn = when, ratio
             if monthly:
+                # A plan window bills every model on the channel; no
+                # per-wire refinement applies.
                 ranks[channel.name] = ((0, expiry, -burn) if expiry != float("inf")
                                        else (1, 0.0, 0.0))
-            elif channel.tier == "free":
-                ranks[channel.name] = (2, 0.0, 0.0)
-            else:
-                ranks[channel.name] = (3, 0.0, 0.0)
+                continue
+            ranks[channel.name] = ((2, 0.0, 0.0) if channel.tier == "free"
+                                   else (3, 0.0, 0.0))
+            for wire in sorted({v for v in channel.models.values()
+                                if v and v != "*"}):
+                free = model_tier(channel, self.subscriptions, wire) == "free"
+                ranks[f"{channel.name}|{wire}"] = ((2, 0.0, 0.0) if free
+                                                   else (3, 0.0, 0.0))
         self.store.billing_ranks = ranks
 
     def save_subscriptions(self, raw) -> list[dict]:
@@ -5081,8 +5104,10 @@ class App:
         no_channel   — nothing enabled provides it (disabled-only or unknown)
 
         Tiers come from per-model overrides > channel.tier > linked
-        subscriptions — nothing is hardcoded. Cooldown is a channel-health
-        signal (shown per channel) and deliberately not part of the status.
+        subscriptions, plus one vendor naming convention: on OpenRouter only
+        the ":free" model-id suffix is free (see model_tier). Cooldown is a
+        channel-health signal (shown per channel) and deliberately not part
+        of the status.
         """
         now = time.time()
         subscriptions = self.subscriptions
@@ -5096,6 +5121,11 @@ class App:
             if channel_tier(channel, subscriptions) != "free":
                 continue
             for model in (self.store.catalogs.get(channel.name) or {}).get("models") or []:
+                # OpenRouter's catalog lists its paid models too; only the
+                # ":free" suffix ones advertise free access (see model_tier).
+                if (channel.provider == "openrouter"
+                        and not str(model).endswith(":free")):
+                    continue
                 free_upstream.setdefault(str(model), []).append(channel.name)
         labels = {"free_ok": "免费可用", "free_exhausted": "免费已耗尽",
                   "paid_only": "仅付费", "available": "可用（档位未知）",

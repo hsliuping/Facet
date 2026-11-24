@@ -255,6 +255,64 @@ class AppScoringTests(unittest.TestCase):
         self.assertEqual(tiers["free-a"], "paid")
         self.assertEqual(tiers["free-b"], "free")
 
+    @staticmethod
+    def _openrouter_raw():
+        raw = scoring_config()
+        raw["channels"] = [{
+            "name": "or", "protocol": "openai", "provider": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or-x",
+            # 向导会把整个渠道标成 tier=free；但 OpenRouter 只有 ":free"
+            # 后缀的模型真免费，其余映射按账号计费。
+            "tier": "free",
+            "models": {
+                "auto": "deepseek/deepseek-chat-v3:free",
+                "deepseek/deepseek-chat-v3:free": "deepseek/deepseek-chat-v3:free",
+                "aion-labs/aion-2.0": "aion-labs/aion-2.0",
+            },
+        }, {
+            "name": "cla", "protocol": "anthropic",
+            "base_url": "https://cla.example/v1", "api_key": "k",
+            "models": {"auto": "claude-x"},
+        }]
+        raw["routes"][0]["channels"] = ["or"]
+        raw["routes"][1]["channels"] = ["cla"]
+        return raw
+
+    def test_model_states_openrouter_paid_suffix_not_free(self):
+        app = App(parse_config(self._openrouter_raw()))
+        states = {row["model"]: row["status"]
+                  for row in app.ui_state()["model_states"]}
+        self.assertEqual(states["deepseek/deepseek-chat-v3:free"], "free_ok")
+        self.assertEqual(states["aion-labs/aion-2.0"], "paid_only")
+        row = next(r for r in app.ui_state()["model_states"]
+                   if r["model"] == "aion-labs/aion-2.0")
+        self.assertEqual(row["channels"][0]["tier"], "paid")
+
+    def test_model_states_openrouter_manual_override_wins(self):
+        # 渠道级 tiers 手工档位仍然最高：把 ":free" 模型标成 paid 要尊重。
+        raw = self._openrouter_raw()
+        raw["channels"][0]["tiers"] = {"deepseek/deepseek-chat-v3:free": "paid"}
+        app = App(parse_config(raw))
+        states = {row["model"]: row["status"]
+                  for row in app.ui_state()["model_states"]}
+        self.assertEqual(states["deepseek/deepseek-chat-v3:free"], "paid_only")
+
+    def test_model_states_openrouter_catalog_free_suffix_only(self):
+        # 目录里 openrouter 也会列出收费款：未映射时不应被当成
+        # 「免费已耗尽」的免费候选（那是免费渠道目录语义）。
+        raw = self._openrouter_raw()
+        del raw["channels"][0]["models"]["aion-labs/aion-2.0"]
+        app = App(parse_config(raw))
+        app.store.record_catalog("or", ["aion-labs/aion-2.0",
+                                        "deepseek/deepseek-chat-v3:free",
+                                        "gone/nova:free"],
+                                 "https://openrouter.ai/api/v1")
+        states = {row["model"]: row["status"]
+                  for row in app.ui_state()["model_states"]}
+        self.assertNotIn("aion-labs/aion-2.0", states)
+        self.assertEqual(states["deepseek/deepseek-chat-v3:free"], "free_ok")
+        self.assertEqual(states["gone/nova:free"], "free_exhausted")
+
 
 if __name__ == "__main__":
     unittest.main()

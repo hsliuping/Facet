@@ -133,6 +133,49 @@ class BillingOrderTests(unittest.TestCase):
         self.assertEqual(picked(app, "deepseek-flash")[:2],
                          ["plan-late", "plan-soon"])
 
+    def test_openrouter_wire_splits_free_and_payg(self):
+        # 聚合渠道（OpenRouter）整渠 tier=free，但只有 ":free" 后缀的 wire
+        # 属于免费组；收费款 wire 落到按量组——渠道级排序下它会抢在
+        # 真正的免费渠道前面。渠道级键保留（控制台徽标语义不变）。
+        raw = billing_config()
+        raw["channels"] = [
+            {"name": "agg", "base_url": "https://or.example/v1",
+             "api_key": "sk", "tier": "free", "provider": "openrouter",
+             "models": {"auto": "a",
+                        "deepseek/deepseek-chat-v3:free": "deepseek/deepseek-chat-v3:free",
+                        "aion-labs/aion-2.0": "aion-labs/aion-2.0"}},
+            {"name": "freehost", "base_url": "https://fh.example/v1",
+             "api_key": "sk", "tier": "free",
+             "models": {"auto": "a",
+                        "deepseek/deepseek-chat-v3:free": "deepseek/deepseek-chat-v3:free",
+                        "aion-labs/aion-2.0": "aion-labs/aion-2.0"}},
+            {"name": "anthro-a", "protocol": "anthropic",
+             "base_url": "https://f.example/v1", "api_key": "sk",
+             "models": {"claude-x": "claude-x"}},
+        ]
+        raw["routes"][0]["channels"] = ["agg", "freehost"]
+        app = App(parse_config(raw))
+        app._refresh_billing_ranks()
+        ranks = app.store.billing_ranks
+        self.assertEqual(ranks["agg"], (2, 0.0, 0.0))
+        self.assertEqual(ranks["agg|deepseek/deepseek-chat-v3:free"], (2, 0.0, 0.0))
+        self.assertEqual(ranks["agg|aion-labs/aion-2.0"], (3, 0.0, 0.0))
+        self.assertEqual(picked(app, "aion-labs/aion-2.0"), ["freehost", "agg"])
+        self.assertEqual(picked(app, "deepseek/deepseek-chat-v3:free"),
+                         ["agg", "freehost"])
+
+    def test_manual_tier_flips_payg_wire_into_free_group(self):
+        # 手工 tiers 同样驱动 per-wire 键：按量渠道的某个模型被标成 free，
+        # 排序就按该模型进免费组，渠道级键仍是按量组。（端到端顺序效果由
+        # 上一条聚合渠道用例验证；这里 payg-a 字母序恒在 free-c 之后，
+        # 顺序断言没有区分度。）
+        raw = billing_config()
+        raw["channels"][0]["tiers"] = {"ds-flash": "free"}
+        app = App(parse_config(raw))
+        app._refresh_billing_ranks()
+        self.assertEqual(app.store.billing_ranks["payg-a"], (3, 0.0, 0.0))
+        self.assertEqual(app.store.billing_ranks["payg-a|ds-flash"], (2, 0.0, 0.0))
+
     def test_ui_state_exposes_billing(self):
         app = app_with([subscription("soon", SOON_ISO, ["plan-soon"])])
         items = {c["name"]: c for c in app.ui_state()["channels"]}
