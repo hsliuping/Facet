@@ -29,7 +29,9 @@ def _raw():
         "listen": {"host": "127.0.0.1", "port": 8787},
         "channels": [
             {"name": "测试", "protocol": "openai",
-             "base_url": "http://127.0.0.1:9", "models": {"auto": "m1"}},
+             # 向导自动选型会把打通的模型写成显式键（models[m]=m），
+             # verify 按该名字走 exact 匹配，而非依赖已默认关闭的 fallback。
+             "base_url": "http://127.0.0.1:9", "models": {"auto": "m1", "m1": "m1"}},
         ],
         "routes": [
             {"name": "default", "protocol": "openai", "channels": ["测试"]},
@@ -175,6 +177,71 @@ class VerifyCallEndpointTests(unittest.TestCase):
         h = _FakeHandler()
         ui.handle(_StubApp(), h, "GET", "/api/setup/verify-call", b"")
         self.assertEqual(h.status, 404)
+
+
+class _ProbeStubApp(_StubApp):
+    """在 verify-call stub 上加 test_channels，覆盖 /api/test/channels 端点。"""
+
+    def test_channels(self, channels, model=None, timeout=None):
+        self.calls.append({"channels": channels, "model": model,
+                           "timeout": timeout})
+        if self._exc:
+            raise self._exc
+        return self._result
+
+
+class TestChannelsEndpointTests(unittest.TestCase):
+    """向导轮询会带 timeout: 10 —— 端点必须把它透传给 App。"""
+
+    def _post(self, app, raw):
+        h = _FakeHandler()
+        ui.handle(app, h, "POST", "/api/test/channels", raw)
+        return h, json.loads(h.wfile.getvalue())
+
+    def test_endpoint_passes_timeout(self):
+        app = _ProbeStubApp()
+        h, body = self._post(app, b'{"channels":["c"],"model":"auto","timeout":10}')
+        self.assertEqual(h.status, 200)
+        self.assertEqual(app.calls, [{"channels": ["c"], "model": "auto",
+                                      "timeout": 10}])
+
+    def test_endpoint_defaults_without_timeout(self):
+        app = _ProbeStubApp()
+        self._post(app, b'{"channels":["c"]}')
+        self.assertIsNone(app.calls[0]["timeout"])
+
+
+class ProbeTimeoutClampTests(unittest.TestCase):
+    """渠道测试超时的 clamp：向导传 10s 生效，非法/越界值回 3..60 边界。"""
+
+    def setUp(self):
+        cfg = {
+            "listen": {"host": "127.0.0.1", "port": 0},
+            "channels": [{"name": "c", "protocol": "openai",
+                          "base_url": "http://127.0.0.1:9/v1",
+                          "api_key": "k", "models": {"auto": "m"}}],
+            "routes": [{"name": "default", "protocol": "openai",
+                        "channels": ["c"]},
+                       {"name": "default", "protocol": "anthropic",
+                        "channels": ["c"]}],
+        }
+        self.app = App(parse_config(cfg))
+        self.seen = []
+        patcher = mock.patch(
+            "facet.gateway.server.probe_channel",
+            side_effect=lambda ch, m, t: (self.seen.append(t),
+                                          {"ok": True})[1])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_timeout_clamped(self):
+        cases = [(None, 60.0), (0, 3.0), (-5, 3.0), (100, 60.0),
+                 (10, 10.0), ("bad", 60.0)]
+        for arg, expect in cases:
+            with self.subTest(arg=arg):
+                self.seen.clear()
+                self.app.test_channels(["c"], timeout=arg)
+                self.assertEqual(self.seen, [expect])
 
 
 class _FileApp:

@@ -528,7 +528,9 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             _json(h, 400, {"error": {"message": "body must be an object"}})
             return True
         try:
-            payload = app.test_channels(incoming.get("channels"), incoming.get("model"))
+            payload = app.test_channels(incoming.get("channels"),
+                                        incoming.get("model"),
+                                        incoming.get("timeout"))
         except ValueError as exc:
             _json(h, 400, {"error": {"message": str(exc)}})
             return True

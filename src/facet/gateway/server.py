@@ -2851,12 +2851,22 @@ class App:
         """Clear stability scores (all / one channel / one channel×wire)."""
         return self.store.reset_scores(channel, wire)
 
-    def test_channels(self, channels, model: str | None = None) -> dict:
+    def test_channels(self, channels, model: str | None = None,
+                      timeout: float | None = None) -> dict:
         """Probe console drafts without touching cooldown, usage or audit state.
 
         Items may be full channel objects (an unsaved channel draft) or bare
         names (a subscription's linked channels, resolved from saved config).
+        ``timeout`` caps each probe in seconds (clamped 3..60); the wizard's
+        model sweep passes a short one so a hung candidate is skipped instead
+        of stalling the loop, while the console's single manual click keeps
+        the default 60s (slow proxies legitimately need 10-20s to succeed).
         """
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            timeout = TEST_TIMEOUT
+        timeout = min(60.0, max(3.0, timeout))
         if not isinstance(channels, list) or not channels:
             raise ValueError("channels 必须是非空数组")
         if len(channels) > MAX_CHANNELS:
@@ -2879,7 +2889,7 @@ class App:
         merged = merge_secrets({"channels": prepared}, self.raw)["channels"]
         with ThreadPoolExecutor(max_workers=min(4, len(merged))) as pool:
             results = list(pool.map(
-                lambda channel: probe_channel(channel, wanted, TEST_TIMEOUT),
+                lambda channel: probe_channel(channel, wanted, timeout),
                 merged))
         self._append_probe_log(results)
         return {

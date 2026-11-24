@@ -430,7 +430,9 @@ const WIZARD_STEPS = [
         }
 
         // 逐个试到打通为止：404/429/5xx 这类模型级失败换下一个模型继续；
-        // 401/403 是 Key/账号问题，换模型救不了，立即停。
+        // 401/403 是 Key/账号问题，换模型救不了，立即停。单模型 10 秒
+        // 超时就跳过（服务端 clamp 3..60）：轮询给了重试机会，不值得为
+        // 一个卡住的候选干等；控制台的单次手动测试仍是默认 60 秒。
         const tries = ids.slice(0, 12);
         let winner = null;
         let hardFail = '';
@@ -441,7 +443,7 @@ const WIZARD_STEPS = [
           try {
             const data = await api('/api/test/channels', {
               method: 'POST',
-              body: { channels: [{ ...draft, models: { auto: m, [m]: m } }] },
+              body: { timeout: 10, channels: [{ ...draft, models: { auto: m, [m]: m } }] },
             });
             const r = (data.results || [])[0] || {};
             if (r.ok) {
