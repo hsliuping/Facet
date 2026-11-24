@@ -686,6 +686,25 @@ select.auto-model { background: var(--bg); color: var(--text); border: 1px solid
   border: 1px solid rgba(242, 99, 107, .4);
   background: rgba(242, 99, 107, .08); color: var(--bad, #f2636b);
 }
+
+/* 渠道测试的逐模型尝试日志：一行一个候选模型，实时显示通过/失败 */
+.wizard-test-log {
+  margin-top: 8px; max-height: 190px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+}
+.wizard-test-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel-2, transparent);
+}
+.wizard-test-row .wt-model {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wizard-test-row .wt-result { flex: none; }
+.wizard-test-row .wt-result.pending { color: var(--muted); }
+.wizard-test-row .wt-result.ok { color: var(--ok); }
+.wizard-test-row .wt-result.bad { color: var(--bad); }
 .wizard-curl {
   margin-top: 10px; padding: 10px 12px; border-radius: 9px;
   background: rgba(255, 255, 255, .04);

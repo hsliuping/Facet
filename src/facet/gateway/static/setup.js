@@ -342,11 +342,12 @@ const WIZARD_STEPS = [
   {
     id: 'test-save',
     title: '测试并保存渠道',
-    description: '向导会用您填写的 Key 向厂家发一次最小请求，验证连通后自动保存渠道。',
+    description: '向导会拉取厂家模型目录，自动逐个试到打通为止（优先该厂家自有模型），全程显示每个模型的测试结果。',
     async render() {
       return `
         <div class="wizard-step-content">
-          <div id="wizard-test-status" class="hint">正在测试并保存，请稍候…</div>
+          <div id="wizard-test-status" class="hint">正在准备测试…</div>
+          <div id="wizard-test-log" class="wizard-test-log"></div>
         </div>
       `;
     },
@@ -362,9 +363,6 @@ const WIZARD_STEPS = [
       }
       const mode = p.mode || {};
       const modelList = (mode.models || []).slice(0, 20);
-      const models = {};
-      modelList.forEach((m) => { models[m] = m; });
-      if (modelList.length) models.auto = modelList[0];
       const draft = {
         name: wizardChannelName(p.id),
         protocol: mode.protocol,
@@ -373,7 +371,7 @@ const WIZARD_STEPS = [
         base_url: mode.base_url,
         api_key: wizardState.providerKey,
         creds: wizardState.providerCreds,
-        models,
+        models: {},
         priority: 100,
         // 渠道档位：向导偏好「免费」且所选模式带免费额度时按偏好标 free
         // （进免费池与 $free 宏、cheap/free 链，免费额度对齐/目录拉取/
@@ -384,48 +382,110 @@ const WIZARD_STEPS = [
           ? 'free' : (mode.tier || ''),
         enabled: true,
       };
+      const logBox = $('wizard-test-log');
+      const rowFor = (m) => {
+        const row = document.createElement('div');
+        row.className = 'wizard-test-row';
+        row.innerHTML = `<span class="wt-model">${esc(m)}</span>`
+          + '<span class="wt-result pending">测试中…</span>';
+        logBox.appendChild(row);
+        return row;
+      };
+      const settle = (row, ok, text) => {
+        const el = row.querySelector('.wt-result');
+        el.textContent = text;
+        el.className = 'wt-result ' + (ok ? 'ok' : 'bad');
+      };
       try {
-        // 厂家目录里 models 常为空（清单由上游动态维护）：空映射过不了渠道
-        // 校验（至少一条模型映射）。先拉一次真实模型清单（渠道配置页「拉取
-        // 模型清单」同款接口，支持注册表套餐/免费额度/上游 /models），再测试。
-        if (!Object.keys(models).length) {
-          status.innerHTML = '正在拉取该厂家的模型清单…';
+        // 注册表里写死的模型清单会过时（上游下线后一测就 404）：一律现拉
+        // 一次真实目录（渠道配置页「拉取模型清单」同款接口），以目录为
+        // 候选池；目录拉不出来再回退注册表清单。
+        let catalog = [];
+        status.innerHTML = '正在拉取该厂家的模型目录…';
+        try {
           const cat = await api('/api/probe/models',
             { method: 'POST', body: { channel: draft } });
-          if (!cat.ok || !(cat.models || []).length) {
-            throw new Error((cat.error || '上游未返回模型清单')
-              + (cat.hint ? ' — ' + cat.hint : ''));
+          if (cat && cat.ok && Array.isArray(cat.models)) {
+            catalog = cat.models.slice();
           }
-          // auto 指向第一个可对话模型（目录是字母序，asr/tts/embedding 可能
-          // 排在前面，拿它们做对话测试会被上游拒绝）。免费偏好渠道服务端
-          // 已把 suggested 指向 :free/-free 对话模型，映射也按免费优先填
-          // 满坑位——否则字母序头部全是付费模型（openrouter 的
-          // aion/amazon 块），:free 模型进不了映射，免费额度无从生效。
-          const FREE_ID = /(:free|-free)$/i;
-          const limit = 20;
-          const ids = cat.suggested ? [cat.suggested] : [];
-          const push = (m) => { if (ids.length < limit && !ids.includes(m)) ids.push(m); };
-          if (draft.tier === 'free') {
-            (cat.models || []).filter((m) => FREE_ID.test(m)).forEach(push);
-          }
-          (cat.models || []).forEach(push);
-          ids.forEach((m) => { models[m] = m; });
-          models.auto = ids[0];
+        } catch (_) { /* 目录失败不致命：回退注册表清单 */ }
+
+        // 候选排序：厂家自有模型（如 nvidia/…）优先，免费偏好下 :free 再
+        // 优先；明显非对话模型（embed/asr/tts/rerank…）不参与对话测试。
+        // 目录是字母序、第三方 id 常排最前（acme/… < nvidia/…），所以不采
+        // 信服务端 suggested（它指向字母序头部），由这里重新排序。
+        const NON_CHAT = /(embed|asr|tts|rerank|whisper|ocr|guard|moderation|reward|stable-?diffusion|sdxl)/i;
+        const FREE_ID = /(:free|-free)$/i;
+        const own = catalog.filter((m) => m.startsWith(p.id + '/') && !NON_CHAT.test(m));
+        const others = catalog.filter((m) => !own.includes(m) && !NON_CHAT.test(m));
+        const ids = [];
+        const push = (m) => { if (ids.length < 20 && !ids.includes(m)) ids.push(m); };
+        own.forEach(push);
+        if (draft.tier === 'free') others.filter((m) => FREE_ID.test(m)).forEach(push);
+        others.forEach(push);
+        if (!ids.length) modelList.forEach(push);
+        if (!ids.length) {
+          throw new Error('上游未返回模型清单，无法自动选型；'
+            + '可在「渠道配置」页手动添加渠道并填写模型映射。');
         }
-        status.innerHTML = '正在测试并保存，请稍候…';
-        const data = await api('/api/test/channels', { method: 'POST', body: { channels: [draft] } });
-        const r = (data.results || [])[0] || {};
-        if (r.ok) {
+
+        // 逐个试到打通为止：404/429/5xx 这类模型级失败换下一个模型继续；
+        // 401/403 是 Key/账号问题，换模型救不了，立即停。
+        const tries = ids.slice(0, 12);
+        let winner = null;
+        let hardFail = '';
+        for (let i = 0; i < tries.length; i += 1) {
+          const m = tries[i];
+          status.innerHTML = `正在测试模型（${i + 1}/${tries.length}）：${esc(m)}…`;
+          const row = rowFor(m);
+          try {
+            const data = await api('/api/test/channels', {
+              method: 'POST',
+              body: { channels: [{ ...draft, models: { auto: m, [m]: m } }] },
+            });
+            const r = (data.results || [])[0] || {};
+            if (r.ok) {
+              winner = { model: r.model || m, latency: r.latency_ms };
+              settle(row, true, '✓ ' + (r.latency_ms != null ? r.latency_ms + 'ms' : '通过'));
+              break;
+            }
+            settle(row, false, '✗ ' + (r.error || '失败'));
+            if (/HTTP 40[13]\b/.test(r.error || '')) hardFail = r.error;
+          } catch (e) {
+            settle(row, false, '✗ ' + e.message);
+          }
+        }
+
+        if (winner) {
+          // 最终映射按测试顺序填满坑位，auto 指向实测打通的那个模型——
+          // 不再相信目录字母序头部（那正是过时 404 的来源）。
+          const ordered = [winner.model];
+          ids.forEach((m) => {
+            if (ordered.length < 20 && !ordered.includes(m)) ordered.push(m);
+          });
+          ordered.forEach((m) => { draft.models[m] = m; });
+          draft.models.auto = winner.model;
           await wizardSaveChannel(draft);
-          wizardState.testResult = { ok: true, latency: r.latency_ms, model: r.model, saved: true };
-          const bits = [r.model ? '模型 ' + esc(r.model) : '',
-            r.latency_ms != null ? r.latency_ms + 'ms' : ''].filter(Boolean).join(' · ');
-          status.innerHTML = `测试通过，渠道「${esc(draft.name)}」已保存并生效。${bits ? `<br>(${bits})` : ''}`;
+          wizardState.testResult = {
+            ok: true, latency: winner.latency, model: winner.model, saved: true,
+          };
+          const bits = ['模型 ' + esc(winner.model),
+            winner.latency != null ? winner.latency + 'ms' : '',
+            tries.length > 1 ? `第 ${tries.indexOf(winner.model) + 1} 次尝试打通` : '',
+          ].filter(Boolean).join(' · ');
+          status.innerHTML = `测试通过，渠道「${esc(draft.name)}」已保存并生效。<br>(${bits})`;
           status.className = 'wizard-test-result ok';
+        } else if (hardFail) {
+          wizardState.testResult = { ok: false, error: hardFail, saved: false };
+          status.innerHTML = `测试未通过：${esc(hardFail)}<br>`
+            + '这是 Key 或账号问题（换哪个模型都一样）。请点「上一步」检查 Key 后重试。';
+          status.className = 'wizard-test-result bad';
         } else {
-          wizardState.testResult = { ok: false, error: r.error || '测试未通过', saved: false };
-          status.innerHTML = `测试未通过：${esc(r.error || '未知原因')}<br>`
-            + '渠道暂未保存。可点「上一步」检查 Key 后重试，或继续下一步稍后再配置。';
+          wizardState.testResult = {
+            ok: false, error: `已尝试 ${tries.length} 个模型均未打通`, saved: false,
+          };
+          status.innerHTML = `已依次尝试 ${tries.length} 个模型（明细如上），均未打通。<br>`
+            + '渠道暂未保存。可点「上一步」检查 Key 或代理设置，或继续下一步稍后在「渠道配置」页手动配置。';
           status.className = 'wizard-test-result bad';
         }
       } catch (e) {
