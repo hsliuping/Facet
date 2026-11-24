@@ -26,7 +26,9 @@ def test_e1_dashboard_summary_matches_api(console, api):
     total_channels = len(channels)
     cooling = sum(1 for c in channels if c.get("cooling"))
     blocked = sum(1 for c in channels if c.get("blocked"))
-    available = total_channels - cooling - blocked
+    # 可用 = 启用且配了真实 Key、未冷却未停用（未配 Key 的模板渠道不算）。
+    available = sum(1 for c in channels if c.get("enabled") and c.get("configured")
+                    and not c.get("cooling") and not c.get("blocked"))
     total_requests = sum(c.get("total_requests", 0) for c in channels)
     total_tokens = sum(c.get("total_tokens", 0) for c in channels)
 
@@ -38,6 +40,20 @@ def test_e1_dashboard_summary_matches_api(console, api):
     expected_available = f"{available} / {total_channels}"
     assert expected_available in summary_text, \
         f"可用渠道数 {expected_available} 未在摘要中找到：{summary_text}"
+
+    # 运行健康·渠道状态行：分桶口径与渠道页一致（停用=enabled=false，
+    # 封锁=监视自动熔断，未配置=启用但缺 Key）。
+    disabled = sum(1 for c in channels if c.get("enabled") is False)
+    unconfigured = sum(1 for c in channels if c.get("enabled")
+                       and not c.get("configured")
+                       and not c.get("cooling") and not c.get("blocked"))
+    health_text = console.el("#dash-health").inner_text()
+    for fragment in (f"{available} 可用", f"{cooling} 冷却", f"{disabled} 停用"):
+        assert fragment in health_text, \
+            f"渠道状态行缺少「{fragment}」：{health_text}"
+    if unconfigured:
+        assert f"{unconfigured} 未配置" in health_text, \
+            f"渠道状态行缺少「{unconfigured} 未配置」：{health_text}"
 
     # 冷却中数量
     assert str(cooling) in summary_text, \

@@ -1014,18 +1014,25 @@ function renderRouteGlobal() {
   }
 }
 
+// 可用渠道 = 启用且配了真实 Key、不在冷却/停用——只有这样的渠道现在就
+// 能接住请求。未配 Key 的模板渠道、冷却中的渠道都不算可用。
+function usableChannels(list) {
+  return (list || []).filter((c) => c.enabled && c.configured && !c.cooling && !c.blocked);
+}
+
 function renderSummary() {
   const s = state.snapshot;
   if (!s) return;
   // 运行状态页的 KPI 永远统计全量渠道：渠道筛选只影响渠道页列表，
   // 这里若跟着筛选会出现「渠道总数 2/8」与下方全量表格自相矛盾。
   const cooling = s.channels.filter((c) => c.cooling).length;
+  const usable = usableChannels(s.channels).length;
   const requests = s.channels.reduce((n, c) => n + c.total_requests, 0);
   const tokens = s.channels.reduce((n, c) => n + c.total_tokens, 0);
   const listen = s.listen ? `${s.listen.host}:${s.listen.port}` : '—';
   const items = [
     ['渠道总数', s.channels.length, ''],
-    ['可用渠道', s.channels.length - cooling, 'ok'],
+    ['<span title="启用且已配 Key、未冷却未停用；未配 Key 的模板渠道不算">可用渠道</span>', usable, usable ? 'ok' : ''],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests.toLocaleString(), ''],
     ['累计 Tokens', tokens.toLocaleString(), ''],
@@ -1583,7 +1590,12 @@ function renderDashboard() {
   const channels = s.channels || [];
   const cooling = channels.filter((c) => c.cooling).length;
   const blocked = channels.filter((c) => c.blocked).length;
-  const ok = channels.length - cooling - blocked;
+  const ok = usableChannels(channels).length;
+  // 分桶口径与渠道页一致（可用/未配置/冷却中/已停用）：停用 = 手动关闭
+  // （enabled=false），封锁 = 监视/DSH 自动熔断（blocked），两者分开报。
+  const disabled = channels.filter((c) => c.enabled === false).length;
+  const unconfigured = channels.filter((c) => c.enabled && !c.configured
+    && !c.cooling && !c.blocked).length;
   const requests = channels.reduce((n, c) => n + c.total_requests, 0);
   const tokens = channels.reduce((n, c) => n + c.total_tokens, 0);
   const handoffs = channels.reduce((n, c) => n + c.handoffs, 0);
@@ -1599,7 +1611,8 @@ function renderDashboard() {
   const freeUsable = Math.max(0, (freeSummary.routable || 0) - (freeSummary.quota_warning || 0));
 
   const kpis = [
-    ['可用渠道', channels.length ? `${ok} / ${channels.length}` : '0', ok ? 'ok' : ''],
+    ['<span title="启用且已配 Key、未冷却未停用；未配 Key 的模板渠道不算">可用渠道</span>',
+      channels.length ? `${ok} / ${channels.length}` : '0', ok ? 'ok' : ''],
     ['可用免费模型', `${freeUsable} / ${freeSummary.models || 0}`,
       freeUsable ? 'ok' : (freeSummary.models ? 'warn' : '')],
     ['冷却中', cooling, cooling ? 'warn' : ''],
@@ -1630,7 +1643,9 @@ function renderDashboard() {
 
   // 运行健康（稳定）：failover 面板。
   $('dash-health').innerHTML = [
-    dashRow('渠道状态', `${ok} 可用 · ${cooling} 冷却 · ${blocked} 停用`),
+    dashRow('渠道状态', `${ok} 可用 · ${cooling} 冷却 · ${disabled} 停用`
+      + (blocked ? ` · ${blocked} 封锁` : '')
+      + (unconfigured ? ` · ${unconfigured} 未配置` : '')),
     dashRow('累计交接', `${handoffs} 次`),
     dashRow('不稳定模型', unstable
       ? `<span class="days-left expired">${unstable} 个（负分）</span>` : '0 个'),
