@@ -30,7 +30,24 @@ const wizardState = {
   providerCreds: {}, // 管理面 AK/SK（credential_envs），供额度对齐/余量查询
   testResult: null, // { ok, latency, error, saved }
   generatedKey: '',
+  // 服务端 keys.json 已落盘的调用密钥（本次向导未新建时从服务端读取真值）。
+  // 密钥只存服务端，绝不写入 localStorage/sessionStorage 前端缓存。
+  serverKey: '',
 };
+
+// 从服务端读当前已落盘的调用密钥：优先启用的 quickstart，其次任一启用 Key。
+// 返回密钥明文或 ''（服务端还没有任何启用 Key）。
+async function fetchServerGatewayKey() {
+  try {
+    const payload = await api('/api/keys');
+    const rows = Array.isArray(payload && payload.keys) ? payload.keys : [];
+    const enabled = rows.filter((r) => r && r.enabled && r.key);
+    const pick = enabled.find((r) => r.name === 'quickstart') || enabled[0];
+    return pick ? String(pick.key) : '';
+  } catch (_) {
+    return '';
+  }
+}
 
 const WIZARD_STEPS = [
   {
@@ -424,7 +441,11 @@ const WIZARD_STEPS = [
     title: '生成调用密钥',
     description: '这把 Key 就是您的程序调用 Facet 时使用的凭证。',
     async render() {
-      const existing = wizardState.generatedKey || readStoredKey('gateway');
+      // 密钥真值以服务端落盘为准：本次生成过用本次的，否则读服务端已有 Key。
+      if (!wizardState.generatedKey && !wizardState.serverKey) {
+        wizardState.serverKey = await fetchServerGatewayKey();
+      }
+      const existing = wizardState.generatedKey || wizardState.serverKey;
       const shown = existing
         ? `<div class="form-grid"><div class="field">
              <label>调用密钥</label>
@@ -448,8 +469,7 @@ const WIZARD_STEPS = [
             const record = await api('/api/keys', { method: 'POST', body: { name: 'quickstart' } });
             wizardState.generatedKey = record.key || '';
             state.key = wizardState.generatedKey;
-            storeKey('gateway', wizardState.generatedKey, true);
-            toast('调用密钥已生成');
+            toast('调用密钥已生成（已落盘服务端配置目录）');
             renderWizard();
           } catch (e) {
             toast(e.message, 'bad');
@@ -460,14 +480,15 @@ const WIZARD_STEPS = [
       if (regen) {
         regen.onclick = async () => {
           try {
-            // 重新生成前先吊销旧密钥，避免 quickstart Key 越积越多。
-            if (wizardState.generatedKey) {
-              await api('/api/keys/delete', { method: 'POST', body: { key: wizardState.generatedKey } });
+            // 重新生成前先吊销旧密钥（服务端真值），避免 quickstart Key 越积越多。
+            const current = wizardState.generatedKey || wizardState.serverKey;
+            if (current) {
+              await api('/api/keys/delete', { method: 'POST', body: { key: current } });
             }
             const record = await api('/api/keys', { method: 'POST', body: { name: 'quickstart' } });
             wizardState.generatedKey = record.key || '';
+            wizardState.serverKey = '';
             state.key = wizardState.generatedKey;
-            storeKey('gateway', wizardState.generatedKey, true);
             toast('已生成新密钥（旧密钥已吊销）');
             renderWizard();
           } catch (e) {
@@ -503,7 +524,7 @@ const WIZARD_STEPS = [
     title: '一切就绪',
     description: '配置完成！复制下面的信息到您的工具里即可开始使用。',
     async render() {
-      const key = wizardState.generatedKey || readStoredKey('gateway');
+      const key = wizardState.generatedKey || wizardState.serverKey;
       const url = location.origin;
       return `
         <div class="wizard-step-content">
@@ -678,14 +699,26 @@ function wizardBindVerifyRetry() {
   if (retry) retry.onclick = () => wizardVerify();
 }
 
-function wizardVerify() {
+async function wizardVerify() {
   const box = $('wizard-verify');
   if (!box) return;
+  // 密钥真值以服务端落盘为准；一把 Key 都没有时提示回上一步生成。
+  if (!wizardState.generatedKey && !wizardState.serverKey) {
+    wizardState.serverKey = await fetchServerGatewayKey();
+  }
+  const key = wizardState.generatedKey || wizardState.serverKey;
+  if (!key) {
+    box.className = 'wizard-test-result bad';
+    box.innerHTML = '尚未生成调用密钥，请回到上一步生成后再验收。'
+      + '<div class="actions"><button class="btn ghost" id="wizard-verify-retry">重新验收</button></div>';
+    wizardBindVerifyRetry();
+    return;
+  }
   box.className = 'hint';
   box.innerHTML = '正在通过路由链发起真实调用，请稍候…（可能产生极少量上游费用）';
   api('/api/setup/verify-call', {
     method: 'POST',
-    body: { key: wizardState.generatedKey || readStoredKey('gateway') },
+    body: { key },
   }).then((r) => wizardRenderVerify(r)).catch((e) => {
     box.className = 'wizard-test-result bad';
     box.innerHTML = `验收请求失败：${esc(e.message)}`
