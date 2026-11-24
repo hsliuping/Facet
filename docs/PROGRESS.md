@@ -86,7 +86,7 @@
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：21 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信、4.13 SCNet 三节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
 - [ ] **superagent 对接（往后排）**：2026-11-15 讨论降级——产品转向轻量团队版后受众是小团队管理员，agent 舰队叙事不再是产品需求；P0 后半（Router / Worker 分别指定模型）、P1（Worker 档位）、P2（运维 policy）暂缓，DSH 当模型底座的能力已被实测覆盖无需再验；仅保留 P3（吸收三条设计原则到维护层，见 [行动清单](planrouter-superagent-integration.md)），随维护层迭代渐进
-- [ ] **正式试用 → 打 tag 发版**：37 个提交已推送（`5808af4..6c26bbf`，2026-11-09）；**发版前置：正式试用**——把日常真实工具指向网关跑一段实际工作（故障转移、配额冷却、每日维护在真实负载下的表现），试用通过后把版本从 1.0.0b1 升为 1.0.0 再打 v1.0.0 tag；当前版本定位 **Beta**（1.0.0b1，正式试用未通过前不自称稳定版，test_package 的 prerelease 门测试随发布提交一并放开）
+- [x] **正式试用 → 打 tag 发版**：v1.0.0 正式版已发布（2026-11-23）；版本从 1.0.0b1 升为 1.0.0，classifier 回 `Production/Stable`，test_package prerelease 门测试随发布提交一并删除；README / release.yml / Docker tag 同步正式版口径
 
 ---
 
