@@ -1353,17 +1353,11 @@ function renderAccessPage() {
   masterBtn.disabled = !master;
   masterBtn.onclick = () => { if (master) copyText(master); else toast('当前没有配置主密钥', 'warn'); };
 
-  const branded = ((state.config || {}).models || {}).branded || {};
-  const names = Object.keys(branded);
-  const exact = ((state.snapshot || {}).model_states) || [];
-  $('access-models').innerHTML = names.length
-    ? names.map((n) => `<div class="model-row"><code>${esc(n)}</code>` +
-        `<span class="sub-note">→ ${esc(branded[n])} 链 · 内部调度</span>` +
-        `<button class="btn small ghost" data-copy="${esc(n)}">复制</button></div>`).join('')
-    : '<div class="chart-empty">还没有配置自有模型名；facet-auto / facet-cheap 等默认名始终可用，也可在「模型接入」页固化</div>';
-  $('access-models-note').textContent = names.length
-    ? `${names.length} 个自有模型名 + ${exact.length} 个精确匹配名，都可直接填进工具`
-    : `精确匹配名 ${exact.length} 个；内部调度名（facet-auto 等）始终可用`;
+  // 模型名清单（brand-list）与工具配置生成器都在这一页：进入时一并刷新，
+  // 调用方一站式拿到地址 / 密钥 / 模型名 / 可复制配置。
+  renderBrandList();
+  fillAccessModels();
+  renderAccessSnippet();
 
   fillAccessExampleModels();
   renderAccessExample();
@@ -3601,10 +3595,7 @@ function renderModels() {
   $('set-fallback').checked = p.fallback_unknown !== false;
   $('set-fallback-route').value = p.fallback_route || 'default';
   renderPolicyErrors([]);
-  renderBrandList();
   renderExactModels();
-  fillAccessModels();
-  renderAccessSnippet();
 }
 
 function renderPolicyErrors(errors) {
@@ -3685,10 +3676,6 @@ $('btn-copy-access-example').addEventListener('click', () => copyText($('access-
 $('access-endpoints').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-access-copy]');
   if (btn) copyText(btn.dataset.accessCopy);
-});
-$('access-models').addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-copy]');
-  if (btn) copyText(btn.dataset.copy);
 });
 $('btn-copy-access').addEventListener('click', () => copyText($('access-snippet').value));
 $('brand-list').addEventListener('click', (e) => {

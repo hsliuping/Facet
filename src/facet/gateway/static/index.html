@@ -78,7 +78,7 @@
               <div class="card-top">
                 <div>
                   <h3>接入信息</h3>
-                  <p class="sub-note">地址、密钥、模型名与调用示例，一处拿全</p>
+                  <p class="sub-note">地址、密钥、模型名与工具配置，一处拿全</p>
                 </div>
                 <div class="actions">
                   <button class="btn small" data-goto-tab="access">查看接入信息</button>
@@ -272,55 +272,7 @@
           <div class="panel-head">
             <div>
               <h2>模型接入</h2>
-              <p>工具端填我们自己的模型名即可，不必填 <code>auto</code>。任何模型名都会先按渠道声明精确匹配，匹配不上就由内部自动调度。<a href="#/integration">完整接入文档 →</a></p>
-            </div>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>工具里填的模型名</h3>
-                <p class="sub-note">这些名字始终代表「由 Facet 内部选路」，可直接复制到工具的模型输入框。</p>
-              </div>
-              <span class="tag active">内部调度</span>
-            </div>
-            <div id="brand-list" class="model-list"></div>
-            <p class="hint">也可用 <code>auto:&lt;链名&gt;</code> / <code>facet:&lt;链名&gt;</code>，例如 <code>facet:cheap</code>。其它名字先精确匹配渠道 <code>models</code> 映射；未命中时按各渠道的 <code>auto</code> 映射自动调度。响应头 <code>X-Routed-Model-Mode</code> 会标明 <code>auto / exact / fallback</code>。</p>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-top">
-              <div>
-                <h3>接入配置生成</h3>
-                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code><API Key></code> 占位，请到「API Keys」页创建后替换。</p>
-              </div>
-            </div>
-            <div class="form-grid">
-              <div class="field">
-                <label for="access-tool">工具类型</label>
-                <select id="access-tool">
-                  <option value="claude-code">Claude Code</option>
-                  <option value="codex">Codex CLI</option>
-                  <option value="cline">Cline / VS Code 插件</option>
-                  <option value="dsh">DSH（DeepSeek CLI）</option>
-                  <option value="trae">Trae</option>
-                  <option value="opencode">OpenCode</option>
-                  <option value="codebuddy">CodeBuddy Code</option>
-                  <option value="openai">OpenAI 兼容（通用）</option>
-                  <option value="anthropic">Anthropic 兼容（通用）</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="access-model">模型名</label>
-                <select id="access-model"></select>
-              </div>
-              <div class="field wide">
-                <label for="access-snippet">生成的配置</label>
-                <textarea id="access-snippet" rows="12" readonly spellcheck="false"></textarea>
-              </div>
-            </div>
-            <div class="access-actions">
-              <button class="btn small" id="btn-copy-access">复制配置</button>
+              <p>配置模型名调度策略：自有模型名指向哪条路由链、未知名字是否兜底。下游工具要填的地址、密钥和模型名在「<a href="#/access">接入信息</a>」页，协议细节见「<a href="#/integration">接入文档</a>」。</p>
             </div>
           </div>
 
@@ -826,7 +778,7 @@
           <div class="panel-head">
             <div>
               <h2>接入信息</h2>
-              <p>下游接入本网关需要的全部信息集中在这一页：接入地址、鉴权密钥、模型名与调用示例，逐项可复制。不必再去各处翻文档。</p>
+              <p>下游接入本网关需要的全部信息集中在这一页：接入地址、鉴权密钥、模型名、工具配置生成与调用示例，逐项可复制。不必再去各处翻文档。</p>
             </div>
             <div class="actions">
               <button class="btn ghost" id="btn-refresh-access">刷新</button>
@@ -889,14 +841,50 @@
             <div class="card-top">
               <div>
                 <h3>模型名</h3>
-                <p class="sub-note" id="access-models-note">这些名字始终代表「由 Facet 内部选路」，可直接填进工具的模型输入框</p>
+                <p class="sub-note">这些名字始终代表「由 Facet 内部选路」，可直接复制到工具的模型输入框；展开可看链内模型与最近落点。</p>
               </div>
               <div class="actions">
-                <button class="btn small ghost" data-goto-tab="models">模型接入页</button>
+                <button class="btn small ghost" data-goto-tab="models">管理模型名策略</button>
               </div>
             </div>
-            <div id="access-models" class="model-list"></div>
+            <div id="brand-list" class="model-list"></div>
             <p class="hint">也可用 <code>auto:&lt;链名&gt;</code> / <code>facet:&lt;链名&gt;</code>（如 <code>facet:cheap</code>）；其它名字先按渠道声明的精确模型名匹配，未命中时内部调度（响应头 <code>X-Routed-Model-Mode</code> 标明 auto / exact / fallback）。全部可用名可用 <code>GET /v1/models</code> 拉取。</p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-top">
+              <div>
+                <h3>工具配置生成</h3>
+                <p class="sub-note">选好工具和模型名，整段复制到工具配置里。网关地址取自当前控制台；密钥不回显，用 <code><API Key></code> 占位，请到「API Keys」页创建后替换。</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="access-tool">工具类型</label>
+                <select id="access-tool">
+                  <option value="claude-code">Claude Code</option>
+                  <option value="codex">Codex CLI</option>
+                  <option value="cline">Cline / VS Code 插件</option>
+                  <option value="dsh">DSH（DeepSeek CLI）</option>
+                  <option value="trae">Trae</option>
+                  <option value="opencode">OpenCode</option>
+                  <option value="codebuddy">CodeBuddy Code</option>
+                  <option value="openai">OpenAI 兼容（通用）</option>
+                  <option value="anthropic">Anthropic 兼容（通用）</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="access-model">模型名</label>
+                <select id="access-model"></select>
+              </div>
+              <div class="field wide">
+                <label for="access-snippet">生成的配置</label>
+                <textarea id="access-snippet" rows="12" readonly spellcheck="false"></textarea>
+              </div>
+            </div>
+            <div class="access-actions">
+              <button class="btn small" id="btn-copy-access">复制配置</button>
+            </div>
           </div>
 
           <div class="card settings-card">
@@ -933,7 +921,7 @@
                 <textarea id="access-example" rows="14" readonly spellcheck="false"></textarea>
               </div>
             </div>
-            <p class="hint">Claude Code、Codex、Trae、Cline、DSH、OpenCode、CodeBuddy 等工具的整段配置在 <a href="#/models">模型接入 → 接入配置生成</a>；协议细节、流式行为与错误码见 <a href="#/integration">接入文档</a>。</p>
+            <p class="hint">Claude Code、Codex、Trae、Cline、DSH、OpenCode、CodeBuddy 等工具的整段配置在上方「工具配置生成」；协议细节、流式行为与错误码见 <a href="#/integration">接入文档</a>。</p>
           </div>
         </section>
 
@@ -1139,7 +1127,7 @@
   </div>
 
   <div class="toast-wrap" id="toasts" aria-live="polite"></div>
-  <script src="/static/app.js?v=20261122-23"></script>
+  <script src="/static/app.js?v=20261125-01"></script>
   <script src="/static/setup.js?v=20261118-2"></script>
 </body>
 </html>

@@ -75,6 +75,7 @@ def test_app_js_loaded(console):
     ("channels", "#panel-channels"),
     ("routes", "#panel-routes"),
     ("models", "#panel-models"),
+    ("access", "#panel-access"),
     ("subscriptions", "#panel-subscriptions"),
     ("vendors", "#panel-vendors"),
     ("apikeys", "#panel-apikeys"),
@@ -255,14 +256,14 @@ def test_models_panel_loads(console):
 
 @pytest.mark.smoke
 def test_access_tool_selector(console):
-    console.nav("models")
+    console.nav("access")
     expect(console.el("#access-tool")).to_be_visible()
 
 
 @pytest.mark.smoke
 def test_model_brand_list(console):
-    console.nav("models")
-    # brand-list 在模型接入页渲染，存在即可
+    console.nav("access")
+    # 模型名清单已迁到接入信息页（唯一一处），存在即可
     expect(console.el("#brand-list")).to_be_visible()
 
 
