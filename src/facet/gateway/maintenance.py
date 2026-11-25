@@ -1164,7 +1164,8 @@ def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
 # The patterns live in probe.py (single source, shared with the wizard test).
 from .probe import is_chat_model, is_free_model
 # Mixed-vs-wholly-free catalog rule lives in mode_meta.py (single source).
-from .mode_meta import catalog_free_pool, catalog_is_mixed
+from .mode_meta import (catalog_free_pool, catalog_is_mixed,
+                        free_kinds_of)
 
 
 def _free_mapping_values(app, channel) -> tuple[list[str], int, int]:
@@ -1751,13 +1752,22 @@ def free_models_payload(app) -> dict:
         state = snapshot.get(channel.name) or {}
         mapped, paid_hidden, nonchat_hidden = _free_mapping_values(app, channel)
         catalog = app.store.catalogs.get(channel.name) or {}
-        # Catalog section lists only :free-marked ids — no wholly-free
-        # fallback here (unlike free_model_candidates): aligning it with
-        # the mode-level free_kinds gate is step-2 scope, frozen for now.
-        marked = [str(m) for m in catalog.get("models") or []
-                  if is_free_model(m) and is_chat_model(m)]
+        # Catalog section aligns with free_model_candidates (design §6.1):
+        # forever-kind channels show the whole free pool — wholly-free
+        # catalogs (no :free suffix, e.g. NIM / Google / zai) donate every
+        # chat model, mixed catalogs only their :free subset. Non-forever
+        # free channels (one_time / voucher grants) keep :free-marked only:
+        # their catalog models are not free models, they consume the grant.
+        cat_models = [str(m) for m in catalog.get("models") or []]
+        if "forever" in free_kinds_of(channel.provider, mode_meta):
+            catalog_pool = [m for m in catalog_free_pool(cat_models)
+                            if is_chat_model(m)]
+        else:
+            catalog_pool = [m for m in cat_models
+                            if is_free_model(m) and is_chat_model(m)]
         entries: list[dict] = []
-        for source, models in (("mapping", mapped), ("catalog", marked)):
+        for source, models in (("mapping", mapped),
+                               ("catalog", catalog_pool)):
             for model in models:
                 if any(e["model"] == model for e in entries):
                     continue

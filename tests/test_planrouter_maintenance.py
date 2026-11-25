@@ -1917,6 +1917,33 @@ class MaintenanceModelPoolTests(unittest.TestCase):
                          ["nvidia/chat-9b"])
         self.assertEqual((channel["excluded"], channel["skipped"]), (0, 2))
 
+    def test_forever_channel_lists_wholly_free_catalog_on_page(self):
+        """free_models_payload aligns with the probe (design §6.1): a forever
+        free channel whose catalog has no :free ids lists its whole chat
+        catalog — not only mapped ids — closing the page/probe split."""
+        base = self.app.config.channels
+        self.app.config = dataclasses.replace(
+            self.app.config,
+            channels=[dataclasses.replace(base[0], tier="free",
+                                          provider="nim", mode="payg")
+                      ] + list(base[1:]))
+        self.app.providers = [{
+            "id": "nim", "name": "NIM",
+            "modes": {"payg": {"free_kind": "forever", "models": []}},
+        }]
+        self.app.store.record_catalog(
+            "a", ["nvidia/chat-9b", "google/gemma-2-2b"],
+            "http://upstream/v1")
+        self.app.config.channels[0].models.clear()
+        self.app.config.channels[0].models.update(
+            {"chat": "nvidia/chat-9b"})
+        (row,) = maint.free_models_payload(self.app)["channels"]
+        shown = [m["model"] for m in row["models"]]
+        self.assertEqual(shown, ["nvidia/chat-9b", "google/gemma-2-2b"])
+        # Page and probe donate the same set — no more divergence.
+        self.assertEqual(set(shown),
+                         set(maint.free_model_candidates(self.app, limit=10)))
+
     def test_pool_empty_triggers_probe_and_fills_queue(self):
         self.make_channel_free("a")
         self.app.store.record_catalog("a", ["probe:free"], "http://upstream/v1")
