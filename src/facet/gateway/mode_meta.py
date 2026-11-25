@@ -115,7 +115,10 @@ def free_kinds_of(provider_id: str, mode: dict) -> list[str]:
     if mode.get("free_models") and "forever" not in kinds:
         kinds.append("forever")
     quota = _quota_dict(mode)
-    if quota:
+    # 钱面额（amount-only，voucher 渠道）不产生 token 语义副类：free_quota
+    # 记的是 ¥/$，推不出 one_time。
+    if quota and (quota.get("tokens") is not None
+                  or quota.get("requests") is not None):
         period = str(quota.get("period") or "total").strip().lower()
         kind = "daily" if period == "day" else "one_time"
         if kind not in kinds:

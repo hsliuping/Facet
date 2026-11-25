@@ -436,6 +436,11 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .mq-row input[type="number"] { flex: 1; min-width: 90px; }
 .mq-row input[type="date"] { width: 140px; flex: 0 0 auto; }
 .mq-row .btn.ghost { padding: 4px 9px; flex: 0 0 auto; }
+/* 代金券面额登记行（钱额度）：面额 + 币种 + 到期日一行排开 */
+.fq-row { display: flex; align-items: center; gap: 8px; }
+.fq-row input[type="number"] { width: 120px; }
+.fq-row select { width: 110px; }
+.fq-row input[type="date"] { width: 150px; }
 
 /* 校验错误内联定位：出错字段容器标红、注入错误文案并聚焦（额度包行
    的错误定位到具体行，flex 换行让文案独占一行显示在行下方）。 */

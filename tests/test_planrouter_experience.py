@@ -163,7 +163,7 @@ class ValidationMessageTests(unittest.TestCase):
             parse_free_quota({"tokens": -1})
         with self.assertRaisesRegex(ValueError, "free_quota.period 必须是"):
             parse_free_quota({"tokens": 1, "period": "year"})
-        with self.assertRaisesRegex(ValueError, "free_quota 至少要填 tokens 或 requests 之一"):
+        with self.assertRaisesRegex(ValueError, "free_quota 至少要填 tokens、requests 或 amount 之一"):
             parse_free_quota({"period": "month"})
         with self.assertRaisesRegex(ValueError, "free_quota.expires 必须是日期"):
             parse_free_quota({"tokens": 1, "expires": "not-a-date"})
@@ -171,6 +171,27 @@ class ValidationMessageTests(unittest.TestCase):
             parse_model_quota("x", [])
         with self.assertRaisesRegex(ValueError, "model_quota 的键必须是模型名"):
             parse_model_quota("x", {"": {"tokens": 1}})
+
+    def test_money_free_quota_records_face_value(self):
+        # 设计 §8：代金券（free_kind=voucher）的钱面额走 amount/currency，
+        # 与 tokens/requests 互斥。
+        fq = parse_free_quota({"amount": 10, "currency": "cny"})
+        self.assertEqual(fq.amount, 10.0)
+        self.assertEqual(fq.currency, "CNY")
+        self.assertIsNone(fq.tokens)
+        self.assertIsNone(fq.requests)
+        self.assertEqual(fq.period, "total")
+        fq = parse_free_quota({"amount": 5, "currency": "USD",
+                               "expires": "2026-12-31"})
+        self.assertEqual(fq.currency, "USD")
+        self.assertEqual(fq.expires.strftime("%Y-%m-%d"), "2026-12-31")
+        for bad in (0, -1, "10", True):
+            with self.assertRaisesRegex(ValueError, "amount 必须是正数"):
+                parse_free_quota({"amount": bad})
+        with self.assertRaisesRegex(ValueError, "currency 仅支持"):
+            parse_free_quota({"amount": 1, "currency": "EUR"})
+        with self.assertRaisesRegex(ValueError, "不能与 tokens/requests 混填"):
+            parse_free_quota({"amount": 1, "tokens": 100})
 
     def test_models_policy_messages_are_chinese(self):
         with self.assertRaisesRegex(ValueError, "models 策略必须是 JSON 对象"):

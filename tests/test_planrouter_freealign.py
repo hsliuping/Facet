@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -244,7 +245,7 @@ class SweepTests(unittest.TestCase):
         # The console shows the vendor's own numbers, not the local counter.
         self.assertEqual(snapshot["qwen3.8-flash"],
                          {"remaining": 900000, "total": 1000000,
-                          "consumed": 100000})
+                          "consumed": 100000, "kind": "token"})
         # Rows inside the 10k default margin are dropped like exhausted ones:
         # below that a call fails outright and would only trigger a retry.
         self.assertNotIn("qwen3.8-27b", snapshot)
@@ -392,7 +393,7 @@ class SweepTests(unittest.TestCase):
         # Family name → versioned callable id, numbers kept intact.
         self.assertEqual(report["quota"]["火山免费"]["kimi-k3-1-pro-261024"],
                          {"remaining": 480693, "total": 500000,
-                          "consumed": 19307})
+                          "consumed": 19307, "kind": "token"})
 
     def test_volcengine_resolution_failure_keeps_mapping(self):
         app = App(parse_config(volc_config()))
@@ -484,7 +485,7 @@ class ApplyTests(unittest.TestCase):
             (self.path.parent / "vendorquota.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["channels"]["百炼免费"]["qwen3.8-flash"],
                          {"remaining": 900000, "total": 1000000,
-                          "consumed": 100000})
+                          "consumed": 100000, "kind": "token"})
         self.assertEqual(saved["at"], self.app.vendor_quota_at)
         # The per-channel freshness stamp travels with the snapshot.
         self.assertIn("百炼免费", saved["synced"])
@@ -1299,6 +1300,165 @@ class FreeQuotaRoutingTests(unittest.TestCase):
         self.assertEqual(status["source"], "vendor")
         self.assertIsNone(status["limit_tokens"])
         self.assertEqual(status["vendor_remaining"], 480693)
+
+
+def voucher_config() -> dict:
+    return {
+        "listen": {"host": "127.0.0.1", "port": 0},
+        "channels": [
+            {"name": "Kimi代金券", "protocol": "openai",
+             "base_url": "https://api.moonshot.cn/v1", "api_key": "sk-x",
+             "models": {"auto": "", "kimi-k3.1": "kimi-k3.1"},
+             "tier": "free", "tiers": {}, "provider": "moonshot",
+             "mode": "payg",
+             # 登记面额（钱额度）：渠道级 free_quota，amount 语义。
+             "free_quota": {"amount": 15, "currency": "CNY",
+                            "expires": FUTURE}},
+            {"name": "Kimi按量", "protocol": "openai",
+             "base_url": "https://api.moonshot.cn/v1", "api_key": "sk-y",
+             "models": {"kimi-k3.1": "kimi-k3.1"},
+             "tier": "free", "tiers": {}, "provider": "moonshot",
+             "mode": "payg"},
+            {"name": "claude-x", "protocol": "anthropic",
+             "base_url": "https://api.anthropic.com", "api_key": "sk-x",
+             "models": {"claude-sonnet-x": "claude-sonnet-x"}, "priority": 90},
+        ],
+        "routes": [
+            {"name": "default", "protocol": "openai",
+             "channels": ["Kimi代金券", "Kimi按量"]},
+            {"name": "default", "protocol": "anthropic",
+             "channels": ["claude-x"]},
+        ],
+    }
+
+
+def voucher_registry() -> list[dict]:
+    return [{
+        "id": "moonshot", "name": "Kimi",
+        "modes": {"payg": {
+            "label": "按量付费", "protocol": "openai",
+            "base_url": "https://api.moonshot.cn/v1",
+            "tier": "paid", "models": [], "free_kind": "voucher",
+            "free_quota": {"amount": 15, "currency": "CNY"},
+        }},
+    }]
+
+
+class VoucherLedgerTests(unittest.TestCase):
+    """设计 §8：代金券渠道的钱/token 分离台账。"""
+
+    def setUp(self):
+        # 独立子目录：vendorquota.json 落在 config 旁边，共用临时目录会让
+        # 上一条测试的落账泄漏进本条。
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.path = self.dir / "router.json"
+        self.path.write_text(json.dumps(voucher_config()), encoding="utf-8")
+        self.app = App(load_config(self.path), config_path=self.path)
+        self.app.providers = voucher_registry()
+        self.channel = self.app.config.channel("Kimi代金券")
+
+    def test_usage_refresh_ledgers_money_snapshot(self):
+        # 余额查询顺手落账：结构化 balance（现金/代金券分列）写入
+        # vendorquota.json 的 _money 键，重启后台账仍在。
+        snapshot = {"plan": "Kimi 开放平台", "provider": "moonshot",
+                    "windows": [], "summary": "可用 ¥12.00 · 现金 ¥3.00"
+                                              " · 代金券 ¥9.00",
+                    "balance": {"currency": "CNY", "available": 12.0,
+                                "cash": 3.0, "voucher": 9.0}}
+        with mock.patch.object(self.app, "channel_usage",
+                               return_value=snapshot):
+            self.app.channels_usage_payload()
+        row = self.app.vendor_quota["Kimi代金券"]["_money"]
+        self.assertEqual(row["kind"], "money")
+        self.assertEqual(row["available"], 12.0)
+        self.assertEqual(row["cash"], 3.0)
+        self.assertEqual(row["voucher"], 9.0)
+        self.assertIn("at", row)
+        reloaded = App(load_config(self.path), config_path=self.path)
+        reloaded.providers = voucher_registry()
+        money = reloaded._money_snapshot_for(
+            reloaded.config.channel("Kimi代金券"))
+        self.assertEqual(money["available"], 12.0)
+
+    def test_non_voucher_channels_do_not_ledger_money(self):
+        raw = volc_config()
+        app = App(parse_config(raw), config_path=self.path)
+        app.providers = volc_registry()
+        snapshot = {"plan": "x", "windows": [], "summary": "s",
+                    "balance": {"currency": "CNY", "available": 1.0}}
+        with mock.patch.object(app, "channel_usage", return_value=snapshot):
+            app.channels_usage_payload()
+        self.assertTrue(all("_money" not in row
+                            for row in app.vendor_quota.values()))
+
+    def test_status_splits_money_from_tokens(self):
+        self.app.vendor_quota["Kimi代金券"] = {"_money": {
+            "kind": "money", "currency": "CNY", "available": 12.0,
+            "cash": 3.0, "voucher": 9.0, "at": "2026-11-25 10:00:00"}}
+        status = self.app.free_quota_status(self.channel, "kimi-k3.1")
+        self.assertEqual(status["grant_money"], {"amount": 15.0,
+                                                 "currency": "CNY"})
+        self.assertEqual(status["balance_money"]["available"], 12.0)
+        self.assertIsNone(status["balance_tokens"])
+        self.assertFalse(status["exhausted"])
+        self.assertAlmostEqual(status["ratio"], 1 - 12.0 / 15.0, places=3)
+
+    def test_drained_money_balance_exhausts(self):
+        self.app.vendor_quota["Kimi代金券"] = {"_money": {
+            "kind": "money", "currency": "CNY", "available": 0.0}}
+        status = self.app.free_quota_status(self.channel, "kimi-k3.1")
+        self.assertTrue(status["exhausted"])
+        self.assertTrue(self.app.free_quota_exhausted(self.channel,
+                                                      "kimi-k3.1"))
+
+    def test_registered_face_value_without_vendor_api(self):
+        # 无余额 API 的厂家（小米 / Anthropic 直连）：台账只显示登记面额；
+        # 到期日仍然停路由——钱花不掉本地无法计量，过期即停是唯一硬门禁。
+        status = self.app.free_quota_status(self.channel, "kimi-k3.1")
+        self.assertEqual(status["grant_money"]["amount"], 15.0)
+        self.assertIsNone(status["balance_money"])
+        self.assertIsNone(status["balance_tokens"])
+        self.assertFalse(status["exhausted"])
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw["channels"][0]["free_quota"]["expires"] = PAST
+        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        app = App(load_config(self.path), config_path=self.path)
+        app.providers = voucher_registry()
+        status = app.free_quota_status(
+            app.config.channel("Kimi代金券"), "kimi-k3.1")
+        self.assertTrue(status["expired"])
+        self.assertTrue(status["exhausted"])
+
+    def test_legacy_snapshot_rows_stay_token_side(self):
+        # kind 字段落地之前的旧快照行没有 kind——它们是 token 行，
+        # balance_tokens 报厂家剩余，与 money 行互不串扰。
+        self.app.vendor_quota["Kimi按量"] = {"kimi-k3.1": {
+            "remaining": 50000, "total": 100000, "consumed": 50000}}
+        status = self.app.free_quota_status(
+            self.app.config.channel("Kimi按量"), "kimi-k3.1")
+        self.assertEqual(status["balance_tokens"], 50000)
+        # 注册表 baseline 面额（¥15）兜底，渠道未登记时也进台账。
+        self.assertEqual(status["grant_money"], {"amount": 15.0,
+                                                 "currency": "CNY"})
+        self.assertIsNone(status["balance_money"])
+        self.assertFalse(status["exhausted"])
+
+    def test_moonshot_balance_payload_is_structured(self):
+        from facet.gateway import moonshot_quota
+        resp = mock.Mock()
+        resp.read.return_value = json.dumps({
+            "code": 0, "status": True,
+            "data": {"available_balance": 49.59, "voucher_balance": 46.59,
+                     "cash_balance": 3.00}}).encode("utf-8")
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: False
+        out = moonshot_quota.fetch_balance(
+            "sk-x", _urlopen=lambda req, timeout: resp)
+        self.assertEqual(out["balance"],
+                         {"currency": "CNY", "available": 49.59,
+                          "cash": 3.0, "voucher": 46.59})
+        self.assertIn("可用 ¥49.59", out["summary"])
 
 
 if __name__ == "__main__":

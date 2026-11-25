@@ -401,6 +401,7 @@
           "tier": "paid",
           "free_kind": "voucher",
           "models": [],
+          "free_quota": {"amount": 15, "currency": "CNY"},
           "free_limits": {
             "note": "注册赠 ¥15 代金券（无门槛，示例限 Kimi K3.1 Pro Highspeed 版，以账户提示为准）"
           }
@@ -421,6 +422,7 @@
           "tier": "paid",
           "free_kind": "voucher",
           "models": [],
+          "free_quota": {"amount": 10, "currency": "CNY"},
           "free_limits": {
             "note": "注册赠 ¥10 体验金（现金余额与赠送余额分列）"
           }
@@ -708,6 +710,7 @@
           "tier": "paid",
           "free_kind": "voucher",
           "models": [],
+          "free_quota": {"amount": 5, "currency": "USD"},
           "free_limits": {
             "note": "新账号一次性 $5 试用额度（15 天内用完）"
           }

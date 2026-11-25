@@ -253,7 +253,7 @@ def _quota_snapshot(rows: list[dict], models: list[str]) -> dict[str, dict]:
                 # sync so the console never prints a blank "used" figure.
                 consumed = max(0, total - remaining)
             out[wire] = {"remaining": remaining, "total": total,
-                         "consumed": consumed}
+                         "consumed": consumed, "kind": "token"}
             break
     return out
 

@@ -1835,8 +1835,35 @@ class App:
         for channel in self.config.channels:
             snapshot = self.channel_usage(channel)
             if snapshot:
+                self._ledger_money_snapshot(channel, snapshot)
                 usage[channel.name] = snapshot
         return {"usage": usage}
+
+    def _ledger_money_snapshot(self, channel, snapshot: dict) -> None:
+        """Persist an account-level money balance as a vendor_quota row.
+
+        Voucher channels (free_kind=voucher) hold money, not tokens: when
+        the vendor's balance fetch returns structured numbers (moonshot's
+        cash/voucher split), they land in vendorquota.json under the
+        reserved ``_money`` key so the ledger survives a restart. Wire rows
+        keep their token shape; ``_money`` can never collide with a wire id.
+        vendor_synced stays untouched — the stale freeze keys on the token
+        sweep's cadence, not on console page visits.
+        """
+        balance = snapshot.get("balance")
+        if not isinstance(balance, dict) or not balance:
+            return
+        mode = self.provider_mode(channel.provider, channel.mode)
+        if mode_meta.free_kind_of(channel.provider, mode or {}) != "voucher":
+            return
+        entry = {"kind": "money",
+                 "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                 **balance}
+        row = self.vendor_quota.setdefault(str(channel.name), {})
+        if row.get("_money") == entry:
+            return
+        row["_money"] = entry
+        self._save_vendor_quota()
 
     def _plan_reset_cooldown(self, channel, now: float) -> tuple[float, str]:
         """Cooldown seconds + reason when a linked plan window is exhausted.
@@ -1936,6 +1963,17 @@ class App:
         """
         return (self.vendor_quota.get(channel.name) or {}).get(wire) or {}
 
+    def _money_snapshot_for(self, channel) -> dict:
+        """Account-level money balance row (voucher channels), or {}.
+
+        Written by the console's usage refresh (moonshot cash/voucher split)
+        under the reserved ``_money`` key; a registered face value without a
+        vendor API (xiaomi, anthropic) has no row here — the ledger then
+        shows only the grant and the expiry.
+        """
+        row = (self.vendor_quota.get(channel.name) or {}).get("_money")
+        return row if isinstance(row, dict) else {}
+
     def _seed_free_budget(self, quota_report: dict) -> None:
         """Reset the self-metered free budget from fresh sweep numbers.
 
@@ -1992,6 +2030,13 @@ class App:
         (Volcengine) never errors, so between sweeps the extrapolated budget
         is the only signal that can stop dispatch before money moves.
 
+        Voucher channels (``free_kind=voucher``) ledger money instead of
+        tokens: the persisted account balance (``_money`` snapshot) closes
+        dispatch at zero, the registered face value documents the grant and
+        carries the expiry, and both are reported alongside the token side
+        (``grant_money`` / ``balance_money`` / ``balance_tokens``) so the
+        console can split the columns.
+
         The two vendor-observed signals additionally honour the provider's
         safety margin (FREE_RESERVE_TOKENS, default FREE_RESERVE_DEFAULT_TOKENS
         for providers without an entry): Volcengine counts as exhausted while
@@ -2023,7 +2068,8 @@ class App:
         budget = self._free_budget_for(channel, wire)
         reserve = FREE_RESERVE_TOKENS.get(channel.provider,
                                           FREE_RESERVE_DEFAULT_TOKENS)
-        if spec is None and not vendor and budget is None:
+        if spec is None and not vendor and budget is None \
+                and not self._money_snapshot_for(channel):
             return None
         used = (self.usage.model_usage(channel.name, wire, spec.period)
                 if spec is not None and self.usage is not None else {})
@@ -2055,8 +2101,20 @@ class App:
         # stale for a whole sweep interval, exactly when silent billing
         # happens.
         vendor_remaining = vendor.get("remaining")
+        # Money ledger (voucher channels): the vendor's account balance is
+        # the money-side truth; a registered face value (spec.amount) only
+        # documents the grant and feeds the expiry gate — the gateway cannot
+        # self-meter spend in currency units, so there is no local money
+        # extrapolation here.
+        money = self._money_snapshot_for(channel)
+        available = money.get("available")
+        money_exhausted = (isinstance(available, (int, float))
+                           and not isinstance(available, bool)
+                           and available <= 0)
         if budget is not None:
             exhausted = budget <= reserve
+        elif money_exhausted:
+            exhausted = True
         elif (isinstance(vendor_remaining, (int, float))
               and not isinstance(vendor_remaining, bool)):
             exhausted = vendor_remaining <= reserve
@@ -2093,6 +2151,10 @@ class App:
             ratios.append(1 - (vendor.get("remaining") or 0) / vendor["total"])
         if budget is not None and vendor.get("total"):
             ratios.append(1 - max(0.0, budget) / vendor["total"])
+        if (money and isinstance(available, (int, float))
+                and not isinstance(available, bool)
+                and spec is not None and spec.amount):
+            ratios.append(1 - max(0.0, float(available)) / spec.amount)
         ratio = max(ratios) if ratios else 0.0
         source = "vendor"
         if spec is not None:
@@ -2126,6 +2188,19 @@ class App:
             "vendor_at": self.vendor_quota_at or None,
             "sync_age": round(sync_age, 1) if sync_age is not None else None,
             "stale": stale,
+            # Money/token split (design §8): voucher channels ledger money
+            # (grant face value + vendor account balance); token channels
+            # ledger the token remainder. Each is None when not applicable.
+            "grant_money": ({"amount": spec.amount,
+                             "currency": spec.currency or "CNY"}
+                            if spec is not None and spec.amount is not None
+                            else None),
+            "balance_money": dict(money) if money else None,
+            "balance_tokens": (budget if budget is not None
+                               else (vendor_remaining
+                                     if isinstance(vendor_remaining, (int, float))
+                                     and not isinstance(vendor_remaining, bool)
+                                     else None)),
         }
 
     def free_quota_exhausted(self, channel, wire: str, exposed: str = "") -> bool:

@@ -387,9 +387,17 @@ class FreeQuota:
     date (inclusive). After that date the model is treated as exhausted. A bare
     ``YYYY-MM-DD`` means the pack is valid through that day's last second
     (23:59:59).
+
+    A cash voucher (``free_kind=voucher``) is money, not tokens: it is
+    recorded as ``amount`` + ``currency`` instead of tokens/requests. Money
+    cannot be self-metered per request (the gateway tracks tokens, not
+    prices), so the ledger shows the registered face value and any vendor
+    balance snapshot; only the expiry is enforced locally.
     """
     tokens: int | None = None
     requests: int | None = None
+    amount: float | None = None
+    currency: str | None = None
     period: str = "total"
     expires: datetime | None = None
 
@@ -439,13 +447,25 @@ def parse_free_quota(raw) -> FreeQuota | None:
             continue
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"free_quota.{label} 必须是非负整数")
+    amount = raw.get("amount")
+    if amount is not None:
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) \
+                or amount <= 0:
+            raise ValueError("free_quota.amount 必须是正数（代金券面额）")
+        amount = float(amount)
+    currency = str(raw.get("currency") or "").strip().upper()
+    if currency and currency not in ("CNY", "USD"):
+        raise ValueError('free_quota.currency 仅支持 "CNY" 或 "USD"')
+    if amount is not None and (tokens is not None or requests is not None):
+        raise ValueError("free_quota 的 amount（钱面额）不能与 tokens/requests 混填")
     period = str(raw.get("period") or "total").strip().lower()
     if period not in ("total", "month", "day"):
         raise ValueError('free_quota.period 必须是 "total"、"month" 或 "day"')
-    if tokens is None and requests is None:
-        raise ValueError("free_quota 至少要填 tokens 或 requests 之一")
+    if tokens is None and requests is None and amount is None:
+        raise ValueError("free_quota 至少要填 tokens、requests 或 amount 之一")
     expires = parse_expires(raw.get("expires"))
-    return FreeQuota(tokens=tokens, requests=requests, period=period,
+    return FreeQuota(tokens=tokens, requests=requests, amount=amount,
+                     currency=currency or None, period=period,
                      expires=expires)
 
 

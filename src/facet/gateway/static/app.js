@@ -720,6 +720,7 @@ function channelCard(c, i) {
       <div><dt>优先级</dt><dd>${esc(c.priority ?? 100)}</dd></div>
       <div><dt>额度冷却</dt><dd>${esc(c.cooldown_minutes ?? 300)} 分钟</dd></div>
       <div><dt>额度计量</dt><dd>${c.per_model_quota ? '按模型（只冻结该模型）' : '按渠道'}</dd></div>
+      ${c.free_quota?.amount != null ? `<div><dt>代金券面额</dt><dd>${c.free_quota.currency === 'USD' ? '$' : '¥'}${Number(c.free_quota.amount).toFixed(2)}${c.free_quota.expires ? ' · 至 ' + esc(String(c.free_quota.expires).slice(0, 10)) : ''}</dd></div>` : ''}
       <div><dt>本地限流</dt><dd>${esc(rateText(c.rate))}</dd></div>
       <div><dt>密钥</dt><dd>${keyText(c.api_key)}</dd></div>
       <div><dt>账号 / 业务线</dt><dd>${c.account ? esc(accountLabel(c.account)) : '—'}${c.business_line ? ' · ' + esc(c.business_line) : ''}</dd></div>
@@ -1877,6 +1878,18 @@ function vendorUsageHtml(vp) {
     return `${esc(win)}${meta ? `<br><span class="sub-note">${meta}</span>` : ''}`;
   }
   if (vp.windows && !vp.windows.length) {
+    // Structured money ledger (voucher channels): 可用/现金/代金券 split
+    // columns instead of one flattened summary line (design §8).
+    if (vp.balance && typeof vp.balance === 'object') {
+      const b = vp.balance;
+      const sym = b.currency === 'USD' ? '$' : '¥';
+      const money = (v) => (v == null ? '—' : `${sym}${Number(v).toFixed(2)}`);
+      const bits = [`可用 ${money(b.available)}`];
+      if (b.cash != null) bits.push(`现金 ${money(b.cash)}`);
+      if (b.voucher != null) bits.push(`代金券 ${money(b.voucher)}`);
+      return `${esc(bits.join(' · '))}`
+        + (b.at ? `<br><span class="sub-note">余额快照 ${esc(b.at)}</span>` : '');
+    }
     // Pay-as-you-go balances (DeepSeek) carry no windows, only a summary.
     if (vp.summary) return esc(vp.summary);
     return '<span class="sub-note">厂家无用量窗口（可能未订阅）</span>';
@@ -4506,6 +4519,22 @@ function freeQuotaCell(q) {
   const tone = q.exhausted ? 'bad' : q.warning ? 'warn' : '';
   const hasVendor = q.vendor_remaining != null || q.vendor_total != null;
   const lines = [];
+  // Money ledger first (voucher channels): 面额与厂家余额分列展示，token 行
+  // 只在 token 语义下出现（design §8 钱/token 分离）。
+  if (q.balance_money && typeof q.balance_money === 'object') {
+    const b = q.balance_money;
+    const sym = b.currency === 'USD' ? '$' : '¥';
+    const money = (v) => (v == null ? '—' : `${sym}${Number(v).toFixed(2)}`);
+    const bits = [`可用 ${money(b.available)}`];
+    if (b.cash != null) bits.push(`现金 ${money(b.cash)}`);
+    if (b.voucher != null) bits.push(`代金券 ${money(b.voucher)}`);
+    lines.push(`<span class="sub-note">厂家余额</span> ${esc(bits.join(' · '))}`
+      + (b.at ? ` · ${esc(b.at)}` : ''));
+  } else if (q.grant_money) {
+    const g = q.grant_money;
+    lines.push(`<span class="sub-note">代金券</span> `
+      + `面额 ${g.currency === 'USD' ? '$' : '¥'}${Number(g.amount).toFixed(2)}`);
+  }
   if (hasVendor) {
     const total = q.vendor_total == null ? null : Number(q.vendor_total);
     const remain = q.vendor_remaining == null ? null : Number(q.vendor_remaining);
@@ -6380,6 +6409,16 @@ function openChannelEditor(index) {
           <button type="button" class="btn ghost" id="add-model-quota">+ 添加模型额度包</button>
           <small class="hint">每个模型独立登记面额（tokens）与到期日：用完或到期只停该模型，不冻结整个渠道；仅对标注为「免费」的模型生效。<br>
             账本只统计经本网关的调用（控制台试玩、其他客户端直连的消耗看不到），账面剩余会偏高，面额建议登记略小一点。</small></div>
+        <div class="field wide"><label>代金券面额（钱额度，可选）</label>
+          <div class="fq-row">
+            <input name="fq_amount" type="number" step="0.01" min="0" placeholder="面额，如 10" value="${c.free_quota?.amount ?? ''}" style="max-width:9rem">
+            <select name="fq_currency" aria-label="币种">
+              <option value="CNY" ${(c.free_quota?.currency || 'CNY') === 'CNY' ? 'selected' : ''}>CNY ¥</option>
+              <option value="USD" ${c.free_quota?.currency === 'USD' ? 'selected' : ''}>USD $</option>
+            </select>
+            <input name="fq_expires" type="date" value="${esc((c.free_quota?.expires || '').slice(0, 10))}" aria-label="到期日">
+          </div>
+          <small class="hint">代金券类渠道（Kimi / 小米 / Anthropic 直连）登记现金面额与到期日：到期后该渠道的免费模型停止路由；厂家有余额 API 的（Kimi）以查询到的真实余额为准，无 API 的（小米、Anthropic）以此登记为台账面额。</small></div>
         <div class="field wide catalog-row">
           <button type="button" class="btn ghost" id="editor-fetch-models">从上游拉取模型清单</button>
           <small class="hint">免费渠道按免费额度拉取，其余渠道按密钥请求上游 /models：火山引擎（按量付费）配置 IAM AK/SK 后，先从方舟管理面拉有免费额度的模型族名，再结合 /models 归并出可直接调用的版本名；百炼（免费）配置 AccessKey 后执行 bl usage free，只保留仍有免费额度且未过期的 Text 模型</small>
@@ -6592,6 +6631,15 @@ function saveChannelEditor() {
       tier: val('tier'),
       tiers,
       ...(Object.keys(packs).length ? { model_quota: packs } : {}),
+      // 代金券面额登记（钱额度）：填了金额才写 free_quota；清空金额时仅当
+      // 之前登记过面额才显式置 null（否则不动手写的 tokens 语义 free_quota）。
+      ...(val('fq_amount')
+        ? { free_quota: { amount: Number(val('fq_amount')),
+            currency: val('fq_currency') || 'CNY',
+            ...(val('fq_expires') ? { expires: val('fq_expires') } : {}) } }
+        : ((state.editing >= 0
+            && state.config.channels[state.editing]?.free_quota?.amount != null)
+          ? { free_quota: null } : {})),
       provider,
       mode: provider ? val('mode') : '',
       account: val('account'),

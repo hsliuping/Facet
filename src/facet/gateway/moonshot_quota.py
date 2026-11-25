@@ -72,4 +72,14 @@ def fetch_balance(api_key: str, timeout: float = 30.0,
         "provider": "moonshot",
         "windows": [],
         "summary": " · ".join(parts),
+        # Structured money ledger (voucher round, design §8): the three
+        # balances the console shows, kept machine-readable so the gateway
+        # can persist an account-level snapshot and split 现金/代金券
+        # columns instead of re-parsing the summary text.
+        "balance": {
+            "currency": "CNY",
+            "available": available,
+            "cash": cash,
+            "voucher": voucher,
+        },
     }
