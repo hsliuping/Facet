@@ -33,8 +33,9 @@ from urllib.request import Request
 
 from . import providers as providers_mod
 from . import benchmarks as benchmarks_mod
+from .mode_meta import free_kind_of
 from .core import AUTO_MODEL, QUOTA_MARKERS, open_with_proxy
-from .probe import is_chat_model
+from .probe import is_chat_model, is_free_model
 
 JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 PLAN_LIST_BLOCK = re.compile(r"\[.*\]", re.DOTALL)
@@ -1161,7 +1162,9 @@ def read_jsonl_tail(path, limit: int) -> tuple[list[str], bool]:
 # Vendor catalogs list every registered id; ids matching these fragments are
 # embedding/reward/rerank/guard/vision utilities that cannot answer the quiz.
 # The patterns live in probe.py (single source, shared with the wizard test).
-from .probe import is_chat_model
+from .probe import is_chat_model, is_free_model
+# Mixed-vs-wholly-free catalog rule lives in mode_meta.py (single source).
+from .mode_meta import catalog_free_pool, catalog_is_mixed
 
 
 def _free_mapping_values(app, channel) -> tuple[list[str], int, int]:
@@ -1178,8 +1181,8 @@ def _free_mapping_values(app, channel) -> tuple[list[str], int, int]:
               if v and v not in (AUTO_MODEL, "*")]
     catalog = app.store.catalogs.get(channel.name) or {}
     models = [str(m) for m in catalog.get("models") or []]
-    if any(m.endswith(":free") for m in models):
-        usable = [v for v in values if v.endswith(":free")]
+    if catalog_is_mixed(models):
+        usable = [v for v in values if is_free_model(v)]
     else:
         usable = values
     paid_hidden = len(values) - len(usable)
@@ -1214,8 +1217,7 @@ def free_model_candidates(app, limit: int = PROBE_CANDIDATES) -> list[str]:
         own_by_channel.append(free_own)
         catalog = app.store.catalogs.get(channel.name) or {}
         models = [str(m) for m in catalog.get("models") or []]
-        marked = [m for m in models if m.endswith(":free")]
-        pool = marked if marked else models
+        pool = catalog_free_pool(models)
         free.extend(m for m in pool if is_chat_model(m)
                     and not app.free_quota_exhausted(channel, m))
     chosen = list(dict.fromkeys(queue))
@@ -1749,8 +1751,11 @@ def free_models_payload(app) -> dict:
         state = snapshot.get(channel.name) or {}
         mapped, paid_hidden, nonchat_hidden = _free_mapping_values(app, channel)
         catalog = app.store.catalogs.get(channel.name) or {}
+        # Catalog section lists only :free-marked ids — no wholly-free
+        # fallback here (unlike free_model_candidates): aligning it with
+        # the mode-level free_kinds gate is step-2 scope, frozen for now.
         marked = [str(m) for m in catalog.get("models") or []
-                  if str(m).endswith(":free") and is_chat_model(m)]
+                  if is_free_model(m) and is_chat_model(m)]
         entries: list[dict] = []
         for source, models in (("mapping", mapped), ("catalog", marked)):
             for model in models:
@@ -1801,6 +1806,8 @@ def free_models_payload(app) -> dict:
             "provider": channel.provider,
             "provider_name": str(vendor.get("name") or channel.provider),
             "mode": channel.mode,
+            # PPT 四类免费口径（mode_meta 单点分类）：免费模型页按此分组。
+            "free_kind": free_kind_of(channel.provider, mode_meta),
             "docs_url": str(mode_meta.get("docs_url") or ""),
             "rate": {"rpm": channel.rate.rpm, "rpd": channel.rate.rpd,
                      "tpm": channel.rate.tpm, "tpd": channel.rate.tpd},

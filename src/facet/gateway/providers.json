@@ -23,6 +23,7 @@
           "docs_url": "https://console.volcengine.com/ark/region:cn-beijing/docs/coding-plan-personal-get-started",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
           "tier": "paid",
+          "free_kind": "none",
           "plan_api": "coding",
           "credential_envs": [
             {
@@ -43,6 +44,7 @@
           "docs_url": "https://console.volcengine.com/ark/region:cn-beijing/docs/agent-plan-personal-plan-overview",
           "keys_url": "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan",
           "tier": "paid",
+          "free_kind": "none",
           "plan_api": "agent",
           "credential_envs": [
             {
@@ -82,6 +84,7 @@
             }
           ],
           "tier": "paid",
+          "free_kind": "one_time",
           "models": []
         }
       }
@@ -130,6 +133,7 @@
             }
           ],
           "tier": "paid",
+          "free_kind": "one_time",
           "models": []
         },
         "agent": {
@@ -140,6 +144,7 @@
           "keys_url": "https://bailian.console.aliyun.com",
           "models_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -155,6 +160,7 @@
           "docs_url": "https://docs.bigmodel.cn",
           "keys_url": "https://bigmodel.cn/apikey/coding-plan-per",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         },
         "payg": {
@@ -164,6 +170,7 @@
           "docs_url": "https://docs.bigmodel.cn",
           "keys_url": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
           "tier": "paid",
+          "free_kind": "forever",
           "models": [],
           "free_limits": {
             "note": "新用户赠 2000 万 tokens 体验包；GLM Flash 系列免费调用"
@@ -187,6 +194,8 @@
             "note": "每日登录领 250 魔粒（约 250–500 次调用），当日有效"
           },
           "tier": "free",
+          "free_kind": "daily",
+          "requires_checkin": true,
           "models": []
         }
       }
@@ -208,9 +217,10 @@
             "json"
           ],
           "free_limits": {
-            "note": "免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）"
+            "note": "免费模型 0 元计费、不扣赠金；限速为账户级（约 1000–10000 RPM，随账户等级浮动）；注册赠 ¥14 体验金（一次性，可调付费模型）"
           },
           "tier": "free",
+          "free_kind": "forever",
           "models": [],
           "free_models": [
             "XingChenAGI/Xing4.0-29B",
@@ -241,6 +251,7 @@
           "docs_url": "https://cloud.tencent.com/document/product/1823/130060",
           "keys_url": "https://console.cloud.tencent.com/tokenhub/tokenplan/common",
           "tier": "paid",
+          "free_kind": "none",
           "models": [
             "hy4-flash",
             "hy4",
@@ -274,6 +285,7 @@
           "keys_url": "https://console.cloud.tencent.com/tokenhub/apikey",
           "models_url": "https://tokenhub.tencentmaas.com/v1/models",
           "tier": "paid",
+          "free_kind": "one_time",
           "free_quota_cmd": [
             "facet-tokenhub-quota",
             "--output",
@@ -355,6 +367,7 @@
           "docs_url": "https://cloud.baidu.com/product/codingplan.html",
           "keys_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         },
         "payg": {
@@ -365,6 +378,7 @@
           "keys_url": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
           "models_url": "https://qianfan.baidubce.com/v2/models",
           "tier": "paid",
+          "free_kind": "one_time",
           "free_quota": {
             "tokens": 1000000,
             "period": "total"
@@ -385,6 +399,7 @@
           "keys_url": "https://platform.moonshot.cn/console/api-keys",
           "models_url": "https://api.moonshot.cn/v1/models",
           "tier": "paid",
+          "free_kind": "voucher",
           "models": [],
           "free_limits": {
             "note": "注册赠 ¥15 代金券（无门槛，示例限 Kimi K3.1 Pro Highspeed 版，以账户提示为准）"
@@ -404,6 +419,7 @@
           "keys_url": "https://platform.xiaomimimo.com",
           "models_url": "https://api.xiaomimimo.com/v1/models",
           "tier": "paid",
+          "free_kind": "voucher",
           "models": [],
           "free_limits": {
             "note": "注册赠 ¥10 体验金（现金余额与赠送余额分列）"
@@ -417,6 +433,7 @@
           "keys_url": "https://platform.xiaomimimo.com",
           "models_url": "https://token-plan-cn.xiaomimimo.com/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -433,6 +450,7 @@
           "keys_url": "https://platform.deepseek.com/apikeys",
           "models_url": "https://api.deepseek.com/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -449,6 +467,7 @@
           "keys_url": "https://platform.minimaxi.com/user-center/basic/api-key",
           "models_url": "https://api.minimax.cn/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         },
         "agent": {
@@ -458,6 +477,7 @@
           "docs_url": "https://platform.minimaxi.com/docs/token-plan/quickstart",
           "keys_url": "https://platform.minimaxi.com/user-center/payment/token-plan",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -477,6 +497,7 @@
             "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日，用完或到期自动停该模型"
           },
           "tier": "free",
+          "free_kind": "one_time",
           "models": []
         }
       }
@@ -496,6 +517,7 @@
             "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日；Anthropic 兼容端点为 /api/llm/anthropic"
           },
           "tier": "free",
+          "free_kind": "one_time",
           "models": []
         }
       }
@@ -515,6 +537,7 @@
             "note": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天"
           },
           "tier": "free",
+          "free_kind": "daily",
           "models": []
         }
       }
@@ -554,6 +577,7 @@
             }
           ],
           "tier": "paid",
+          "free_kind": "forever",
           "models": []
         }
       }
@@ -574,6 +598,7 @@
             "note": "免费层=速率限制（个人上限约 40 RPM，控制台右上角显示），非 credits；10,000 请求/日为页面嵌入值、非官方承诺；试用无时间限制"
           },
           "tier": "free",
+          "free_kind": "daily",
           "models": []
         }
       }
@@ -591,9 +616,11 @@
           "models_url": "https://api.llm7.io/v1/models",
           "free_limits": {
             "rpm": 60,
+            "tpd": 100000,
             "note": "key 免费注册即领：60 次/分 · 250 次/时 · 10 万 tokens/24h"
           },
           "tier": "free",
+          "free_kind": "daily",
           "models": []
         }
       }
@@ -610,6 +637,7 @@
           "keys_url": "https://opencode.ai/console",
           "models_url": "https://opencode.ai/inference/v1/models",
           "tier": "paid",
+          "free_kind": "forever",
           "models": [],
           "free_limits": {
             "note": "Models 端点含 12+ 免费模型（以控制台清单为准）；Go 订阅另含付费模型"
@@ -623,6 +651,7 @@
           "keys_url": "https://opencode.ai/console",
           "models_url": "https://opencode.ai/inference/go/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -639,8 +668,10 @@
           "keys_url": "https://commandcode.ai/settings/keys",
           "models_url": "https://api.commandcode.ai/provider/v1/models",
           "tier": "free",
+          "free_kind": "daily",
           "models": [],
           "free_limits": {
+            "rpd": 1000,
             "note": "免费档约 1,000 请求/天，注册即用"
           }
         }
@@ -658,6 +689,7 @@
           "keys_url": "https://platform.openai.com/api-keys",
           "models_url": "https://api.openai.com/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -674,6 +706,7 @@
           "keys_url": "https://console.anthropic.com/settings/keys",
           "models_url": "https://api.anthropic.com/v1/models",
           "tier": "paid",
+          "free_kind": "voucher",
           "models": [],
           "free_limits": {
             "note": "新账号一次性 $5 试用额度（15 天内用完）"
@@ -693,6 +726,7 @@
           "keys_url": "https://console.x.ai",
           "models_url": "https://api.x.ai/v1/models",
           "tier": "paid",
+          "free_kind": "none",
           "models": []
         }
       }
@@ -709,6 +743,7 @@
           "keys_url": "https://z.ai/manage-api-key/apikey-keys",
           "models_url": "https://api.z.ai/api/paas/v4/models",
           "tier": "paid",
+          "free_kind": "forever",
           "models": [],
           "free_limits": {
             "note": "GLM-4.7-Flash / GLM-4.5-Flash / GLM-4.6V-Flash 完全免费"

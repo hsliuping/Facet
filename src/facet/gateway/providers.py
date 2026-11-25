@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 
 from .core import PROTOCOLS, parse_free_quota
+from .mode_meta import FREE_KINDS
 
 # Package copy of the registry; the config dir may hold a user overlay.
 BUILTIN_PATH = Path(__file__).parent / "providers.json"
@@ -41,7 +42,7 @@ def _read_entries(path: Path) -> list:
 # Curated URL fields fall back to the builtin entry when the overlay leaves
 # them empty: the daily maintenance task rewrites whole vendor entries and
 # must not erase the 获取 Key / 使用文档 links shipped in the package registry.
-INHERIT_IF_EMPTY = ("keys_url", "docs_url")
+INHERIT_IF_EMPTY = ("keys_url", "docs_url", "free_kind")
 
 # List-valued fields inherit the same way: the free-quota alignment command
 # and the credential-env declarations ship with the package registry (vendor
@@ -141,6 +142,12 @@ def _fill_links(entry: dict, base: dict) -> dict:
                 inherited = base_mode.get(field)
                 if inherited:
                     mode[field] = copy.deepcopy(inherited)
+        # requires_checkin=False is a meaningful explicit value, so the
+        # "empty means inherit" trick above would be wrong for it: inherit
+        # only when the overlay entry does not declare the field at all.
+        if mode.get("requires_checkin") is None \
+                and base_mode.get("requires_checkin") is not None:
+            mode["requires_checkin"] = base_mode["requires_checkin"]
     return entry
 
 
@@ -205,6 +212,16 @@ def normalize_vendor(entry) -> dict:
         tier = mode.get("tier") or ""
         if tier not in ("", "free", "paid"):
             raise ValueError(f"模式 {key} 的档位只能是 空、free 或 paid")
+        kind_raw = mode.get("free_kind")
+        free_kind: str | None = None
+        if kind_raw is not None:
+            free_kind = str(kind_raw).strip().lower()
+            if free_kind not in FREE_KINDS:
+                raise ValueError(
+                    f"模式 {key} 的 free_kind 只能是 {'/'.join(FREE_KINDS)}")
+        checkin_raw = mode.get("requires_checkin")
+        if checkin_raw is not None and not isinstance(checkin_raw, bool):
+            raise ValueError(f"模式 {key} 的 requires_checkin 必须是布尔值")
         docs_url = _optional_url(mode, "docs_url", key)
         keys_url = _optional_url(mode, "keys_url", key)
         models_url = _optional_url(mode, "models_url", key)
@@ -270,6 +287,10 @@ def normalize_vendor(entry) -> dict:
         }
         if free_models is not None:
             modes[key]["free_models"] = free_models
+        if free_kind is not None:
+            modes[key]["free_kind"] = free_kind
+        if checkin_raw is not None:
+            modes[key]["requires_checkin"] = checkin_raw
     # Vendor-level walkthrough (declared once) expands into modes that lack
     # their own, so overlay entries saved after a console edit stay
     # self-contained.

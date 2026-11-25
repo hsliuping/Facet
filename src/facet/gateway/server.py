@@ -33,9 +33,9 @@ from . import freealign as freealign_mod
 from . import providers as providers_mod
 from . import facts as facts_mod
 from . import watch as watch_mod
-from . import (ark_quota, bailian_quota, deepseek_quota, hunyuan_quota,
-               minimax_quota, modelscope_quota, moonshot_quota,
-               opencode_quota, openrouter_quota, zhipu_quota)
+from . import (ark_quota, bailian_quota, hunyuan_quota,
+               opencode_quota, zhipu_quota)
+from . import mode_meta
 from . import benchmarks as bench_mod
 from .audit import RequestLog
 from .completions import CompletionsAdapter
@@ -55,8 +55,8 @@ from .core import (
 from .keys import KeyStore
 from .notifier import ReminderService
 from .persistence import StatePersistence
-from .probe import (MAX_CHANNELS, TEST_TIMEOUT, pick_model, pick_probe_model,
-                    probe_channel, probe_models)
+from .probe import (MAX_CHANNELS, TEST_TIMEOUT, is_free_model, pick_model,
+                    pick_probe_model, probe_channel, probe_models)
 from .quota import parse_quota, quota_exhaustion_wait
 from .report import build_member_costs, build_report
 from .responses import ResponsesAdapter, to_chat_request
@@ -190,28 +190,10 @@ def append_jsonl(path: Path, entry: dict, kind: str, on_error=None,
             on_ok(kind)
 
 
-# Pay-as-you-go vendors report account usage to the same key the channel
-# already sends upstream. provider -> fetcher(creds) -> snapshot; the channel
-# config page renders the result. Vendors without an endpoint stay out, so a
-# missing entry simply means "no usage display".
-CHANNEL_USAGE_FETCHERS = {
-    "openrouter": openrouter_quota.fetch_key_usage,
-    "deepseek": deepseek_quota.fetch_balance,
-    "zhipu": zhipu_quota.fetch_account_report,
-    "minimax": minimax_quota.fetch_usage,
-    "moonshot": moonshot_quota.fetch_balance,
-    "modelscope": modelscope_quota.fetch_balance,
-}
-# Management-plane wallets: these authenticate with the account's AK/SK pair
-# from the credential chain (resolve_creds), not with the data-plane key the
-# channel sends upstream, so they travel through their own registry —
-# provider -> (fetcher(ak, sk), ak env, sk env).
-MGMT_WALLET_FETCHERS = {
-    "bailian": (bailian_quota.fetch_balance,
-                bailian_quota.AK_ENV, bailian_quota.SK_ENV),
-    "hunyuan": (hunyuan_quota.fetch_balance,
-                hunyuan_quota.ID_ENV, hunyuan_quota.KEY_ENV),
-}
+# Vendor capability registries (usage fetchers, wallets, check-in handlers)
+# moved to mode_meta.py: one home next to the enums that classify them.
+# server.py dispatches through mode_meta.KEY_API_FETCHERS /
+# mode_meta.MGMT_WALLET_FETCHERS / mode_meta.CHECKIN_HANDLERS.
 
 
 def _header_safe(value) -> str:
@@ -516,7 +498,7 @@ def model_tier(channel, subscriptions: list[dict], model: str) -> str:
     # is the point), which would otherwise paint paid siblings like
     # aion-labs/aion-2.0 as 免费可用 in the model table.
     if channel.provider == "openrouter":
-        return "free" if model.endswith(":free") else "paid"
+        return "free" if is_free_model(model) else "paid"
     return channel_tier(channel, subscriptions)
 
 
@@ -975,7 +957,7 @@ class WatchRunner(ScheduledTask):
 
 
 class ModelScopeCheckinRunner(ScheduledTask):
-    """Scheduled ModelScope magicube claim (modelscope_quota).
+    """Scheduled daily check-in claim for vendors that need one.
 
     ModelScope has no check-in API: the daily grant lands with the day's
     first website sign-in, and one signed-in request to login/info is
@@ -986,6 +968,11 @@ class ModelScopeCheckinRunner(ScheduledTask):
     sweep runs once per Beijing morning inside the 08:30-10:00 window
     (random minute per day), not on a plain interval; the hours value is
     an enable switch (0 disables) and a status hint.
+
+    Which channels need a claim comes from the registry classification
+    (mode_meta.requires_checkin_of) and the executor from
+    mode_meta.CHECKIN_HANDLERS — a second check-in vendor is a new
+    registry row, not a new Runner class.
     """
 
     key = "modelscope_checkin"
@@ -996,16 +983,31 @@ class ModelScopeCheckinRunner(ScheduledTask):
     _OUTCOMES = {"done": "今日已领", "claimed": "领取成功",
                  "inactive": "登录成功但未见发放"}
 
+    def _channels(self):
+        """Enabled channels whose mode declares a daily check-in, paired
+        with their check-in executor."""
+        out = []
+        for channel in self.app.config.channels:
+            if not getattr(channel, "enabled", True):
+                continue
+            provider = getattr(channel, "provider", "")
+            mode = self.app.provider_mode(provider,
+                                          getattr(channel, "mode", ""))
+            if not mode_meta.requires_checkin_of(provider, mode):
+                continue
+            handler = mode_meta.CHECKIN_HANDLERS.get(provider)
+            if handler is not None:
+                out.append((channel, handler))
+        return out
+
     def run_once(self) -> str:
-        channels = [c for c in self.app.config.channels
-                    if getattr(c, "provider", "") == "modelscope"
-                    and getattr(c, "enabled", True)]
-        if not channels:
-            return "没有启用的魔搭渠道"
+        pairs = self._channels()
+        if not pairs:
+            return "没有需要签到的启用渠道"
         parts = []
-        for channel in channels:
+        for channel, handler in pairs:
             try:
-                result = modelscope_quota.checkin(channel.api_key)
+                result = handler(channel.api_key)
             except Exception as exc:
                 parts.append(f"{channel.name} 失败：{exc}")
                 continue
@@ -1807,7 +1809,7 @@ class App:
         """
         from .accounts import resolve_creds
         creds: dict = resolve_creds(channel, self.config)
-        mgmt = MGMT_WALLET_FETCHERS.get(channel.provider)
+        mgmt = mode_meta.MGMT_WALLET_FETCHERS.get(channel.provider)
         if mgmt is not None:
             fetch, ak_env, sk_env = mgmt
             ak = str(creds.get(ak_env) or "")
@@ -1817,7 +1819,7 @@ class App:
             cache_key = (f"wallet:{channel.provider}:"
                          + hashlib.sha1(f"{ak}:{sk}".encode()).hexdigest()[:12])
             return self._cached_vendor(cache_key, lambda: fetch(ak, sk))
-        fetch = CHANNEL_USAGE_FETCHERS.get(channel.provider)
+        fetch = mode_meta.KEY_API_FETCHERS.get(channel.provider)
         if fetch is None:
             return None
         key = str(creds.get("api_key") or channel.api_key or "")
@@ -1909,7 +1911,7 @@ class App:
             # Same OpenRouter rule as model_tier: without a ":free" wire id
             # the call bills the account and must skip the free baseline.
             if eligible and channel.provider == "openrouter":
-                eligible = wire.endswith(":free")
+                eligible = is_free_model(wire)
         if not eligible:
             return None
         pack = self._model_quota_for(channel, wire, exposed)
@@ -5155,7 +5157,7 @@ class App:
                 # OpenRouter's catalog lists its paid models too; only the
                 # ":free" suffix ones advertise free access (see model_tier).
                 if (channel.provider == "openrouter"
-                        and not str(model).endswith(":free")):
+                        and not is_free_model(model)):
                     continue
                 free_upstream.setdefault(str(model), []).append(channel.name)
         labels = {"free_ok": "免费可用", "free_exhausted": "免费已耗尽",

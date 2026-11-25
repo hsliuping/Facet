@@ -292,8 +292,12 @@ const WIZARD_STEPS = [
         : `<p class="hint">填写前建议先读 ${manual}（含免费额度说明与凭据获取步骤）。</p>`;
       // 管理面凭据（如火山 IAM AK/SK、百炼 RAM AK/SK）：免费额度对齐与
       // 套餐余量查询用它签名调厂家管理 API，缺了就拉不到真实额度。
+      // 分类口径来自后端 mode.meta.cred_kind（mode_meta.py 单点），
+      // meta 缺失时回退到 credential_envs 是否声明（两者当前等价）。
       const envs = mode.credential_envs || [];
-      const credFields = envs.length ? `
+      const credKind = (mode.meta && mode.meta.cred_kind)
+        || (envs.length ? 'aksk' : 'key');
+      const credFields = credKind === 'aksk' && envs.length ? `
           <div class="wizard-cred-block">
             <p class="hint">该厂家的免费额度/余量查询还需要管理面凭据（与上方 API Key 不同），建议一并填写：</p>
             <div class="form-grid">
@@ -415,14 +419,31 @@ const WIZARD_STEPS = [
         // 目录是字母序、第三方 id 常排最前（acme/… < nvidia/…），所以不采
         // 信服务端 suggested（它指向字母序头部），由这里重新排序。
         const NON_CHAT = /(embed|asr|tts|rerank|whisper|ocr|guard|moderation|reward|stable-?diffusion|sdxl)/i;
-        const FREE_ID = /(:free|-free)$/i;
-        const own = catalog.filter((m) => m.startsWith(p.id + '/') && !NON_CHAT.test(m));
-        const others = catalog.filter((m) => !own.includes(m) && !NON_CHAT.test(m));
+        const chat = catalog.filter((m) => !NON_CHAT.test(m));
         const ids = [];
         const push = (m) => { if (ids.length < 20 && !ids.includes(m)) ids.push(m); };
-        own.forEach(push);
-        if (draft.tier === 'free') others.filter((m) => FREE_ID.test(m)).forEach(push);
-        others.forEach(push);
+        if (draft.tier === 'free') {
+          // 免费档只测免费模型，复用全局 isFreeModelId（与渠道编辑器「只选免费」、
+          // 后端 model_tier 同口径）：OpenRouter 只有 :free/-free 后缀算免费，
+          // 其 openrouter/auto 等不带后缀的是付费路由，未充值账号调它们会被
+          // 上游拒绝。厂家自有免费模型排前，其余按目录序。若该厂家免费模型
+          // 不带后缀（如 nvidia 整层免费），过滤为空时回退全量候选，保证
+          // 自动选型不卡死。
+          const freeChat = chat.filter((m) => isFreeModelId(m));
+          const own = freeChat.filter((m) => m.startsWith(p.id + '/'));
+          const others = freeChat.filter((m) => !own.includes(m));
+          own.forEach(push);
+          others.forEach(push);
+          if (!ids.length) {
+            chat.filter((m) => m.startsWith(p.id + '/')).forEach(push);
+            chat.filter((m) => !m.startsWith(p.id + '/')).forEach(push);
+          }
+        } else {
+          const own = chat.filter((m) => m.startsWith(p.id + '/'));
+          const others = chat.filter((m) => !own.includes(m));
+          own.forEach(push);
+          others.forEach(push);
+        }
         if (!ids.length) modelList.forEach(push);
         if (!ids.length) {
           throw new Error('上游未返回模型清单，无法自动选型；'
@@ -631,12 +652,14 @@ const WIZARD_BILLING_LABELS = {
   agent_plan: 'Agent Plan 包月',
 };
 
-// 是否带免费额度：显式 free tier，或注册表登记了免费额度数据——
-// free_quota（新人赠额）、free_limits（赠金/速率/免费模型说明）、
-// free_models（官方免费模型清单）。赠送额度型厂家（火山/百炼/千帆）
-// 注册表 mode.tier 标 paid（额度烧完按量扣费），但向导目录照样列出；
-// 用户在向导选了「免费」偏好时，生成的渠道按偏好标 free（test-save 步骤）。
+// 是否带免费额度：后端注入的归一化分类（mode.meta.free_kind，来自
+// mode_meta.py 单一实现点）优先；meta 缺失时回退到旧信号推断，口径一致。
+// 免费形态四类：one_time（一次性赠额）/ daily（每日循环）/ forever（长期
+// 免费模型）/ voucher（注册代金券），详见 docs/免费与接入模式统一建模设计.md。
 function wizardHasFree(mode) {
+  if (mode && mode.meta && mode.meta.free_kind) {
+    return mode.meta.free_kind !== 'none';
+  }
   return mode.tier === 'free' || !!mode.free_quota || !!mode.free_limits
     || !!(mode.free_models || []).length;
 }

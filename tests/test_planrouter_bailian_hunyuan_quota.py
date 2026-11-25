@@ -10,7 +10,7 @@ from unittest import mock
 from urllib.parse import parse_qsl, urlsplit
 
 from facet.gateway import bailian_quota, hunyuan_quota, zhipu_quota
-from facet.gateway import server
+from facet.gateway import mode_meta
 from facet.gateway.core import load_config
 from facet.gateway.server import App
 
@@ -335,14 +335,14 @@ class QuotaWiringTests(unittest.TestCase):
         snapshot = {"plan": "阿里云百炼", "provider": "bailian",
                     "windows": [], "summary": "可用余额 ¥1.00"}
         fetch = mock.Mock(return_value=snapshot)
-        with mock.patch.dict(server.MGMT_WALLET_FETCHERS, {
+        with mock.patch.dict(mode_meta.MGMT_WALLET_FETCHERS, {
                 "bailian": (fetch, bailian_quota.AK_ENV,
                             bailian_quota.SK_ENV)}):
             out = self.app.channel_usage(self.app.config.channel("百炼付费"))
         fetch.assert_called_once_with("ak", "sk")
         self.assertEqual(out["summary"], "可用余额 ¥1.00")
         # Cached: a second view does not hit the vendor again.
-        with mock.patch.dict(server.MGMT_WALLET_FETCHERS, {
+        with mock.patch.dict(mode_meta.MGMT_WALLET_FETCHERS, {
                 "bailian": (fetch, bailian_quota.AK_ENV,
                             bailian_quota.SK_ENV)}):
             self.app.channel_usage(self.app.config.channel("百炼付费"))
@@ -355,7 +355,7 @@ class QuotaWiringTests(unittest.TestCase):
 
     def test_channel_usage_payg_key_still_uses_data_plane_key(self):
         fetch = mock.Mock(return_value={"plan": "DeepSeek", "windows": []})
-        with mock.patch.dict(server.CHANNEL_USAGE_FETCHERS,
+        with mock.patch.dict(mode_meta.KEY_API_FETCHERS,
                              {"deepseek": fetch}):
             self.app.channel_usage(self.app.config.channel("DeepSeek"))
         fetch.assert_called_once_with("ds-key")

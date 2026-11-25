@@ -5,6 +5,13 @@
 // open a fresh session do not ask for the key on every reload.
 const KEY_STORAGE = { gateway: 'facet_key', admin: 'facet_admin_key' };
 
+// 免费模型识别：全系统唯一一处前端口径定义，与后端 model_tier /
+// probe.FREE_ID_RE 同值。OpenRouter 只有 :free/-free 后缀算免费，
+// openrouter/auto 等不带后缀的是付费路由；渠道编辑器「只选免费」与
+// 向导免费档的候选过滤都复用此函数，避免各写一套。
+const FREE_ID_RE = /(:free|-free)$/i;
+function isFreeModelId(m) { return FREE_ID_RE.test(String(m || '')); }
+
 function readStoredKey(kind) {
   try {
     return sessionStorage.getItem(KEY_STORAGE[kind])
@@ -57,6 +64,7 @@ const state = {
   report: null,
   maintenance: null,
   freeFilter: 'all',
+  freeKind: '',
   freeQuery: '',
   freeSort: 'status', // 'status' 可用优先 | 'ability' 能力分优先
   maintlog: null,
@@ -4418,6 +4426,29 @@ const FREE_RESET = {
   day: '次日 0 点重置',
 };
 
+// PPT 四类免费口径（mode_meta.FREE_KINDS）。分类由后端注册表显式声明
+// （providers.json 的 free_kind 字段，经 /api/maintenance 的 channels
+// 行下发），前端只消费 ch.free_kind 分组展示，不再自行推断。
+const FREE_KIND_LABELS = {
+  forever: '长期免费', daily: '每日循环', one_time: '一次性赠送',
+  voucher: '注册代金券', none: '未分类',
+};
+const FREE_KIND_CLS = {
+  forever: 'active', daily: 'expiring', one_time: 'unknown',
+  voucher: 'warn', none: 'unknown',
+};
+const FREE_KIND_ORDER = ['forever', 'daily', 'one_time', 'voucher', 'none'];
+
+function kindTip(kind) {
+  return {
+    forever: '厂家长期免费提供的模型，无总量上限（可能有限速）',
+    daily: '额度每日重置，用完等次日（部分厂家需每日签到领取）',
+    one_time: '注册赠送的一次性额度，用完或到期即止',
+    voucher: '注册发放的现金代金券，按用量扣减余额',
+    none: '注册表未标注免费口径',
+  }[kind] || '';
+}
+
 function freeModelState(m, ch) {
   const q = m.quota || null;
   const quizFailed = !!(m.test && m.test.ok === false);
@@ -4451,7 +4482,8 @@ function freeRows(free) {
   const rows = [];
   (free.channels || []).forEach((ch) => {
     (ch.models || []).forEach((m) => {
-      rows.push({ ch, m, status: freeModelState(m, ch), ability: m.ability });
+      rows.push({ ch, m, status: freeModelState(m, ch), ability: m.ability,
+        kind: ch.free_kind || 'none' });
     });
   });
   // 能力分：null（未评测）排到有分的后面，用 -1 兜底。
@@ -4568,9 +4600,19 @@ function renderFreePage(free) {
     ['exhausted', '额度用完', exhausted],
     ['other', '其他不可用', other],
   ];
+  // 免费口径四类（PPT）：长期免费 / 每日循环 / 一次性赠送 / 注册代金券。
+  const kindCount = {};
+  rows.forEach((r) => { kindCount[r.kind] = (kindCount[r.kind] || 0) + 1; });
+  const kindBtns = FREE_KIND_ORDER.filter((k) => kindCount[k]).map((k) =>
+    `<button class="btn small ${state.freeKind === k ? 'active' : ''}"`
+    + ` data-free-kind="${k}" title="${esc(kindTip(k))}">`
+    + `${FREE_KIND_LABELS[k]} ${kindCount[k]}</button>`).join('');
   $('free-filters').innerHTML = filters.map(([key, label, n]) =>
     `<button class="btn small ${state.freeFilter === key ? 'active' : ''}" data-free-filter="${key}">`
     + `${label} ${n}</button>`).join('')
+    + `<span class="free-sort"><span class="sub-note">类别</span>`
+    + `<button class="btn small ${state.freeKind === '' ? 'active' : ''}" data-free-kind="">全部</button>`
+    + kindBtns + '</span>'
     + `<span class="free-sort"><span class="sub-note">排序</span>`
     + `<button class="btn small ${state.freeSort === 'status' ? 'active' : ''}" data-free-sort="status">可用优先</button>`
     + `<button class="btn small ${state.freeSort === 'ability' ? 'active' : ''}" data-free-sort="ability">能力优先</button></span>`;
@@ -4583,6 +4625,7 @@ function renderFreePage(free) {
     if (state.freeFilter === 'exhausted' && r.status !== 'exhausted') return false;
     if (state.freeFilter === 'other' && (r.status === 'ok' || r.status === 'warn'
       || r.status === 'quizfail' || r.status === 'exhausted')) return false;
+    if (state.freeKind && r.kind !== state.freeKind) return false;
     if (!q) return true;
     return (r.m.model + ' ' + r.ch.name + ' ' + (r.ch.provider_name || '') + ' '
       + (r.ch.provider || '')).toLowerCase().includes(q);
@@ -4600,7 +4643,7 @@ function renderFreePage(free) {
     return;
   }
 
-  box.innerHTML = visible.map(({ ch, m, status }) => {
+  box.innerHTML = visible.map(({ ch, m, status, kind }) => {
     const [label, cls] = FREE_STATUS[status] || FREE_STATUS.other;
     const use = m.usage || {};
     const useText = use.requests
@@ -4625,6 +4668,8 @@ function renderFreePage(free) {
       + (m.in_queue ? ' <span class="tag active">队列中</span>' : '') + '</td>'
       + `<td>${abCell}</td>`
       + `<td><strong>${esc(ch.provider_name || ch.provider)}</strong>`
+      + ` <span class="tag ${FREE_KIND_CLS[kind] || 'unknown'}" title="${esc(kindTip(kind))}">`
+      + `${esc(FREE_KIND_LABELS[kind] || kind)}</span>`
       + `<div class="sub-note">${esc(ch.name)}${ch.mode ? ` · ${esc(ch.mode)}` : ''}</div></td>`
       + `<td><span class="tag ${cls}">${label}</span>${reason}${testNote}</td>`
       + `<td>${freeQuotaCell(m.quota)}</td>`
@@ -4673,6 +4718,12 @@ $('free-filters').addEventListener('click', (e) => {
   const sort = e.target.closest('[data-free-sort]');
   if (sort) {
     state.freeSort = sort.dataset.freeSort;
+    renderFreePage((state.maintenance && state.maintenance.free_models) || {});
+    return;
+  }
+  const kindBtn = e.target.closest('[data-free-kind]');
+  if (kindBtn) {
+    state.freeKind = kindBtn.dataset.freeKind;
     renderFreePage((state.maintenance && state.maintenance.free_models) || {});
     return;
   }
@@ -5492,7 +5543,6 @@ function renderCatalogList(models) {
   // plan intersection instead of the ≤30 / :free heuristic, and tag hits.
   const current = parseModels($('editor-form').elements.namedItem('models').value);
   const mapped = new Set(Object.keys(current).filter((k) => k !== 'auto' && k !== '*'));
-  const FREE_ID = /(:free|-free)$/i;
   const channelName = ($('editor-form').elements.namedItem('name')?.value || '').trim();
   // Subscriptions link channels by id; accept the name too for legacy rows.
   const channelId = String((state.config?.channels || [])
@@ -5514,7 +5564,7 @@ function renderCatalogList(models) {
   const inPlan = planModels.size > 0;
   const precheck = (m) => inPlan
     ? (mapped.has(m) || planModels.has(m))
-    : (mapped.has(m) || models.length <= 30 || FREE_ID.test(m));
+    : (mapped.has(m) || models.length <= 30 || isFreeModelId(m));
   list.hidden = false;
   list.innerHTML = `
     <div class="test-row" style="margin-top:8px">
@@ -5551,7 +5601,7 @@ function renderCatalogList(models) {
   list.querySelectorAll('[data-cat]').forEach((b) => {
     b.onclick = () => {
       if (b.dataset.cat === 'none') boxes().forEach((x) => { x.checked = false; });
-      else if (b.dataset.cat === 'free') visible().forEach((x) => { x.checked = FREE_ID.test(x.value); });
+      else if (b.dataset.cat === 'free') visible().forEach((x) => { x.checked = isFreeModelId(x.value); });
       else if (b.dataset.cat === 'plan') visible().forEach((x) => { x.checked = planModels.has(x.value); });
       else visible().forEach((x) => { x.checked = true; });
       count();

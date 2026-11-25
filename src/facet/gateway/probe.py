@@ -320,6 +320,15 @@ def is_chat_model(model: str) -> bool:
 FREE_ID_RE = re.compile(r"(:free|-free)$", re.IGNORECASE)
 
 
+def is_free_model(model) -> bool:
+    """全系统唯一的免费模型识别口径：认 :free / -free 后缀。
+
+    model_tier、免费基线 eligibility、免费候选池、渠道编辑器与向导前端
+    均复用此判断；新增/调整免费后缀规则只改这一处，避免各入口口径分裂。
+    """
+    return bool(FREE_ID_RE.search(str(model or "")))
+
+
 def pick_probe_model(models, prefer_free: bool = False) -> str:
     """First chat-capable id for a probe/wizard test.
 
@@ -336,7 +345,7 @@ def pick_probe_model(models, prefer_free: bool = False) -> str:
     ids = [str(m) for m in (models or []) if m]
     if prefer_free:
         for model in ids:
-            if FREE_ID_RE.search(model) and is_chat_model(model):
+            if is_free_model(model) and is_chat_model(model):
                 return model
     for model in ids:
         if is_chat_model(model):

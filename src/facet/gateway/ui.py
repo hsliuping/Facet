@@ -229,6 +229,7 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         return True
 
     if path == "/api/providers" and method == "GET":
+        from .mode_meta import mode_meta as mode_meta_of
         overlay = providers_mod.overlay_ids(
             app.config_path.parent if getattr(app, "config_path", None) else None)
         providers = []
@@ -239,6 +240,19 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
             item["origin"] = ("overlay"
                               if str(item.get("id") or "") in overlay
                               else "builtin")
+            # Decorate each mode with the normalized classification block
+            # (free_kind / cred_kind / requires_checkin / quota_capability).
+            # Copied per request so the in-memory registry entries stay clean
+            # (maintenance persists those entries verbatim).
+            pid = str(item.get("id") or "")
+            modes = item.get("modes")
+            if isinstance(modes, dict):
+                decorated = {}
+                for mode_key, mode in modes.items():
+                    if isinstance(mode, dict):
+                        mode = {**mode, "meta": mode_meta_of(pid, mode)}
+                    decorated[mode_key] = mode
+                item["modes"] = decorated
             providers.append(item)
         _json(h, 200, {"providers": providers})
         return True
