@@ -820,7 +820,7 @@
             <div class="card-top">
               <div>
                 <h3>鉴权密钥</h3>
-                <p class="sub-note">推荐给每个下游工具 / 成员单独发一个 Key（可限速限配额）；主密钥全渠道通用，谨慎分发</p>
+                <p class="sub-note">网关是否校验调用方密钥由主密钥决定：主密钥为空时任何请求都放行。推荐给每个下游工具 / 成员单独发一个 Key（可限速限配额）；主密钥全渠道通用，谨慎分发</p>
               </div>
               <div class="actions">
                 <button class="btn small" id="btn-access-copy-master">复制主密钥</button>

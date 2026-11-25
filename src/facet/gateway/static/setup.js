@@ -35,17 +35,43 @@ const wizardState = {
   serverKey: '',
 };
 
-// 从服务端读当前已落盘的调用密钥：优先启用的 quickstart，其次任一启用 Key。
-// 返回密钥明文或 ''（服务端还没有任何启用 Key）。
+// 从服务端读当前已落盘的调用密钥：主密钥启用时主密钥就是调用密钥；
+// 其次优先启用的 quickstart 成员 Key，再次任一启用成员 Key。
+// 返回密钥明文或 ''（服务端还没有任何启用的调用密钥）。
 async function fetchServerGatewayKey() {
   try {
     const payload = await api('/api/keys');
+    if (payload && payload.master && payload.master_enabled !== false) {
+      return String(payload.master);
+    }
     const rows = Array.isArray(payload && payload.keys) ? payload.keys : [];
     const enabled = rows.filter((r) => r && r.enabled && r.key);
     const pick = enabled.find((r) => r.name === 'quickstart') || enabled[0];
     return pick ? String(pick.key) : '';
   } catch (_) {
     return '';
+  }
+}
+
+// 把调用密钥同步写入主密钥（listen.api_key）。主密钥决定网关是否校验
+// 调用方密钥：不写它，网关对无密钥的请求依旧放行（LAN 匿名开放），
+// 且仪表板「鉴权」永远显示未设置。无密钥控制台首刷不需要管理密码，
+// 服务端会顺带播下 admin_key，这里接住它以免管理面自锁。
+// 失败不阻塞向导（成员 Key 本身可用），仅提示去 API Keys 页手动设置。
+async function wizardSyncMasterKey(key) {
+  if (!key) return;
+  try {
+    const resp = await api('/api/master-key', {
+      method: 'POST',
+      body: { action: 'rotate', key, admin_key: state.adminKey || '' },
+    });
+    if (resp && resp.admin_key) {
+      state.adminKey = resp.admin_key;
+      storeKey('admin', resp.admin_key, true);
+    }
+  } catch (e) {
+    toast('调用密钥可用，但主密钥同步失败：' + e.message
+      + '。可在「API Keys」页手动设置主密钥。', 'warn');
   }
 }
 
@@ -564,6 +590,7 @@ const WIZARD_STEPS = [
             const record = await api('/api/keys', { method: 'POST', body: { name: 'quickstart' } });
             wizardState.generatedKey = record.key || '';
             state.key = wizardState.generatedKey;
+            await wizardSyncMasterKey(wizardState.generatedKey);
             toast('调用密钥已生成（已落盘服务端配置目录）');
             renderWizard();
           } catch (e) {
@@ -584,6 +611,7 @@ const WIZARD_STEPS = [
             wizardState.generatedKey = record.key || '';
             wizardState.serverKey = '';
             state.key = wizardState.generatedKey;
+            await wizardSyncMasterKey(wizardState.generatedKey);
             toast('已生成新密钥（旧密钥已吊销）');
             renderWizard();
           } catch (e) {

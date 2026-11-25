@@ -1540,13 +1540,17 @@ function renderDashAccess(s) {
   const brandedNames = Object.keys(((state.config || {}).models || {}).branded || {});
   const exactCount = (s.model_states || []).length;
   const keysLoaded = accessState.keys !== null;
-  const master = keysLoaded ? (accessState.keys.master || '') : '';
-
+  const keysPayload = keysLoaded ? accessState.keys : {};
+  const master = keysPayload.master || '';
+  // 主密钥是网关校验开关：它为空时无密钥请求一律放行，成员 Key 存在也改变
+  // 不了这一点。所以「鉴权」行只看主密钥，避免成员 Key 存在却显示已设置。
   let auth;
   if (!keysLoaded) auth = '—';
-  else if (master) {
+  else if (master && keysPayload.master_enabled !== false) {
     auth = `<code>Bearer ${esc(maskKey(master))}</code> `
       + '<button class="btn small ghost" data-copy-master>复制</button>';
+  } else if (master) {
+    auth = '主密钥已暂停（网关不校验密钥）';
   } else {
     auth = '未设置（网关不校验密钥）';
   }
