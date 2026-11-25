@@ -227,9 +227,21 @@ const WIZARD_STEPS = [
         return;
       }
       const tier = wizardState.tier;
-      const entries = providers
+      let entries = providers
         .map((p) => ({ p, pick: wizardPickMode(p, tier, wizardState.billing) }))
         .filter((e) => e.pick);
+      // 免费档：把注册/领额度最省心、不易出错的厂家置顶，其余保持原序
+      if (tier === 'free') {
+        const FREE_PRIORITY = ['zhipu', 'nvidia'];
+        entries = entries
+          .map((e, i) => ({ e, i }))
+          .sort((a, b) => {
+            const ra = FREE_PRIORITY.indexOf(a.e.p.id);
+            const rb = FREE_PRIORITY.indexOf(b.e.p.id);
+            return (ra === -1 ? 999 : ra) - (rb === -1 ? 999 : rb) || a.i - b.i;
+          })
+          .map((x) => x.e);
+      }
       if (!entries.length) {
         list.innerHTML = tier
           ? '<p class="hint">当前偏好下暂无可选厂家。可点「上一步」更换偏好，'
