@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "facet-models"
-version = "1.0.0"
+version = "1.0.1"
 description = "Self-maintaining LLM gateway over free-tier quotas, with a bundled model facts table. Zero runtime dependencies. / 自维护的免费额度聚合网关，内置模型事实表，零运行时依赖。"
 readme = "README.md"
 requires-python = ">=3.10"
