@@ -4,7 +4,7 @@
 > 对应项或移入「已完成」，并在文末「更新记录」追加一行。本文件是唯一的进度
 > 基准，功能口径以 [README.md](../README.md) 为准。
 
-**最后更新**：2026-11-15
+**最后更新**：2026-11-27
 
 ---
 
@@ -79,14 +79,14 @@
 | free-tier 渠道 | 已恢复主力服务（46/55 成功、约 24 万 tokens）；免费额度耗尽时按上游重置头自动冷却 |
 | 桥接渠道恢复 | codex-plan / claude-plan / glm-plan 已临时禁用（本地桥未运行 / GLM key 未设）；跑起 8080/8081 桥或提供智谱 key（User 级 `GLM_PLAN_KEY`）后把渠道改回 enabled 即恢复；**glm-plan 需额外排查**：`/health` 显示 `channel header missing authorization` 连续失败，疑似渠道 Key 未配置或协议 Header 映射不对，非桥问题 |
 | 火山引擎 Agent 套餐渠道 | 注册表 agent 模式模型清单已恢复到 22 个；LLM 提取提示词已加「禁止改写分隔符」规则+示例，采纳前对已有清单做归一化（`.`/`-`/`_` 等价）比对，变体自动映射回原始拼写；「regex 兜底只增不删」护栏已上线，不会再被回砍到 5 个 |
-| 正式试用（容器栈） | 网关已容器化常驻（[planrouter-container-trial.md](planrouter-container-trial.md)）：router/mock 双容器 healthy、宿主 127.0.0.1:8787、状态挂载 ./data、每小时指标监控运行中；试用通过后打 v1.0.0 tag |
+| 正式试用（容器栈） | 网关已容器化常驻（[planrouter-container-trial.md](planrouter-container-trial.md)）：router/mock 双容器 healthy、宿主 127.0.0.1:8787、状态挂载 ./data、每小时指标监控运行中；预发布 v1.0.0b1 已出（2026-11-23），正式版以 v1.0.1 发布（PyPI 1.0.0 已被旧版占用，见更新记录） |
 
 ## 接下来
 
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
 - [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：21 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信、4.13 SCNet 三节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
 - [ ] **superagent 对接（往后排）**：2026-11-15 讨论降级——产品转向轻量团队版后受众是小团队管理员，agent 舰队叙事不再是产品需求；P0 后半（Router / Worker 分别指定模型）、P1（Worker 档位）、P2（运维 policy）暂缓，DSH 当模型底座的能力已被实测覆盖无需再验；仅保留 P3（吸收三条设计原则到维护层，见 [行动清单](planrouter-superagent-integration.md)），随维护层迭代渐进
-- [x] **正式试用 → 打 tag 发版**：v1.0.0 正式版已发布（2026-11-23）；版本从 1.0.0b1 升为 1.0.0，classifier 回 `Production/Stable`，test_package prerelease 门测试随发布提交一并删除；README / release.yml / Docker tag 同步正式版口径
+- [x] **正式试用 → 打 tag 发版**（2026-11-27 勘误）：11-23 实际发布的是 v1.0.0b1 **预发布**（GitHub Release / PyPI / Docker Hub 均为 Pre-release 标记）；11-24 定版提交 `12cb535` 才把版本升到 1.0.0、classifier 回 `Production/Stable` 并删除 prerelease 门测试；既有 v1.0.0 tag/Release 仍指向 11-17 旧代码且标着「Beta 预发布」，PyPI 1.0.0 亦为旧版占用——正式版改以 **v1.0.1** 发布（tag 推送触发 CI 出 PyPI / GitHub Release / Docker latest）
 
 ---
 
@@ -113,6 +113,13 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-27 | 正式版发布链路勘误与重启：仓库事实核对——v1.0.0 tag/Release 指向 11-17 旧代码（a33ad3a）、PyPI 1.0.0 亦为旧版占用且均标 Pre-release，而代码侧 11-24 已定版 1.0.0；正式版改用 **v1.0.1**（pyproject 与 facet / facet.gateway 两处 `__version__` 同步），tag 推送后 release.yml 出 GitHub 正式 Release + PyPI、publish-image.yml 推 Docker `latest`；全量回归 1403 passed + 1 xfailed |
+| 2026-11-25 | 免费与接入模式统一建模批（`8e07fc8`、`2150719`、`37b8b47`，设计定稿 [免费与接入模式统一建模设计.md](免费与接入模式统一建模设计.md) v3）：新建 `mode_meta.py` 作为四类免费口径（one_time/daily/forever/voucher）与接入模式（cred_kind/requires_checkin/quota_capability）的单一分类实现点，KEY_API_FETCHERS / MGMT_WALLET_FETCHERS / CHECKIN_HANDLERS 从 server 下沉同层、消除循环导入；providers.json 32 个 mode 全部显式声明 `free_kind`，modelscope `requires_checkin: true`；`/api/providers` 注入 meta 子对象，免费模型页按四类分组（前端不再自推）；代金券台账完整轮——`FreeQuota` 增 amount/currency 且三选一互斥，moonshot 余额结构化落 `vendorquota.json` 的 `_money` 键，xiaomi/anthropic 走登记面额 + expires 过期门禁，前端额度列现金/代金券分列；免费模型页对齐 free_kinds gate（forever 渠道整层目录回退），设计 §11 完成度清单全闭合 |
+| 2026-11-25 | 控制台与向导批（`76df7d6`、`b4bdf48`、`777aa88`、`73ac4a8`、`eabff89`、`e794c9e`、`966b1d2`）：接入信息页合并工具配置生成与模型名清单、消除三页重复；渠道编辑器目录「试通勾选」（单模型 10 秒超时、8 并发，不可用自动取消勾选并给失败原因）；停用渠道不再误报额度未同步、写入映射丢弃空 auto 行且无落点时自动指向首个试通模型；向导免费档厂家列表置顶智谱 / NVIDIA NIM；向导生成 quickstart 密钥时同步主密钥、仪表板「鉴权」行区分主密钥启用/暂停/未设置三态；四个 fixture 文件显式声明 fallback_unknown 对齐新默认语义 |
+| 2026-11-24 | 定版 1.0.0 与三平台安装发布（`12cb535`）：pyproject / facet / facet.gateway 版本升 1.0.0、classifier 回 `Production/Stable`、删除 prerelease 门测试；build_windows 正解解析版本、安装包名改 x.y.z 占位；README / release.yml / Docker tag 同步正式版口径 |
+| 2026-11-24 | 路由语义与向导体验批（`37cffce`、`07bb273`、`7f37bf4`、`c08b4b0`、`b50a54e`、`850bf30`、`ed172ab`、`2a5451e`、`56a69e7`、`08ecffc`）：首装向导三连修复与配置版本健壮化（wizard_done 服务端为准、版本哈希剔除密钥与 setup 段）；free 兜底进默认三条主链与隐式垫底、冷却探测默认开启；exact 模型名匹配扩为全部启用渠道（同名多渠道构成隐式转移链），全冷却不再降级换模型、无映射请求默认 400 拒绝（fallback_unknown 默认关闭）；调用密钥只落盘服务端、不再写浏览器 localStorage（多实例同源串 key 根因）；向导测试自动选型轮询（逐个试通、404/429/5xx 换下一个、10 秒单模型超时）+ 免费渠道默认测试模型落在 `:free` 对话模型；验收面板如实显示模型级冷却；手工建渠道自动进路由链、编辑器拦截空 auto 映射、渠道卡「未配置」标记 |
+| 2026-11-24 | 能力分与对比粒度批（`4f9cbab`、`28c059f`、`2678ef0`、`d7e4095`、`3d5bd35`、`4c3debc`、`ba347c1`）：能力分自动刷新——解析 Vals Terminal-Bench 4.0 榜单、BenchmarkRefreshRunner 定时抓取写用户目录 override（默认每周，0 关闭），免费模型页能力分列与自维护刷新按钮；按 OpenRouter 计费规则区分免费与收费模型（model_tier / model_states / free_quota_spec 三处以模型为准，计费排序细化到「渠道\|wire」）；可用渠道 KPI 只算启用且已配真实 Key、分桶与渠道页对齐；模型对比页渠道列改实时叠加（按启用 + 真 Key + 归一化命中）；演示物料与调研文档归档 |
+| 2026-11-23 | 预发布 v1.0.0b1 发布链：GitHub Release / PyPI / Docker Hub 三平台发布且均标记 Pre-release；新增 `publish-image.yml` 独立 Docker 发布链（release completed 触发，浮动 latest 可选）；README 安装渠道说明与「PyPI 1.x 已发布」提示修正（`882d5bb`、`0674ecf`、`8c64bae`） |
 | 2026-11-22 | 版本定位改为 **Beta（1.0.0b1）**：正式试用未通过前不自称稳定版——pyproject version 1.0.0→1.0.0b1（PEP 440 pre-release）、classifier 降回 `Development Status :: 4 - Beta`，facet 与 facet.gateway 的 `__version__` 同步；test_package 版本断言允许 pre-release 后缀，并新增 prerelease 门测试（试用通过前版本必须保持 pre-release，发正式版时随发布提交一并删除）；发布链无需改动——release 校验 tag 与 pyproject 一致（打 v1.0.0b1 即匹配）、build_windows 正则解析版本、exe 名随版本（facet-manual 安装包名改为 x.y.z 占位不再硬编码） |
 | 2026-11-22 | 控制台体验批次（`8570d24..ec1ce76`，7 笔）：数字列右对齐 + 等宽数字；用量报表明细的渠道名可点击跳「渠道配置」并预填筛选（`data-goto-channel` 深链）；请求日志筛选结果导出 CSV（`filterRequestEntries`/`exportRequests`，15 列 UTF-8 BOM）；运行状态 KPI 恢复全量统计（修复摘要随筛选泄漏）；API Keys 表加搜索框（`keysFilter`）；配置体检——`/api/state` 渠道新增 `placeholder_key`，字面 `***` 不再算已配置，渠道页顶部横幅（`renderConfigHealth`）点破链内重复模型声明（链序靠前者优先生效）、`env:` 引用变量未解析、`***` 占位密钥三类静默问题；全局快捷键——非输入场景按 `/` 聚焦当前页筛选框（8 页映射，输入焦点/编辑器弹窗/问答框/修饰键不抢）；CI actions 升级 `checkout@v5` / `setup-python@v6`（Node 24 运行时，注解区 deprecation 警告清零），validate + install-smoke 双 run 验证绿。全量回归 1296 passed 1 xfailed |
 | 2026-11-22 | 自维护与手册批（`d3ea094`、`43611cf`、`2432795`）：整机迁移包——导出 router/keys/subscriptions/usage 四文件 zip（base64 前端转下载，密钥明文随包、UI 警示勿外发），导入只认四个白名单文件名（其余成员一律忽略，路径穿越无法写出配置目录），走 apply_config 校验管线热重载，覆盖前先存 `migration.bak`，本机管理密码永远保留防自锁；任务化用户手册 `docs/user-guide.md`（部署/接工具/省钱/运维/排障/迁移六任务主线互相链接），`/api/guide` 白名单扩 user-guide、非法值回退默认，控制台页头「用户手册」按钮弹窗渲染 Markdown；用量报表与成员用量导出 CSV（UTF-8 BOM，尊重当前筛选，顺手修 `.range-switch` 误捕同组无 data-range 按钮） |
