@@ -113,6 +113,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-27 | **v1.0.2 发布**：tag `v1.0.2` 推送触发 release.yml（GitHub Release + PyPI）与 publish-image.yml（Docker `latest` / `:1.0.2`）；版本号 pyproject 与两处 `__version__` 同步，README / 演示脚本安装包引用改 1.0.2；全量回归 1403 passed + 1 xfailed |
 | 2026-11-27 | teleAI 0 元购资源包核实：控制台「已购资源包」新增 **10 亿 tokens 0 元购包，Xing4.1-Preview 专用**（100 RPM / 200 万 TPM、0.0003 元/千、**30 天有效至 2026-12-27**），该模型实际已开通；API 模型 id 勘误——当日 74 次成功调用实证 `wire_model` 为 `xing4.1-preview`（**无 "1"**），历史文档 `Xing4.1-1Preview` 系笔误；seed `teleai-xing` 改 `auto → Xing4.1-Preview`、账本面额 11 亿（免费 1 亿 + 0 元购 10 亿）；live 渠道已登记 `model_quota` 账本（含 `expires: 2026-12-27` 过期门禁）并热加载验证；免费额度合计重算：**实到 ≈11.5 亿、领满 ≈16.6 亿**，手册 4.12、总览、核实表、对照表、接入记录、营销稿、演示脚本与全景 PPT 同步 |
 | 2026-11-27 | teleAI 口径勘误：上一行把控制台「100百万Tokens」误读为 100 万，实为每模型 1 亿（`Xing4.0-29B-A4B` / `-Intent`、`TeleChat3-438B-A24B` 余量/总量各 100 百万 tokens，控制台 2026-11-27 实领）；seed `teleai-xing` 模型 id 改 `Xing4.0-29B-A4B`（面额 1 亿本就正确），手册 4.12、总览行、官网核实表、模式对照表、接入记录统一口径；营销稿厂家计数 23→22、19→18 并更新安装包版本至 1.0.1；裁掉硅基流动密钥页截图底部账号归属名 |
 | 2026-11-27 | 中国电信（teleai）API 端点更正：`https://ai.ctaigw.cn/v1` → `https://api-maas.teleai.com.cn/v1`（`providers.json` 的 base_url / models_url 与 seed 模板 `teleai-xing`），密钥手册 4.12、接入记录与官网核实表同步 |
