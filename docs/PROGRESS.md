@@ -84,7 +84,7 @@
 ## 接下来
 
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
-- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：20 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信两节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
+- [x] **密钥手册补图**（2026-11-27 完成）：20 家厂家全部配图共 96 张实拍图，引用与文件一一对应（0 缺失 0 孤儿）；本轮补齐 4.11 硅基流动（`siliconflow-01-signup / 02-ak / 03-key-created`）与 4.12 中国电信（`teleai-01-signup / 02-quota / 03-appkey`），并按截图校正图注、步骤与额度口径（teleAI 实领为 Xing4.0-29B 变体各 100 万、官网宣传 1 亿，模型 id 改 `Xing4.0-29B-A4B`）；遗留小项：`siliconflow-02` 左下角账号归属名建议裁剪后再提交，两张「新建」弹窗可择机换成创建成功（显示 Key）画面
 - [ ] **superagent 对接（往后排）**：2026-11-15 讨论降级——产品转向轻量团队版后受众是小团队管理员，agent 舰队叙事不再是产品需求；P0 后半（Router / Worker 分别指定模型）、P1（Worker 档位）、P2（运维 policy）暂缓，DSH 当模型底座的能力已被实测覆盖无需再验；仅保留 P3（吸收三条设计原则到维护层，见 [行动清单](planrouter-superagent-integration.md)），随维护层迭代渐进
 - [x] **正式试用 → 打 tag 发版**（2026-11-27 勘误）：11-23 实际发布的是 v1.0.0b1 **预发布**（GitHub Release / PyPI / Docker Hub 均为 Pre-release 标记）；11-24 定版提交 `12cb535` 才把版本升到 1.0.0、classifier 回 `Production/Stable` 并删除 prerelease 门测试；既有 v1.0.0 tag/Release 仍指向 11-17 旧代码且标着「Beta 预发布」，PyPI 1.0.0 亦为旧版占用——正式版改以 **v1.0.1** 发布（tag 推送触发 CI 出 PyPI / GitHub Release / Docker latest）
 
@@ -113,6 +113,8 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-27 | 中国电信（teleai）API 端点更正：`https://ai.ctaigw.cn/v1` → `https://api-maas.teleai.com.cn/v1`（`providers.json` 的 base_url / models_url 与 seed 模板 `teleai-xing`），密钥手册 4.12、接入记录与官网核实表同步 |
+| 2026-11-27 | 密钥手册补图收尾：补齐 4.11 硅基流动、4.12 中国电信 6 张实拍图（共 96 张、20 家全覆盖，引用 0 缺失 0 孤儿）；按控制台截图校正图注与额度口径——teleAI 实领为 Xing4.0-29B 变体各 100 万（官网宣传 1 亿、实测约 300 万），模型 id 改 `Xing4.0-29B-A4B`，seed 1 亿初值注明为占位 |
 | 2026-11-27 | 移除 SCNet（国家超算互联网）支持：注册实名赠送 token 仅限其官方客户端、API 无法消耗，判定对网关场景不可用——删除注册表 provider、seed 模板与 cheap 链引用、向导章节映射、密钥手册 4.13 节与总览行，`test_mode_meta`（31 个 mode）与 `test_planrouter_seed` 同步 |
 | 2026-11-27 | 正式版发布链路勘误与重启：仓库事实核对——v1.0.0 tag/Release 指向 11-17 旧代码（a33ad3a）、PyPI 1.0.0 亦为旧版占用且均标 Pre-release，而代码侧 11-24 已定版 1.0.0；正式版改用 **v1.0.1**（pyproject 与 facet / facet.gateway 两处 `__version__` 同步），tag 推送后 release.yml 出 GitHub 正式 Release + PyPI、publish-image.yml 推 Docker `latest`；全量回归 1403 passed + 1 xfailed |
 | 2026-11-25 | 免费与接入模式统一建模批（`8e07fc8`、`2150719`、`37b8b47`，设计定稿 [免费与接入模式统一建模设计.md](免费与接入模式统一建模设计.md) v3）：新建 `mode_meta.py` 作为四类免费口径（one_time/daily/forever/voucher）与接入模式（cred_kind/requires_checkin/quota_capability）的单一分类实现点，KEY_API_FETCHERS / MGMT_WALLET_FETCHERS / CHECKIN_HANDLERS 从 server 下沉同层、消除循环导入；providers.json 32 个 mode 全部显式声明 `free_kind`，modelscope `requires_checkin: true`；`/api/providers` 注入 meta 子对象，免费模型页按四类分组（前端不再自推）；代金券台账完整轮——`FreeQuota` 增 amount/currency 且三选一互斥，moonshot 余额结构化落 `vendorquota.json` 的 `_money` 键，xiaomi/anthropic 走登记面额 + expires 过期门禁，前端额度列现金/代金券分列；免费模型页对齐 free_kinds gate（forever 渠道整层目录回退），设计 §11 完成度清单全闭合 |

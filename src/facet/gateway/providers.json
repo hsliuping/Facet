@@ -491,10 +491,10 @@
         "payg": {
           "label": "一次性试用额度包（账本模式）",
           "protocol": "openai",
-          "base_url": "https://ai.ctaigw.cn/v1",
+          "base_url": "https://api-maas.teleai.com.cn/v1",
           "docs_url": "https://www.ctyun.cn/document/11061839/11097250",
           "keys_url": "https://www.ctyun.cn/document/11094224/11094241",
-          "models_url": "https://ai.ctaigw.cn/v1/models",
+          "models_url": "https://api-maas.teleai.com.cn/v1/models",
           "free_limits": {
             "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日，用完或到期自动停该模型"
           },

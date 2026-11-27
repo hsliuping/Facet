@@ -79,7 +79,7 @@ def build_seed() -> dict:
                 "protocol": "openai",
                 "provider": "teleai",
                 "mode": "payg",
-                "base_url": "https://ai.ctaigw.cn/v1",
+                "base_url": "https://api-maas.teleai.com.cn/v1",
                 "api_key": "env:CTYUN_APP_KEY",
                 "enabled": False,
                 "tier": "free",
