@@ -57,17 +57,17 @@ Facet 把它们收敛成三件事：
 需要 Python 3.10+（Windows 安装包与 macOS/Linux 一键脚本会自动处理，无需自备）。
 网关与事实表都是纯标准库实现，**零第三方依赖**。
 
-当前版本 **1.0.1**：正式版，功能完整，可日常使用。按需选一种渠道：
+当前版本 **1.0.2**：正式版，功能完整，可日常使用。按需选一种渠道：
 
 | 渠道 | 适合谁 | 怎么装 |
 |---|---|---|
-| **Windows 安装包** | Windows 桌面用户 | 到 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `Facet-Setup-1.0.1.exe` 双击安装，自带托盘与开机自启，数据在 `%LOCALAPPDATA%\Facet`。安装包未代码签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
-| **Docker 镜像** | 服务器 / NAS | `docker pull hsliup/facet:latest`（锁定版本用 `:1.0.1`），详见 [Docker 部署](#docker-部署) |
+| **Windows 安装包** | Windows 桌面用户 | 到 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `Facet-Setup-1.0.2.exe` 双击安装，自带托盘与开机自启，数据在 `%LOCALAPPDATA%\Facet`。安装包未代码签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
+| **Docker 镜像** | 服务器 / NAS | `docker pull hsliup/facet:latest`（锁定版本用 `:1.0.2`），详见 [Docker 部署](#docker-部署) |
 | **macOS / Linux 一键脚本** | 有 shell 环境 | 克隆仓库后执行 `tools/macos/install.sh` 或 `tools/linux/install.sh`，自动装 Python 并注册常驻服务 |
-| **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.1-py3-none-any.whl`，再 `pip install` 该文件 |
+| **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.2-py3-none-any.whl`，再 `pip install` 该文件 |
 | **源码** | 开发者 | `git clone https://github.com/hsliuping/Facet.git && cd Facet && pip install -e .` |
 
-> ⚠️ `pip install facet-models` 默认解析到 PyPI 上的 **2026.9.1** 旧版（日期版号在 PEP 440 排序里更高），若要安装最新版 **1.0.1**，请使用 `pip install facet-models==1.0.1`，或从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.1-py3-none-any.whl` 进行安装。
+> ⚠️ `pip install facet-models` 默认解析到 PyPI 上的 **2026.9.1** 旧版（日期版号在 PEP 440 排序里更高），若要安装最新版 **1.0.2**，请使用 `pip install facet-models==1.0.2`，或从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.2-py3-none-any.whl` 进行安装。
 
 ### macOS 一键安装（launchd 服务）
 
@@ -143,7 +143,7 @@ docker run -d --name facet -p 8787:8787 \
 - 首次启动自动种子化厂家预置渠道（均为禁用态，填 Key 后启用）；未设置
   `ROUTER_ADMIN_KEY` 时随机生成管理密钥，只在日志打印一次（`docker logs facet`），
   登录后到「管理密钥」修改。
-- 镜像 tag：`:latest` 跟随最新正式版；`:1.0.1` 锁定当前版本。
+- 镜像 tag：`:latest` 跟随最新正式版；`:1.0.2` 锁定当前版本。
 
 ### 仓库 compose（自带 mock 上游，开箱冒烟）
 
