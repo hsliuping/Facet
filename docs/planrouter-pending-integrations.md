@@ -45,11 +45,11 @@
 
 ## P1 中国电信（天翼云星辰 TokenHub / 息壤 / teleAI 天翼 AI 开放平台）✅ 已接入（2026-11-18）
 
-- **接入结果**：厂家注册为 `providers.json` 的 `teleai`（`payg` 模式，OpenAI 兼容 `https://api-maas.teleai.com.cn/v1`，无 `free_quota` 基线、无额度查询 CLI）；seed 模板 `teleai-xing`（`tier: "free"`，`auto → Xing4.0-29B`，`model_quota` 预置 1 亿 tokens 面额，环境变量 `CTYUN_APP_KEY`，默认不启用）。TokenHub / 息壤 子平台按需在控制台另建渠道，用同一「一次性额度包」区块按模型登记面额。
+- **接入结果**：厂家注册为 `providers.json` 的 `teleai`（`payg` 模式，OpenAI 兼容 `https://api-maas.teleai.com.cn/v1`，无 `free_quota` 基线、无额度查询 CLI）；seed 模板 `teleai-xing`（`tier: "free"`，`auto → Xing4.1-Preview`，`model_quota` 预置 11 亿 tokens 面额 = 免费 1 亿 + 0 元购资源包 10 亿，环境变量 `CTYUN_APP_KEY`，默认不启用）。TokenHub / 息壤 子平台按需在控制台另建渠道，用同一「一次性额度包」区块按模型登记面额。
 - **免费额度（均一次性）**：
   - TokenHub：所有试用模型各赠 50 万 tokens、14 天有效、同模型限领一次。
   - 息壤：DeepSeek 系每模型 2500 万 tokens（约 2 周）；Qwen 部分模型 100 万。
-  - teleAI：`Xing4.0-29B` 免费试用 1 亿 tokens（5 QPS、512K 上下文、支持工具调用）。
+  - teleAI：`Xing4.1-Preview` 免费 1 亿 + 0 元购资源包 10 亿（该模型专用，30 天有效至 2026-12-27，100 RPM）；`Xing4.0-29B-A4B`、`Xing4.0-29B-Intent`、`TeleChat3-438B-A24B` 各 1 亿 tokens（5 QPS，控制台 2026-11-27 实领）。
   - 星辰 MaaS 智能体平台：体验版 0 元/年，**每日 700 资源点循环**（资源点非 token，仅限平台内智能体，暂不作为接入目标）。
 - **额度查询**：无公开 API，仅控制台「用量查询」网页。
 - **端点**：OpenAI 兼容 `https://api-maas.teleai.com.cn/v1/chat/completions`（2026-11-27 由 `ai.ctaigw.cn` 更正），Bearer APP Key（控制台建服务组生成）；编程 Plan 另有 `/coding/v1`。

@@ -32,8 +32,8 @@ class SeedConfigTests(unittest.TestCase):
                      "anthropic-template", "openai-embeddings"):
             self.assertFalse(by_name[name].enabled, name)
         # one-time allowance packs survive the config round-trip
-        xing = by_name["teleai-xing"].model_quota["Xing4.0-29B"]
-        self.assertEqual(xing.tokens, 100000000)
+        xing = by_name["teleai-xing"].model_quota["Xing4.1-Preview"]
+        self.assertEqual(xing.tokens, 1100000000)
         self.assertEqual(xing.period, "total")
         self.assertEqual(config.routes["openai:default"].channels,
                          ("nvidia-nim", "siliconflow"))

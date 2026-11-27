@@ -77,7 +77,7 @@
 | 17 | OpenRouter | ✅ :free模型50→1000次/天 | payg（预付credits，5.5%手续费） | 一致 |
 | 18 | MiniMax | ⚠️ 新人赠金（一次性，以账户页为准） | payg + Token Plan 包月 | **已接入**：余额/Token Plan 余量查询；双 Key 体系（`sk-api-` 按量 / 订阅 Key Token Plan） |
 | 19 | 硅基流动 SiliconFlow | ✅ 3 个永久免费模型（真 0 元计费）+ 注册实名赠 ¥14 | payg（含永久免费模型） | **已接入**：`facet-siliconflow-quota` 免费清单对齐（余额卡不可用：`/v1/user/info` 已于 2026-08-14 退役，替代接口未出）；Qwen3-8B 已转付费故剔除 |
-| 20 | 中国电信（teleAI / TokenHub / 息壤） | ✅ 一次性试用包：TokenHub 50 万/模型/14 天、息壤 DeepSeek 2500 万/模型、teleAI Xing4.0-29B 变体各 100 万（官网宣传 1 亿、实到约 300 万） | payg（一次性额度包） | **已接入**：无剩余额度 API，用渠道编辑器「一次性额度包」按模型登记面额与到期日，用完/到期自动停该模型（见 4.12） |
+| 20 | 中国电信（teleAI / TokenHub / 息壤） | ✅ 一次性试用包：TokenHub 50 万/模型/14 天、息壤 DeepSeek 2500 万/模型、teleAI 每模型 1 亿 tokens + Xing4.1-Preview 专用 10 亿 0 元购资源包（控制台 2026-11-27 实领） | payg（一次性额度包） | **已接入**：无剩余额度 API，用渠道编辑器「一次性额度包」按模型登记面额与到期日，用完/到期自动停该模型（见 4.12） |
 ---
 
 ## 三、免费渠道（零成本起步）
@@ -821,7 +821,7 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 |---|---|---|
 | TokenHub | 所有试用模型各赠 50 万 tokens | 14 天，同模型限领一次 |
 | 息壤 | DeepSeek 系每模型 2500 万 tokens；Qwen 部分模型 100 万 | 约 2 周 |
-| teleAI | `Xing4.0-29B-A4B` / `-Int` 等变体各 100 万 tokens（5 QPS；官网宣传 1 亿，2026-11-23 实测合计约 300 万） | 试用期内 |
+| teleAI | Xing4.1-Preview：免费 1 亿 + 0 元购资源包 10 亿（该模型专用，**30 天有效**，100 RPM / 200 万 TPM，0.0003 元/千）；`Xing4.0-29B-A4B`、`Xing4.0-29B-Intent`、`TeleChat3-438B-A24B` 各 1 亿 tokens（5 QPS，控制台 2026-11-27 实领） | 0 元购包 30 天；其余试用期内 |
 
 **额度查询**：无公开 API，仅控制台「用量查询」网页——这是第一个走**固定额度包账本**的厂家：领取后在渠道编辑器「一次性额度包」按模型登记面额（tokens）与到期日，网关按响应 `usage` 逐次扣减，用完或到期自动停该模型（同渠道兄弟模型不受影响）。
 
@@ -830,7 +830,7 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 1. 注册天翼云 / teleAI 账号并完成实名；
    ![天翼AI 开放平台首页：10 亿 Tokens 资源包券领取弹窗（右上角「user_…」处进入控制台）](images/api-key-guide/teleai-01-signup.png)
 2. 在对应子平台（TokenHub / 息壤 / teleAI）领取试用额度，并在控制台「应用与 API Key」创建应用、获取 APP Key（Bearer 调用）；
-   ![控制台「开通管理」：实名已完成，Xing4.0-29B-A4B / -Int 各可领 100 万 Tokens（5 QPS，按量计费已开通）](images/api-key-guide/teleai-02-quota.png)
+   ![控制台「开通管理」：实名已完成，Xing4.1-Preview 免费 1 亿 + 0 元购资源包 10 亿（100 RPM），Xing4.0-29B-A4B / -Intent、TeleChat3-438B-A24B 各 1 亿 Tokens（5 QPS）](images/api-key-guide/teleai-02-quota.png)
    ![控制台「API key 管理」：创建应用弹窗（应用名 `facet` 即 Key 归属，创建后在列表获取 APP Key）](images/api-key-guide/teleai-03-appkey.png)
 3. **立即记录**每个模型的面额与到期日（以领取页/控制台展示为准）；
 4. 在 Facet 渠道里登记：API Key 填 APP Key（或环境变量 `CTYUN_APP_KEY`），模型映射填实际可用的模型 id，然后在「一次性额度包」为每个模型登记面额与到期日。
@@ -843,8 +843,8 @@ Facet 已接入 MiniMax 用量查询，显示在渠道配置页渠道卡「厂�
 | 端点 | `https://api-maas.teleai.com.cn/v1` |
 | 模式 | `payg`（一次性试用额度包，账本模式） |
 | tier | `free` |
-| 模型映射 | `auto → Xing4.0-29B-A4B`（以控制台实际可用为准，另有 `-Int` 等变体） |
-| model_quota | `{"Xing4.0-29B-A4B": {"tokens": 1000000}}`（示例值；seed 模板初值仅占位，按控制台实领面额与到期日修改） |
+| 模型映射 | `auto → Xing4.1-Preview`（0 元购 10 亿资源包专用模型，100 RPM；另有 `Xing4.0-29B-A4B`、`-Intent`、`TeleChat3-438B-A24B` 各 1 亿免费包） |
+| model_quota | `{"Xing4.1-Preview": {"tokens": 1100000000, "expires": "2026-12-27"}}`（Xing4.1-Preview 免费 1 亿 + 0 元购 10 亿，30 天有效；按实际领取记录修改，其余三模型各登记 1 亿） |
 
 **注意事项**：
 
@@ -1110,7 +1110,7 @@ Facet 会每日后台检查各厂家免费额度状态，并在 `/free-quota` �
 - **只停一个模型**：额度耗尽或过期只影响登记的这一个模型，同渠道的兄弟模型继续服务；维护页会显示「一次性额度包已过期，已停止路由」。
 - **到期即停，哪怕还有余额**：试用包到期作废，不要指望账面上剩下的 tokens 还能用。
 - **账本只统计经过 Facet 的调用**：绕过网关直连厂家的消耗（控制台试玩、其他客户端、其他工具）看不到，账面剩余会偏高。因此面额宁可登记小一点，宁可提前停。
-- **seed 里的面额只是占位**：`teleai-xing`（1 亿）是模板初值，控制台实领为每个 Xing4.0-29B 变体 100 万左右（实测合计约 300 万），领取后请按实际额度改。
+- **seed 里的面额只是占位**：`teleai-xing` 预置 `Xing4.0-29B-A4B` 1 亿 tokens（控制台 2026-11-27 实领口径），领取后请按实际额度改。
 
 面额留空或不登记 `model_quota` 时，该模型退回渠道级 `free_quota` 或注册表基线；两者都没有就不做额度限制，只在厂商返回 402/403 后走冷却。
 

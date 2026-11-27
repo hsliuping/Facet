@@ -83,8 +83,8 @@ def build_seed() -> dict:
                 "api_key": "env:CTYUN_APP_KEY",
                 "enabled": False,
                 "tier": "free",
-                "models": {"auto": "Xing4.0-29B"},
-                "model_quota": {"Xing4.0-29B": {"tokens": 100000000}},
+                "models": {"auto": "Xing4.1-Preview"},
+                "model_quota": {"Xing4.1-Preview": {"tokens": 1100000000}},
             },
             {
                 "name": "openai-embeddings",
