@@ -1956,6 +1956,43 @@ class App:
             return 0.0, ""
         return min(best, PLAN_RESET_CAP_HOURS * 3600.0), f"plan_{level}_exhausted"
 
+    def _disable_account_channel(self, channel, detail: str) -> bool:
+        """Retire a channel the vendor says is out of money, and persist it.
+
+        A balance/arrears rejection never heals on its own — no reset header
+        will arrive — so cooling it for hours only guarantees the same 4xx
+        again (and again). This flips the channel's `enabled` flag off through
+        the same apply_config path the console's on/off toggle uses, so the
+        change lands in router.json and survives restarts; re-enabling stays
+        a deliberate operator action after the account is topped up. Returns
+        True when this call flipped the flag (False: already disabled).
+        """
+        channels = list(self.raw.get("channels") or [])
+        hit = False
+        for entry in channels:
+            if isinstance(entry, dict) and entry.get("name") == channel.name:
+                if entry.get("enabled") is False:
+                    return False
+                entry["enabled"] = False
+                hit = True
+                break
+        if not hit:
+            return False
+        try:
+            self.apply_config({**self.raw, "channels": channels})
+        except (ValueError, OSError):
+            # Persisting failed (config edited concurrently, disk trouble):
+            # keep the runtime ban so traffic stops, the console still shows
+            # the state, and the next failure retries the persist.
+            pass
+        try:
+            with self.store.lock:
+                state = self.store.states[channel.name]
+                state.last_error = f"渠道已停用（余额不足）: {detail}"
+        except KeyError:
+            pass
+        return True
+
     def _model_quota_for(self, channel, wire: str, exposed: str = ""):
         """This wire's per-model one-time pack, or None.
 
@@ -5803,6 +5840,14 @@ class App:
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
             account_scoped = _account_scoped_failure(quota, low, channel)
+            if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                # The vendor is pointing at the account's money, not this
+                # model's grant: nothing resets on its own, so cooling for
+                # hours only replays the rejection. Retire the channel
+                # (persisted) instead; re-enabling is the operator's call.
+                self._disable_account_channel(channel, excerpt)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                return (exc.code, "account_disabled", 0.0)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6079,6 +6124,14 @@ class App:
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
             account_scoped = _account_scoped_failure(quota, low, channel)
+            if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                # The vendor is pointing at the account's money, not this
+                # model's grant: nothing resets on its own, so cooling for
+                # hours only replays the rejection. Retire the channel
+                # (persisted) instead; re-enabling is the operator's call.
+                self._disable_account_channel(channel, excerpt)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                return (exc.code, "account_disabled", 0.0)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6128,6 +6181,12 @@ class App:
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
                 account_scoped = _account_scoped_failure(quota, low, channel)
+                if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                    # Same verdict as the chat paths: an out-of-credit account
+                    # will not heal, so retire the channel instead of cooling.
+                    self._disable_account_channel(channel, excerpt)
+                    self.record_usage(channel.name, False, model=wire, h=h)
+                    return (exc.code, "account_disabled", 0.0)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6381,6 +6440,14 @@ class App:
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
             account_scoped = _account_scoped_failure(quota, low, channel)
+            if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                # The vendor is pointing at the account's money, not this
+                # model's grant: nothing resets on its own, so cooling for
+                # hours only replays the rejection. Retire the channel
+                # (persisted) instead; re-enabling is the operator's call.
+                self._disable_account_channel(channel, excerpt)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                return (exc.code, "account_disabled", 0.0)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6429,6 +6496,12 @@ class App:
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
                 account_scoped = _account_scoped_failure(quota, low, channel)
+                if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                    # Same verdict as the chat paths: an out-of-credit account
+                    # will not heal, so retire the channel instead of cooling.
+                    self._disable_account_channel(channel, excerpt)
+                    self.record_usage(channel.name, False, model=wire, h=h)
+                    return (exc.code, "account_disabled", 0.0)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6732,6 +6805,14 @@ class App:
             excerpt = raw_resp.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
             account_scoped = _account_scoped_failure(quota, low, channel)
+            if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                # The vendor is pointing at the account's money, not this
+                # model's grant: nothing resets on its own, so cooling for
+                # hours only replays the rejection. Retire the channel
+                # (persisted) instead; re-enabling is the operator's call.
+                self._disable_account_channel(channel, excerpt)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                return (exc.code, "account_disabled", 0.0)
             per_model = quota and not account_scoped
             if quota:
                 plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -6780,6 +6861,12 @@ class App:
                 excerpt = raw_resp.decode("utf-8", "replace")[:300]
                 low = excerpt.lower()
                 account_scoped = _account_scoped_failure(quota, low, channel)
+                if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                    # Same verdict as the chat paths: an out-of-credit account
+                    # will not heal, so retire the channel instead of cooling.
+                    self._disable_account_channel(channel, excerpt)
+                    self.record_usage(channel.name, False, model=wire, h=h)
+                    return (exc.code, "account_disabled", 0.0)
                 per_model = quota and not account_scoped
                 if quota:
                     plan_seconds, plan_reason = self._plan_reset_cooldown(channel, now)
@@ -7224,6 +7311,14 @@ class App:
             excerpt = raw.decode("utf-8", "replace")[:300]
             low = excerpt.lower()
             account_scoped = _account_scoped_failure(quota, low, channel)
+            if account_scoped and any(m in low for m in ACCOUNT_BALANCE_MARKERS):
+                # The vendor is pointing at the account's money, not this
+                # model's grant: nothing resets on its own, so cooling for
+                # hours only replays the rejection. Retire the channel
+                # (persisted) instead; re-enabling is the operator's call.
+                self._disable_account_channel(channel, excerpt)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                return (exc.code, "account_disabled", 0.0)
             per_model = quota and not account_scoped
             if quota:
                 # A vendor plan window that already reads exhausted means the

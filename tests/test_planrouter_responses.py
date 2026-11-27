@@ -74,6 +74,21 @@ class Upstream(BaseHTTPRequestHandler):
         self.server.seen.append(body)  # type: ignore[attr-defined]
         self.server.paths.append(self.path)  # type: ignore[attr-defined]
         mode = self.server.mode  # type: ignore[attr-defined]
+        if (mode in ("balance", "429") and body.get("model") == "wire-b"
+                and getattr(self.server, "wire_b_healthy", False)):
+            # plan-b is a healthy sibling channel: only plan-a's wire model
+            # hits the rejected account / rate limit.
+            mode = "text"
+        if mode == "balance":
+            # Account-level rejection: money, not a per-model grant. It never
+            # resets on its own, so the gateway must retire the channel.
+            data = b'{"error":{"message":"Your account balance is insufficient, please top up"}}'
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if mode == "429":
             data = b'{"error":{"message":"usage limit reached"}}'
             self.send_response(429)
@@ -530,6 +545,42 @@ class ResponsesGatewayTests(unittest.TestCase):
         self.assertEqual(event["error"]["type"], "api_error")
         self.assertIn("claude", event["error"]["message"])
         self.assertNotIn(b"message_stop", raw)
+
+    def test_balance_429_disables_the_channel_and_persists_it(self):
+        self.upstream.mode = "balance"
+        self.upstream.wire_b_healthy = True
+        status, raw = self.request("POST", "/v1/responses", codex_request())
+        self.assertEqual(status, 200)  # the request itself still succeeded
+        self.assertEqual(json.loads(raw)["output"][0]["content"][0]["text"], "ok")
+        failed = [e for e in self.audit() if e["channel"] == "plan-a"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["reason"], "account_disabled")
+        self.assertEqual(failed[0]["http_status"], 429)
+        self.assertEqual(failed[0]["cooldown_seconds"], 0.0)  # retired, not cooled
+        # Out of the rotation in memory...
+        self.assertIs(self.httpd.app.config.channel("plan-a").enabled, False)
+        # ...and on disk, so a restart does not resurrect a broke account.
+        raw_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        plan_a = next(c for c in raw_cfg["channels"] if c["name"] == "plan-a")
+        plan_b = next(c for c in raw_cfg["channels"] if c["name"] == "plan-b")
+        self.assertIs(plan_a["enabled"], False)
+        self.assertIs(plan_b.get("enabled", True), True)
+
+    def test_plain_quota_429_still_cools_instead_of_disabling(self):
+        # Rate limiting / a per-model grant exhausts and recovers on its own:
+        # only the money markers retire a channel.
+        self.upstream.mode = "429"
+        self.upstream.wire_b_healthy = True
+        status, raw = self.request("POST", "/v1/responses", codex_request())
+        self.assertEqual(status, 200)
+        failed = [e for e in self.audit() if e["channel"] == "plan-a"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]["reason"], "usage limit")
+        self.assertGreater(failed[0]["cooldown_seconds"], 0.0)
+        self.assertIs(self.httpd.app.config.channel("plan-a").enabled, True)
+        raw_cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        plan_a = next(c for c in raw_cfg["channels"] if c["name"] == "plan-a")
+        self.assertIs(plan_a.get("enabled", True), True)
 
     def _raw_post(self, headers_blob: bytes) -> bytes:
         with socket.create_connection(("127.0.0.1",

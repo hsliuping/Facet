@@ -3867,6 +3867,9 @@ function translateRequest(e) {
   if (http === 404) {
     return { title: '模型不存在', detail: '上游返回 404：渠道映射的上游模型名可能已下线或拼写有误。', fixes: [{ label: '检查模型映射', tab: 'channels' }] };
   }
+  if (reason === 'account_disabled') {
+    return { title: '渠道已停用（余额不足）', detail: '上游反馈账户余额不足或欠费：这种情况不会自动恢复，网关已把该渠道停用并写入配置（重启后仍生效）。充值后在「渠道配置」页重新启用。', fixes: [{ label: '查看渠道', tab: 'channels' }] };
+  }
   if (http === 429 || http === 529) {
     return { title: '限速或额度耗尽', detail: `上游返回 ${http}` + (cd ? `，渠道已冷却约 ${fmtCooldown(cd)} 后自动恢复` : '') + '。免费额度耗尽不会自动转付费。', fixes: [{ label: '查看免费模型', tab: 'free' }, { label: '查看渠道', tab: 'channels' }] };
   }
