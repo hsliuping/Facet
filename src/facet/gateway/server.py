@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import hmac
+import http.client
 import io
 import json
 import os
@@ -199,6 +200,56 @@ def append_jsonl(path: Path, entry: dict, kind: str, on_error=None,
 def _header_safe(value) -> str:
     """Client-controlled values must never be able to inject a response header."""
     return UNSAFE_HEADER.sub("-", str(value))[:120]
+
+
+class UpstreamStreamError(Exception):
+    """The vendor connection broke while its response body was being read."""
+
+    def __init__(self, exc: BaseException):
+        super().__init__(str(exc)[:300])
+        self.exc = exc
+
+
+def _read_upstream(resp, size: int) -> bytes:
+    """Read the upstream body, naming transport failures as the vendor's.
+
+    Only reads of the upstream socket go through here, so an
+    UpstreamStreamError is always the vendor's transport dying mid-body — a
+    truncated chunked stream, a reset, a read timeout — and never the
+    gateway's own post-processing or the client hanging up.
+    """
+    try:
+        data = resp.read(size)
+    except (http.client.HTTPException, TimeoutError, OSError) as exc:
+        raise UpstreamStreamError(exc) from exc
+    remaining = getattr(resp, "length", None)
+    if not data and remaining:
+        # A Content-Length body that ends early comes back from read(amt) as a
+        # clean EOF, not an exception: left alone it would be dressed up as a
+        # complete answer. It is a truncated stream.
+        raise UpstreamStreamError(http.client.IncompleteRead(b"", remaining))
+    return data
+
+
+def _stream_error_event(protocol: str, responses: bool, message: str) -> bytes:
+    """SSE error event, in the client's protocol, for a stream cut mid-response.
+
+    No terminal event follows it on purpose: a client that only watches for
+    [DONE] / response.completed must still see the stream as broken, never as
+    a complete answer that happens to be short.
+    """
+    if protocol == ANTHROPIC:
+        body = {"type": "error",
+                "error": {"type": "api_error", "message": message}}
+    elif responses:
+        body = {"type": "error", "code": "server_error",
+                "message": message, "param": None}
+    else:
+        body = {"error": {"message": message, "type": "upstream_error",
+                          "code": "stream_truncated", "param": None}}
+    line = json.dumps(body, ensure_ascii=False)
+    prefix = "event: error\n" if protocol == ANTHROPIC or responses else ""
+    return f"{prefix}data: {line}\n\n".encode("utf-8")
 
 
 def _audit_headers(decision) -> dict:
@@ -7058,7 +7109,10 @@ class App:
                                      input_tokens=delivery.get("input_tokens", 0),
                                      cached_tokens=delivery.get("cached_tokens", 0))
                     self._note_billing(entry["billing"])
-                    self.store.bind_session(session, channel.name, time.time())
+                    if not relay_error:
+                        # A channel whose stream just died must not become the
+                        # session's sticky pick for the next half hour.
+                        self.store.bind_session(session, channel.name, time.time())
                     return
 
                 if error[1] == "bad_request":
@@ -7210,7 +7264,6 @@ class App:
             self.store.record_score(channel.name, wire, -5)
             return (502, "transient_internal", 30.0)
         else:
-            # Headers may already be on the wire here: never fail over again.
             # Time-to-first-byte feeds the weighted strategy's latency signal;
             # the full duration would measure generation length, not the channel.
             with self.store.lock:
@@ -7224,6 +7277,40 @@ class App:
                     self.store.states[channel.name].mark_success(0, time.time(), wire)
                 self.store.record_score(channel.name, wire, 1)
                 return None
+            except UpstreamStreamError as exc:
+                # The vendor answered and then dropped the body: an upstream
+                # transport failure, the same class as a 502 before the headers.
+                # It cools the channel down and costs stability score so the
+                # router stops preferring a channel whose streams keep dying.
+                detail = str(exc)
+                with self.store.lock:
+                    state = self.store.states[channel.name]
+                    state.last_error = detail
+                    state.mark_cooldown(30.0, "transient_network", now, half_open=True)
+                self.record_usage(channel.name, False, model=wire, h=h)
+                self.store.record_score(channel.name, wire, -5)
+                if delivery.get("headers_sent"):
+                    # Mid-response: failover is no longer possible. Tell the
+                    # client the stream was cut instead of hanging up on it.
+                    delivery["relay_error"] = detail
+                    if h is not None:
+                        try:
+                            h.wfile.write(_stream_error_event(
+                                protocol, isinstance(delivery.get("adapter"),
+                                                     ResponsesAdapter),
+                                f"upstream stream ended early on channel "
+                                f"{channel.name} ({detail}); "
+                                f"the response above may be truncated"))
+                            h.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            pass
+                        # The client already holds a truncated body on a
+                        # keep-alive socket. Close it so the client sees EOF
+                        # instead of hanging on a dead stream.
+                        h.close_connection = True
+                    return None
+                # Not one byte has reached the client: an honest failover.
+                return (502, "transient_network", 30.0)
             except Exception as exc:
                 # A relay failure after the upstream answered is the gateway's
                 # own post-processing (usage parse, adapter), not channel
@@ -7284,6 +7371,9 @@ class App:
             buffer = b""
             stopped = False
             try:
+                # Commit to this channel only once the vendor has produced a
+                # first byte: a 200 whose body never starts can still fail over.
+                chunk = _read_upstream(resp, 4096)
                 if delivery is not None:
                     delivery["headers_sent"] = True
                 h.send_response(200)
@@ -7293,10 +7383,7 @@ class App:
                 for key, value in extra.items():
                     h.send_header(key, value)
                 h.end_headers()
-                while True:
-                    chunk = resp.read(4096)
-                    if not chunk:
-                        break
+                while chunk:
                     outgoing = converter.feed(chunk) if converter is not None else chunk
                     if adapter is not None:
                         outgoing = adapter.feed(outgoing)
@@ -7312,6 +7399,7 @@ class App:
                         stream_cached += add_cached
                     if len(buffer) > 65536:  # never parse an unbounded non-SSE line
                         buffer = b""
+                    chunk = _read_upstream(resp, 4096)
             except (BrokenPipeError, ConnectionResetError):
                 # The client hung up mid-stream: drop the upstream connection
                 # right away so the vendor stops generating instead of billing

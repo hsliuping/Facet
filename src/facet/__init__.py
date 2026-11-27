@@ -8,7 +8,7 @@ from ._find import check, find, rank
 from ._identity import build_lookup, identity, resolve
 from ._table import BUNDLED_TABLE, DEFAULT_TABLE_URL, load
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 __all__ = [
     "BUNDLED_TABLE",

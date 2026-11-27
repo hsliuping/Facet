@@ -6,6 +6,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,6 +81,15 @@ class Upstream(BaseHTTPRequestHandler):
             content_type = "application/json"
         else:
             self.send_response(200)
+            if self.server.truncate_first > 0:  # type: ignore[attr-defined]
+                # 200 with a body that never starts: the first read raises
+                # IncompleteRead at the gateway, before any byte is relayed.
+                self.server.truncate_first -= 1  # type: ignore[attr-defined]
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(32 * 1024 * 1024))
+                self.end_headers()
+                self.close_connection = True
+                return
             if mode == "truncated":
                 # Content-Length promises a huge body, then the socket closes:
                 # http.client raises IncompleteRead at the gateway.
@@ -87,6 +97,16 @@ class Upstream(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(32 * 1024 * 1024))
                 self.end_headers()
                 self.wfile.write(b'{"choices":[{"message":{"content":"partial"')
+                self.close_connection = True
+                return
+            if mode == "stream_truncated":
+                # A few SSE events arrive, then the socket closes short of the
+                # promised length: the gateway gets IncompleteRead mid-stream.
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(32 * 1024 * 1024))
+                self.end_headers()
+                self.wfile.write(b"".join(TEXT_SSE[:2]))
+                self.wfile.flush()
                 self.close_connection = True
                 return
             if mode == "stream":
@@ -118,6 +138,7 @@ def start_upstream():
     httpd.seen = []  # type: ignore[attr-defined]
     httpd.paths = []  # type: ignore[attr-defined]
     httpd.mode = "text"  # type: ignore[attr-defined]
+    httpd.truncate_first = 0  # type: ignore[attr-defined]
     httpd.daemon_threads = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
@@ -431,6 +452,84 @@ class ResponsesGatewayTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)  # no failover once headers went out
         self.assertEqual(entries[0]["status"], "relay_error")
         self.assertEqual(entries[0]["http_status"], 200)
+
+    def _last_event(self, raw: bytes) -> dict:
+        return json.loads(raw.decode().rstrip().rsplit("\n\n", 1)[-1]
+                          .split("data: ", 1)[1])
+
+    def test_truncated_stream_fails_over_before_the_first_byte(self):
+        # 200 whose body never starts is not a commitment: nothing has reached
+        # the client, so the gateway moves on and the client never notices.
+        self.upstream.truncate_first = 2  # type: ignore[attr-defined]  # both tries on plan-a
+        self.upstream.mode = "stream"  # type: ignore[attr-defined]  # plan-b answers in SSE
+        status, raw = self.request(
+            "POST", "/v1/chat/completions",
+            {"model": "wire-a", "messages": [{"role": "user", "content": "hi"}],
+             "stream": True})
+        self.assertEqual(status, 200)
+        self.assertIn(b'"content":"forty-"', raw)
+        self.assertIn(b'"content":"two!"', raw)
+        self.assertIn(b"data: [DONE]", raw)
+        self.assertNotIn(b'"error"', raw)
+        entries = self.audit()
+        # audit() is newest first: plan-b answered after both tries on plan-a
+        self.assertEqual([(e["channel"], e["status"], e["http_status"]) for e in entries],
+                         [("plan-b", "ok", 200),
+                          ("plan-a", "network_error", 502),
+                          ("plan-a", "network_error", 502)])
+        self.assertEqual([e["reason"] for e in entries[1:]],
+                         ["transient_network"] * 2)
+
+    def test_stream_cut_mid_response_tells_the_client_and_cools_the_channel(self):
+        self.upstream.mode = "stream_truncated"
+        req = Request(self.base + "/v1/chat/completions", data=json.dumps(
+            {"model": "wire-a", "stream": True,
+             "messages": [{"role": "user", "content": "hi"}]}).encode(),
+            headers={"Content-Type": "application/json", "X-Session-Id": "sess-1"})
+        with urlopen(req, timeout=5) as resp:
+            status, raw = resp.status, resp.read()
+        self.assertEqual(status, 200)  # the first byte already committed the channel
+        self.assertIn(b'"content":"two!"', raw)  # what did arrive was relayed
+        self.assertNotIn(b"[DONE]", raw)  # never dressed up as a complete answer
+        event = self._last_event(raw)["error"]
+        self.assertEqual(event["code"], "stream_truncated")
+        self.assertIn("plan-a", event["message"])
+        self.assertIn("IncompleteRead", event["message"])
+        entries = self.audit()
+        self.assertEqual(len(entries), 1)  # no failover once bytes went out
+        self.assertEqual((entries[0]["status"], entries[0]["http_status"]),
+                         ("relay_error", 200))
+        self.assertIn("IncompleteRead", entries[0]["reason"])
+        state = self.httpd.app.store.states["plan-a"]  # type: ignore[union-attr]
+        self.assertEqual(state.reason, "transient_network")
+        self.assertGreater(state.cooldown_until, time.time())
+        # ...and a channel whose stream just died is not the session's sticky pick
+        self.assertIsNone(self.httpd.app.store.session_channel(  # type: ignore[union-attr]
+            "sess-1", time.time()))
+
+    def test_responses_and_anthropic_clients_get_their_own_error_event(self):
+        self.upstream.mode = "stream_truncated"
+        stream_codex = codex_request(stream=True)
+        status, raw = self.request("POST", "/v1/responses", stream_codex)
+        self.assertEqual(status, 200)
+        tail = raw.decode().rstrip().rsplit("\n\n", 1)[-1]
+        self.assertTrue(tail.startswith("event: error\n"), tail)
+        event = self._last_event(raw)
+        self.assertEqual((event["type"], event["code"]), ("error", "server_error"))
+        self.assertNotIn(b"response.completed", raw)
+
+        status, raw = self.request(
+            "POST", "/v1/messages",
+            {"model": "auto", "max_tokens": 16, "stream": True,
+             "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 200)
+        tail = raw.decode().rstrip().rsplit("\n\n", 1)[-1]
+        self.assertTrue(tail.startswith("event: error\n"), tail)
+        event = self._last_event(raw)
+        self.assertEqual(event["type"], "error")
+        self.assertEqual(event["error"]["type"], "api_error")
+        self.assertIn("claude", event["error"]["message"])
+        self.assertNotIn(b"message_stop", raw)
 
     def _raw_post(self, headers_blob: bytes) -> bytes:
         with socket.create_connection(("127.0.0.1",
