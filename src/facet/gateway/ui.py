@@ -44,6 +44,7 @@ CONTENT_TYPES = {
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".ico": "image/x-icon",
 }
 
 

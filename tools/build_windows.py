@@ -173,18 +173,14 @@ def install_packages() -> None:
 
 
 def make_icon() -> Path:
-    from PIL import Image, ImageDraw, ImageFont
+    """Installer, tray and web tab share one icon: the checked-in static asset.
 
-    size = 256
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle([6, 6, size - 6, size - 6], radius=54, fill=(47, 111, 237, 255))
-    draw.rounded_rectangle([26, 26, size - 26, size - 26], radius=38, outline=(255, 255, 255, 70), width=6)
-    font = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", 150)
-    draw.text((size // 2, size // 2 - 6), "F", font=font, fill="white", anchor="mm")
+    Regenerating it by hand (draw()) used to drift from the web favicon, so the
+    ico now lives once in src/facet/gateway/static/favicon.ico and every build
+    copies it — changing the icon means changing that one file.
+    """
     icon = BUILD / "facet.ico"
-    image.save(icon, sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
-                            (64, 64), (128, 128), (256, 256)])
+    shutil.copy2(ROOT / "src" / "facet" / "gateway" / "static" / "favicon.ico", icon)
     return icon
 
 
