@@ -56,7 +56,6 @@ EXPECTED = {
     "minimax/payg": ("none", ["none"], "key", False, "key_api"),
     "minimax/agent": ("none", ["none"], "key", False, "key_api"),
     "teleai/payg": ("one_time", ["one_time"], "key", False, "none"),
-    "scnet/payg": ("one_time", ["one_time"], "key", False, "none"),
     # 免费层速率随模型浮动 → daily（PPT「每日循环」表）。
     "google/payg": ("daily", ["daily"], "key", False, "none"),
     # 主类 forever（25+ 个 :free 模型）；副类 daily 来自 rpd:50 文档限额。
@@ -83,7 +82,7 @@ def _builtin_modes():
 
 
 def test_builtin_modes_inference_locked():
-    """32 个 mode 的推断结果逐项锁定；注册表增删 mode 时必须同步此表。"""
+    """31 个 mode 的推断结果逐项锁定；注册表增删 mode 时必须同步此表。"""
     seen = set()
     for pid, key, mode in _builtin_modes():
         name = f"{pid}/{key}"

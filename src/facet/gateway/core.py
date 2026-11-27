@@ -470,7 +470,7 @@ def parse_free_quota(raw) -> FreeQuota | None:
 
 
 def parse_model_quota(name: str, raw) -> dict[str, FreeQuota] | None:
-    """Parse a channel's per-model one-time packs (中国电信 / SCNet style).
+    """Parse a channel's per-model one-time packs (中国电信 style).
 
     Keys are model names — the exposed name or the upstream wire id, resolved
     the same way as `tiers`. Each value is a free_quota object, so every model
@@ -529,7 +529,7 @@ class Channel:
     # Free-tier allowance per upstream model. Explicit channel config wins;
     # otherwise the vendor registry mode supplies the baseline.
     free_quota: FreeQuota | None = None
-    # Per-model one-time packs (中国电信 / SCNet style): each wire model carries
+    # Per-model one-time packs (中国电信 style): each wire model carries
     # its own amount and expiry, so a pack drained on one model never blocks
     # its siblings. A matching entry wins over the channel-wide `free_quota`
     # above; models without one fall back to it.

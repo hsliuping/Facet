@@ -505,26 +505,6 @@
       }
     },
     {
-      "id": "scnet",
-      "name": "国家超算互联网 SCNet",
-      "modes": {
-        "payg": {
-          "label": "一次性试用额度包（账本模式）",
-          "protocol": "openai",
-          "base_url": "https://api.scnet.cn/api/llm/v1",
-          "docs_url": "https://www.scnet.cn/help/docs/mainsite/mass/tutorial/quickstart.html",
-          "keys_url": "https://www.scnet.cn/ui/console/index.html#/llm/apikeys",
-          "models_url": "https://api.scnet.cn/api/llm/v1/models",
-          "free_limits": {
-            "note": "一次性试用包，无剩余额度 API：领取后在渠道编辑器「一次性额度包」登记面额与到期日；Anthropic 兼容端点为 /api/llm/anthropic"
-          },
-          "tier": "free",
-          "free_kind": "one_time",
-          "models": []
-        }
-      }
-    },
-    {
       "id": "google",
       "name": "Google AI Studio",
       "modes": {

@@ -5785,7 +5785,7 @@ function renderModelTierRows() {
   }).join('');
 }
 
-// One-time per-model allowance packs (中国电信 / SCNet style): every row is
+// One-time per-model allowance packs (中国电信 style): every row is
 // model -> {tokens, expires}. Options follow the models textarea like the tier
 // rows; a saved pack whose model left the mapping keeps its row (the stale
 // name stays selectable) so it is visible and removable instead of silently
@@ -6085,7 +6085,6 @@ const GUIDE_SECTIONS = {
   qianfan: '4.10 百度千帆',
   siliconflow: '4.11 硅基流动 SiliconFlow',
   teleai: '4.12 中国电信（teleAI / TokenHub / 息壤）',
-  scnet: '4.13 国家超算互联网 SCNet',
   nvidia: '3.1 NVIDIA NIM——免费层',
   openrouter: '3.2 OpenRouter——免费池',
   anthropic: '5.1 Anthropic 直连',

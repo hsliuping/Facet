@@ -84,7 +84,7 @@
 ## 接下来
 
 - [ ] **桥接渠道恢复**：需要 Claude/Codex coding plan 时跑起对应本地桥（8080/8081，见密钥手册 6.3），渠道改回 enabled；glm-plan 提供智谱 key（User 级 `GLM_PLAN_KEY`）后恢复，并排查 `channel header missing authorization` 是否协议 Header 映射问题（非桥类）
-- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：21 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信、4.13 SCNet 三节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
+- [ ] **密钥手册补图**：用户按 [api-key-guide.md](api-key-guide.md) 实操截图，放入 `docs/images/api-key-guide/`（手册已预置引用，放对文件名即自动显示）；2026-11-22 盘点：20 家厂家已补 18 家共 90 张实拍图，引用与文件一一对应（0 缺失 0 孤儿），正文无遗留截图占位；仅 4.11 硅基流动、4.12 中国电信两节未配图（当初未排截图位，需补先排位）；界面与手册不符处回改手册
 - [ ] **superagent 对接（往后排）**：2026-11-15 讨论降级——产品转向轻量团队版后受众是小团队管理员，agent 舰队叙事不再是产品需求；P0 后半（Router / Worker 分别指定模型）、P1（Worker 档位）、P2（运维 policy）暂缓，DSH 当模型底座的能力已被实测覆盖无需再验；仅保留 P3（吸收三条设计原则到维护层，见 [行动清单](planrouter-superagent-integration.md)），随维护层迭代渐进
 - [x] **正式试用 → 打 tag 发版**（2026-11-27 勘误）：11-23 实际发布的是 v1.0.0b1 **预发布**（GitHub Release / PyPI / Docker Hub 均为 Pre-release 标记）；11-24 定版提交 `12cb535` 才把版本升到 1.0.0、classifier 回 `Production/Stable` 并删除 prerelease 门测试；既有 v1.0.0 tag/Release 仍指向 11-17 旧代码且标着「Beta 预发布」，PyPI 1.0.0 亦为旧版占用——正式版改以 **v1.0.1** 发布（tag 推送触发 CI 出 PyPI / GitHub Release / Docker latest）
 
@@ -113,6 +113,7 @@
 
 | 日期 | 内容 |
 |---|---|
+| 2026-11-27 | 移除 SCNet（国家超算互联网）支持：注册实名赠送 token 仅限其官方客户端、API 无法消耗，判定对网关场景不可用——删除注册表 provider、seed 模板与 cheap 链引用、向导章节映射、密钥手册 4.13 节与总览行，`test_mode_meta`（31 个 mode）与 `test_planrouter_seed` 同步 |
 | 2026-11-27 | 正式版发布链路勘误与重启：仓库事实核对——v1.0.0 tag/Release 指向 11-17 旧代码（a33ad3a）、PyPI 1.0.0 亦为旧版占用且均标 Pre-release，而代码侧 11-24 已定版 1.0.0；正式版改用 **v1.0.1**（pyproject 与 facet / facet.gateway 两处 `__version__` 同步），tag 推送后 release.yml 出 GitHub 正式 Release + PyPI、publish-image.yml 推 Docker `latest`；全量回归 1403 passed + 1 xfailed |
 | 2026-11-25 | 免费与接入模式统一建模批（`8e07fc8`、`2150719`、`37b8b47`，设计定稿 [免费与接入模式统一建模设计.md](免费与接入模式统一建模设计.md) v3）：新建 `mode_meta.py` 作为四类免费口径（one_time/daily/forever/voucher）与接入模式（cred_kind/requires_checkin/quota_capability）的单一分类实现点，KEY_API_FETCHERS / MGMT_WALLET_FETCHERS / CHECKIN_HANDLERS 从 server 下沉同层、消除循环导入；providers.json 32 个 mode 全部显式声明 `free_kind`，modelscope `requires_checkin: true`；`/api/providers` 注入 meta 子对象，免费模型页按四类分组（前端不再自推）；代金券台账完整轮——`FreeQuota` 增 amount/currency 且三选一互斥，moonshot 余额结构化落 `vendorquota.json` 的 `_money` 键，xiaomi/anthropic 走登记面额 + expires 过期门禁，前端额度列现金/代金券分列；免费模型页对齐 free_kinds gate（forever 渠道整层目录回退），设计 §11 完成度清单全闭合 |
 | 2026-11-25 | 控制台与向导批（`76df7d6`、`b4bdf48`、`777aa88`、`73ac4a8`、`eabff89`、`e794c9e`、`966b1d2`）：接入信息页合并工具配置生成与模型名清单、消除三页重复；渠道编辑器目录「试通勾选」（单模型 10 秒超时、8 并发，不可用自动取消勾选并给失败原因）；停用渠道不再误报额度未同步、写入映射丢弃空 auto 行且无落点时自动指向首个试通模型；向导免费档厂家列表置顶智谱 / NVIDIA NIM；向导生成 quickstart 密钥时同步主密钥、仪表板「鉴权」行区分主密钥启用/暂停/未设置三态；四个 fixture 文件显式声明 fallback_unknown 对齐新默认语义 |

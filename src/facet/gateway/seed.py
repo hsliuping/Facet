@@ -69,7 +69,7 @@ def build_seed() -> dict:
                 "models": {"auto": "XingChenAGI/Xing4.0-29B"},
             },
             # One-time allowance packs: vendors with no remaining-quota API
-            # (中国电信 teleAI / 国家超算互联网). The ledger's opening balance
+            # (中国电信 teleAI). The ledger's opening balance
             # is what the operator registered after claiming the grant on the
             # vendor console; expiry, when the vendor states one, goes into
             # each pack. Before enabling, re-check the trial model ids and
@@ -85,19 +85,6 @@ def build_seed() -> dict:
                 "tier": "free",
                 "models": {"auto": "Xing4.0-29B"},
                 "model_quota": {"Xing4.0-29B": {"tokens": 100000000}},
-            },
-            {
-                "name": "scnet",
-                "protocol": "openai",
-                "provider": "scnet",
-                "mode": "payg",
-                "base_url": "https://api.scnet.cn/api/llm/v1",
-                "api_key": "env:SCNET_API_KEY",
-                "enabled": False,
-                "tier": "free",
-                "models": {"auto": "DeepSeek-R1-Distill-Qwen-7B"},
-                "model_quota": {"DeepSeek-R1-Distill-Qwen-7B":
-                                {"tokens": 10000000}},
             },
             {
                 "name": "openai-embeddings",
@@ -143,7 +130,7 @@ def build_seed() -> dict:
             # 包括一次性体验包；将来用户加付费渠道时会排在免费之后。
             {"name": "cheap", "protocol": "openai",
              "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
-                          "siliconflow", "teleai-xing", "scnet", "$free"]},
+                          "siliconflow", "teleai-xing", "$free"]},
             # 纯免费链（facet-free）：只保留长期 0 元模型，不含会用完的体验包。
             {"name": "free", "protocol": "openai",
              "channels": ["nvidia-nim", "google-ai-studio", "z-ai-glm",
@@ -183,5 +170,5 @@ def print_seed_banner(path: str | Path) -> None:
     print("  匿名上游已退役（限速/延迟不实用）：请注册免费 key 并在控制台启用模板渠道，", flush=True)
     print("  或运行「快速开始」向导；免费层模板支持 NVIDIA NIM / Google AI Studio / Z.AI / 硅基流动，", flush=True)
     print("        对应环境变量 NVIDIA_API_KEY / GOOGLE_AI_STUDIO_API_KEY / ZAI_API_KEY / SILICONFLOW_API_KEY", flush=True)
-    print("  另含一次性体验包模板（电信 teleAI / 国家超算 SCNet）与嵌入模板（OpenAI text-embedding-3-small）", flush=True)
+    print("  另含一次性体验包模板（电信 teleAI）与嵌入模板（OpenAI text-embedding-3-small）", flush=True)
     print("  anthropic 协议客户端请启用模板渠道 anthropic-template 并设置 ANTHROPIC_API_KEY（协议不转换）", flush=True)
