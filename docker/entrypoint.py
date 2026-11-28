@@ -65,7 +65,19 @@ def publish_dsh_web() -> None:
     if not host:
         return
     os.environ.setdefault("DSH_WEB_HOST", host)
-    os.environ.setdefault("DSH_WEB_PUBLIC_URL", f"http://127.0.0.1:{port}/")
+    # The advertised URL must be what the *browser* opens: the host's
+    # published address, never the container's own loopback (that is the
+    # previous 127.0.0.1 bug — a remote browser would open its own machine).
+    # DSH_WEB_PUBLIC_HOST names it (domain or host IP); without it the loopback
+    # guess is only correct when the browser runs on the host itself.
+    public_host = os.environ.get("DSH_WEB_PUBLIC_HOST", "").strip()
+    scheme = os.environ.get("DSH_WEB_PUBLIC_SCHEME", "http").strip().lower()
+    if public_host:
+        base = f"{scheme}://{public_host}:{port}/"
+    else:
+        base = f"http://127.0.0.1:{port}/"
+    os.environ.setdefault("DSH_WEB_PUBLIC_URL", base)
+    print(f"[entrypoint] DSH web published at {base}", flush=True)
 
 
 def _seed_admin_key(config: dict) -> dict:

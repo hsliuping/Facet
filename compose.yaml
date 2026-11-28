@@ -42,6 +42,13 @@ services:
       # daily usage buckets) is container-local, so pin it to Beijing time
       # instead of inheriting the image's UTC default.
       TZ: "Asia/Shanghai"
+      # Browser-facing DSH address. The container's own loopback is useless to
+      # a remote browser, so name the published host here — either the full
+      # proxy root (recommended: a nginx prefix-stripping location /dsh/ ->
+      # 127.0.0.1:3081/ on TLS), or DSH_WEB_PUBLIC_HOST=<domain-or-ip> for the
+      # bare http://<host>:3081/ form. Leave unset only when the browser runs
+      # on the same machine as the container.
+      DSH_WEB_PUBLIC_URL: "${DSH_WEB_PUBLIC_URL:-}"
       ROUTER_API_KEY: "${ROUTER_API_KEY:-test-router-key}"
       # Management console key. The gateway has no default password: when this
       # is unset, the entrypoint generates a random admin_key and prints it
