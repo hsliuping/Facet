@@ -54,7 +54,7 @@ class DshProfileTest(unittest.TestCase):
                 "path": "", "bin": "", "version": ""}):
             state = dsh.status()
         self.assertFalse(state["installed"])
-        self.assertIn("同一台电脑", state["note"])
+        self.assertIn("重新安装 Facet", state["note"])
 
     def test_status_explains_a_missing_profile(self):
         with mock.patch.object(dsh, "find_cli", return_value={

@@ -186,12 +186,33 @@ def _package_bin(shim: Path) -> Path | None:
     return None
 
 
+def _bundle_root() -> Path | None:
+    """Windows installer bundle: portable node + @deepseek-ai/dsh inside.
+
+    The installer lays out <install>/node/node.exe and installs the CLI into
+    <install> itself (dsh.cmd + node_modules/@deepseek-ai/dsh), so no system
+    npm install is needed on the target machine. This module sits in
+    <install>/runtime/Lib/site-packages/facet/gateway/, so one walk up finds
+    the bundle root. Containers keep /usr/local/bin/dsh; this lookup never
+    matches there (no node/node.exe under /usr/local).
+    """
+    for parent in Path(__file__).resolve().parents:
+        if ((parent / "node" / "node.exe").is_file()
+                and (parent / "node_modules" / "@deepseek-ai" / "dsh"
+                     / "lib" / "bin.js").is_file()):
+            return parent
+    return None
+
+
 def find_cli() -> dict:
     """Return {"path", "bin", "version"}; path is the shim, bin the JS entry."""
     candidates: list[Path] = []
     override = os.environ.get("DSH_CLI")
     if override:
         candidates.append(Path(override))
+    bundle = _bundle_root()
+    if bundle:
+        candidates.append(bundle / ("dsh.cmd" if sys.platform == "win32" else "dsh"))
     which = shutil.which("dsh")
     if which:
         candidates.append(Path(which))
@@ -217,6 +238,11 @@ def find_cli() -> dict:
 
 
 def _node() -> str:
+    bundle = _bundle_root()
+    if bundle:
+        bundled = bundle / "node" / "node.exe"
+        if bundled.is_file():
+            return str(bundled)
     return shutil.which("node") or ""
 
 
@@ -620,9 +646,8 @@ def status(profile: str = WEB_PROFILE) -> dict:
                 state["url"] = entry.get("url") or ""
                 state["pid"] = entry["proc"].pid
     if not state["installed"]:
-        state["note"] = ("未找到 dsh 命令：DSH 是独立客户端，需与网关装在同一台电脑"
-                         "（npm install -g @deepseek-ai/dsh），装好后刷新本页；"
-                         "容器部署没有该客户端。")
+        state["note"] = ("未找到 dsh 命令：DSH 客户端缺失或损坏，重新安装 Facet 即可恢复"
+                         "（也可手动 npm install -g @deepseek-ai/dsh）；容器部署没有该客户端。")
     elif not state["profile_exists"]:
         state["note"] = (f"DSH 还没有配置档案 {profile}：点「启动 DSH」会自动创建"
                          f"并指向本网关，无需手动设置。")

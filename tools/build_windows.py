@@ -59,6 +59,14 @@ INNO_SEARCH = [
     Path(r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe"),
     Path(r"C:\Program Files\Inno Setup 7\ISCC.exe"),
 ]
+# DSH CLI bundled into the installer so 启动 DSH works on machines that never
+# installed node (the Docker counterpart ships the same two in the image).
+# dsh's engines field wants >=24.9.0, and its lib/bin.js entry relies on
+# `import.meta.main` (added in node 24.2.0 / 22.18.0) — older node exits
+# silently, which used to make the bundled CLI a no-op. Pin a current 24.x.
+DSH_VERSION = "0.2.2-rc.1"
+NODE_VERSION = "24.22.3"
+NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-win-x64.zip"
 
 
 def log(step: str, detail: str = "") -> None:
@@ -201,6 +209,50 @@ def copy_app_files(icon: Path) -> None:
     log("app files", "gateway + tray + data dir")
 
 
+def _node_version_ok(node: Path) -> bool:
+    """Match the extracted node against NODE_VERSION, so a version bump in
+    this script never keeps serving a stale directory (node.exe alone exists)."""
+    if not (node / "node.exe").is_file():
+        return False
+    result = subprocess.run([str(node / "node.exe"), "--version"],
+                            capture_output=True, text=True)
+    return result.returncode == 0 and result.stdout.strip() == f"v{NODE_VERSION}"
+
+
+def prepare_dsh() -> None:
+    """Bundle a portable Node plus the @deepseek-ai/dsh CLI.
+
+    The Dockerfile installs both into the image; without this the installer
+    would leave 启动 DSH dead on every machine without a system node. npm with
+    -g --prefix writes dsh.cmd at the bundle root and the package under
+    node_modules/, exactly the layout dsh.py's _bundle_root looks for.
+    """
+    node = APP / "node"
+    package = APP / "node_modules" / "@deepseek-ai" / "dsh" / "package.json"
+    archive = download(NODE_URL, CACHE / f"node-v{NODE_VERSION}-win-x64.zip")
+    if not _node_version_ok(node):
+        if node.is_dir():
+            shutil.rmtree(node)
+        node.mkdir(parents=True)
+        prefix = f"node-v{NODE_VERSION}-win-x64/"
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                if not info.filename.startswith(prefix) or info.is_dir():
+                    continue
+                target = node / info.filename[len(prefix):]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with open(target, "wb") as out:
+                    shutil.copyfileobj(zf.open(info), out)
+        log("dsh node", f"portable CPython-free node {NODE_VERSION} at {node.relative_to(ROOT)}")
+    run([str(node / "node.exe"),
+         str(node / "node_modules" / "npm" / "bin" / "npm-cli.js"),
+         "install", "-g", "--prefix", str(APP),
+         f"@deepseek-ai/dsh@{DSH_VERSION}"])
+    if not package.is_file():
+        raise SystemExit(f"dsh bundle incomplete: {package} missing")
+    log("dsh", f"@deepseek-ai/dsh {DSH_VERSION} bundled at {APP.relative_to(ROOT)}")
+
+
 def iscc() -> Path | None:
     for candidate in INNO_SEARCH:
         if candidate.is_file():
@@ -272,6 +324,7 @@ def main() -> int:
         install_project()
     icon = make_icon()
     copy_app_files(icon)
+    prepare_dsh()
     size = sum(p.stat().st_size for p in APP.rglob("*") if p.is_file())
     log("bundle", f"{size / 1024 ** 2:.0f} MB at {APP}")
 
