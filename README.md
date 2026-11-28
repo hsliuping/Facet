@@ -144,6 +144,9 @@ docker run -d --name facet -p 8787:8787 \
 - 首次启动自动种子化厂家预置渠道（均为禁用态，填 Key 后启用）；未设置
   `ROUTER_ADMIN_KEY` 时随机生成管理密钥，只在日志打印一次（`docker logs facet`），
   登录后到「管理密钥」修改。
+<!-- ledger-stats:start -->
+  预置渠道 **15** 个（其中 **12 个**带免费额度），由 ledger/ 自动生成（tools/ledger/gen_seed.py，2026-11-28T09:41:53+08:00）。
+<!-- ledger-stats:end -->
 - 镜像 tag：`:latest` 跟随最新正式版；`:1.0.4` 锁定当前版本。
 
 ### 仓库 compose（自带 mock 上游，开箱冒烟）

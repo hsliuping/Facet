@@ -16,6 +16,7 @@ JSON Schema 表达不了的跨文件引用由这里补：
   * 日期字段须是真实日历日期且带时区（2026-02-30、缺时区时间戳拒绝）
     —— schema 的 format 关键字在裸 jsonschema 下不生效（可选库未装时不校验），
        所以真实日期在这里后置检查，不依赖 format checker。
+  * 核实超 90 天的条目打「待复核」警告（stale_entries，警告级不阻断）。
 
 退出码非 0 即有错误（CI 拦住提交）。
 """
@@ -26,7 +27,7 @@ import copy
 import json
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -170,6 +171,50 @@ def validate_ledger(ledger_dir: Path) -> list[str]:
                         )
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# 待复核：核实超过 90 天的条目（警告级，不阻断提交）
+# ---------------------------------------------------------------------------
+
+STALE_DAYS = 90
+
+
+def stale_entries(ledger_dir: Path, days: int = STALE_DAYS,
+                  now: datetime | None = None) -> list[str]:
+    """返回核实时间超过 days 天的条目（vendor/activity），供人工复核。
+
+    只统计 status=active 的厂家；日期已由 validate_ledger 保证合法且带时区，
+    这里解析失败直接跳过（结构错误交给 validate_ledger 报）。
+    """
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    warnings: list[str] = []
+    for dirname, kind in (("vendors", "厂家"), ("activities", "活动")):
+        directory = ledger_dir / dirname
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.json")):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if kind == "厂家" and doc.get("status", "active") != "active":
+                continue
+            checked = doc.get("verified_at")
+            if not isinstance(checked, str):
+                continue
+            try:
+                parsed = datetime.fromisoformat(checked.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                continue
+            if (now - parsed).days > days:
+                warnings.append(
+                    f"{dirname}/{path.name}: 核实于 {checked}，已超 {days} 天"
+                    f"——待复核（{doc.get('name') or doc.get('title') or doc.get('id')}）"
+                )
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +410,41 @@ def _selftest() -> bool:
     expect("sources-ghost-vendor", {"sources": src},
            valid=False, needle="不存在的厂家")
 
+    # 待复核：核实超 90 天的厂家/活动出警告（警告级，不进 errors）
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _build_case(Path(tmp), schema_doc, {})
+        old_verified = "2026-08-20T12:00:00+08:00"  # 早于基准日满 100 天
+        old_vendor = copy.deepcopy(GOOD_VENDOR)
+        old_vendor["verified_at"] = old_verified
+        (root / "vendors" / "acme.json").write_text(
+            _dump(old_vendor), encoding="utf-8")
+        old_act = copy.deepcopy(GOOD_ACTIVITY)
+        old_act["verified_at"] = old_verified
+        (root / "activities" / "act-20261127-acme-launch.json").write_text(
+            _dump(old_act), encoding="utf-8")
+        warnings = stale_entries(
+            root, now=datetime(2026, 11, 28, tzinfo=timezone(timedelta(hours=8))))
+        if len(warnings) == 2 and all("待复核" in w for w in warnings):
+            print("ok   stale-entries-90d")
+        else:
+            print(f"FAIL stale-entries-90d: {warnings}")
+            ok = False
+        # 同一账本换个基准日（核实都未满 90 天）→ 无警告
+        fresh = stale_entries(
+            root, now=datetime(2026, 9, 1, tzinfo=timezone(timedelta(hours=8))))
+        if not fresh:
+            print("ok   stale-entries-fresh")
+        else:
+            print(f"FAIL stale-entries-fresh: {fresh}")
+            ok = False
+        # 警告不进 errors：validate_ledger 依旧零错误
+        errors = validate_ledger(root)
+        if not errors:
+            print("ok   stale-not-blocking")
+        else:
+            print(f"FAIL stale-not-blocking: {errors}")
+            ok = False
+
     return ok
 
 
@@ -389,6 +469,11 @@ def main() -> int:
             print(f"  - {e}")
         return 1
     print(f"账本校验通过：{args.ledger}")
+    warnings = stale_entries(args.ledger.resolve())
+    if warnings:
+        print(f"待复核警告（{len(warnings)} 条，核实超 {STALE_DAYS} 天，不阻断）：")
+        for w in warnings:
+            print(f"  - {w}")
     return 0
 
 

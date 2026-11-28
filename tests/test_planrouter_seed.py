@@ -15,45 +15,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from facet.gateway.cli import main
 from facet.gateway.core import load_config, parse_config
-from facet.gateway.seed import (build_seed, print_seed_banner, write_seed)
+from facet.gateway.seed import (build_seed, load_seed_channels,
+                                print_seed_banner, write_seed)
 
 
 class SeedConfigTests(unittest.TestCase):
     def test_seed_is_a_valid_config(self):
         config = parse_config(build_seed())
+        generated = load_seed_channels()
+        generated_names = {c["name"] for c in generated["channels"]}
         by_name = {c.name: c for c in config.channels}
+        # 渠道 = 账本生成的渠道 + 两个协议占位渠道，无多余、无缺失
         self.assertEqual(
             {c.name for c in config.channels},
-            {"nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow",
-             "teleai-xing", "anthropic-template", "openai-embeddings"},
+            generated_names | {"anthropic-template", "openai-embeddings"},
         )
-        for name in ("nvidia-nim", "google-ai-studio",
-                     "z-ai-glm", "siliconflow", "teleai-xing",
-                     "anthropic-template", "openai-embeddings"):
+        for name in sorted(generated_names | {
+                "anthropic-template", "openai-embeddings"}):
             self.assertFalse(by_name[name].enabled, name)
-        # one-time allowance packs survive the config round-trip
-        xing = by_name["teleai-xing"].model_quota["Xing4.1-Preview"]
+        # 生成渠道的结构不变量：env 形态 key、合法 tier、models.auto 有值
+        for doc in generated["channels"]:
+            self.assertTrue(doc["api_key"].startswith("env:"), doc["name"])
+            channel = by_name[doc["name"]]
+            self.assertIn(channel.tier, ("free", "paid"), doc["name"])
+            self.assertIsNotNone(channel.models.get("auto"), doc["name"])
+        # 真实账本锚点：teleai 开库余额 11 亿（per_model 1 亿 + 活动包 10 亿）
+        xing = by_name["teleai"].model_quota["xing4.1-preview"]
         self.assertEqual(xing.tokens, 1100000000)
         self.assertEqual(xing.period, "total")
-        self.assertEqual(config.routes["openai:default"].channels,
-                         ("nvidia-nim", "siliconflow"))
-        self.assertEqual(config.routes["anthropic:default"].channels,
-                         ("anthropic-template",))
-        # 与测试环境一致的 5 条默认路由链：facet-cheap / facet-free /
-        # facet-embedding 这些品牌模型名首启就该有真实落点，而不是回落到 default。
+        # 路由链与生成数据一致；embedding / anthropic 走协议占位渠道。
+        # parse_config 已把 $free 宏展开（种子渠道全部未启用时展开为空）。
         self.assertEqual(
             sorted(config.routes),
             ["anthropic:default", "openai:cheap", "openai:default",
              "openai:embedding", "openai:free"])
-        self.assertEqual(
-            config.routes["openai:cheap"].channels,
-            ("nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow",
-             "teleai-xing"))
-        self.assertEqual(
-            config.routes["openai:free"].channels,
-            ("nvidia-nim", "google-ai-studio", "z-ai-glm", "siliconflow"))
+        for route_name in ("default", "cheap", "free"):
+            expected = tuple(n for n in generated["routes"][route_name]
+                             if n != "$free")
+            self.assertEqual(
+                config.routes[f"openai:{route_name}"].channels, expected)
+        self.assertEqual(config.routes["anthropic:default"].channels,
+                         ("anthropic-template",))
         self.assertEqual(config.routes["openai:embedding"].channels,
                          ("openai-embeddings",))
+        # 结构不变量：free 链上除 $free 外全是 tier=free 渠道
+        free_names = [c.name for c in config.channels
+                      if c.name in config.routes["openai:free"].channels
+                      and c.name != "$free"]
+        self.assertTrue(free_names)
+        for name in free_names:
+            self.assertEqual(by_name[name].tier, "free", name)
         # 控制台「模型接入」页从 raw 配置读 models.branded：种子显式写出，
         # 新装的机器上这页才有名字→链映射，而不是只有兜底文案。
         seed = build_seed()

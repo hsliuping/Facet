@@ -642,6 +642,21 @@
       "id": "commandcode",
       "name": "Command Code",
       "modes": {
+        "payg": {
+          "label": "按量付费",
+          "protocol": "openai",
+          "base_url": "https://api.commandcode.ai/provider/v1",
+          "docs_url": "https://docs.commandcode.ai",
+          "keys_url": "https://commandcode.ai/settings/keys",
+          "models_url": "https://api.commandcode.ai/provider/v1/models",
+          "tier": "free",
+          "free_kind": "daily",
+          "models": [],
+          "free_limits": {
+            "rpd": 1000,
+            "note": "免费档约 1,000 请求/天，注册即用"
+          }
+        },
         "agent": {
           "label": "套餐 API",
           "protocol": "openai",

@@ -48,7 +48,7 @@ facet = [
     "data/model-scores.json",
     "data/model-coverage.json",
 ]
-"facet.gateway" = ["static/*", "providers.json"]
+"facet.gateway" = ["static/*", "providers.json", "seed_channels.json"]
 
 [tool.pytest.ini_options]
 # src 布局：pytest 不会自动发现 src 下的包，本地历来靠 $env:PYTHONPATH=src
