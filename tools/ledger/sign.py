@@ -27,7 +27,7 @@ except ImportError:
     print("需要 cryptography 库：python -m pip install cryptography", file=sys.stderr)
     sys.exit(2)
 
-PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEA2rFXMAXI5WRc1V86g8WEdiBGrvSVYkI9PeiXEjlQSDI="
+PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEA9t6kEpGgIvqNuFYqesO1gpN9miM51hxf6lzOn9LRjik="
 SIGNED_FILES = ["registry.json", "intel.json"]
 
 

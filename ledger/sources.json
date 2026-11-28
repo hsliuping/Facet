@@ -26,6 +26,21 @@
       "parser": "dom"
     },
     {
+      "vendor": "siliconflow",
+      "url": "https://docs.siliconflow.cn/docs/userguide/faqs/rate-limit-and-upgradation",
+      "parser": "dom"
+    },
+    {
+      "vendor": "siliconflow",
+      "url": "https://docs.siliconflow.cn/docs/userguide/faqs/misc_finance",
+      "parser": "dom"
+    },
+    {
+      "vendor": "siliconflow",
+      "url": "https://docs.siliconflow.cn/docs/release-notes/overview",
+      "parser": "dom"
+    },
+    {
       "vendor": "hunyuan",
       "url": "https://cloud.tencent.com/document/product/1823/130060",
       "parser": "dom"
@@ -68,6 +83,11 @@
     {
       "vendor": "openrouter",
       "url": "https://openrouter.ai/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "openrouter",
+      "url": "https://openrouter.ai/pricing",
       "parser": "dom"
     },
     {
@@ -130,7 +150,7 @@
     {
       "vendor": "siliconflow",
       "url": "https://api.siliconflow.cn/v1/models",
-      "needs_key": false
+      "needs_key": true
     },
     {
       "vendor": "hunyuan",
