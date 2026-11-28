@@ -85,6 +85,14 @@ const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
+// 大数字自动换单位：≥1e9 显示 B、≥1e6 显示 M，小数尾零去掉（1,125,149,609 → 1.13B）。
+// 精确值交给调用方放进 title 提示，卡片显示紧凑值。
+const fmtBig = (n) => {
+  const abs = Math.abs(Number(n) || 0);
+  if (abs >= 1e9) return ((n / 1e9).toFixed(2).replace(/\.?0+$/, '')) + 'B';
+  if (abs >= 1e6) return ((n / 1e6).toFixed(2).replace(/\.?0+$/, '')) + 'M';
+  return n.toLocaleString();
+};
 
 // Compact number for vendor quota cells: 1234567.5 -> "1,234,567.5".
 const fmtNum = (v) => (v === null || v === undefined || isNaN(Number(v)))
@@ -1045,7 +1053,7 @@ function renderSummary() {
     ['<span title="启用且已配 Key、未冷却未停用；未配 Key 的模板渠道不算">可用渠道</span>', usable, usable ? 'ok' : ''],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests.toLocaleString(), ''],
-    ['累计 Tokens', tokens.toLocaleString(), ''],
+    ['累计 Tokens<span title="精确 ' + tokens.toLocaleString() + '">', fmtBig(tokens), ''],
     ['监听地址', listen, ''],
   ];
   $('summary').innerHTML = items.map(([label, value, cls]) =>
@@ -1626,7 +1634,7 @@ function renderDashboard() {
       freeUsable ? 'ok' : (freeSummary.models ? 'warn' : '')],
     ['冷却中', cooling, cooling ? 'warn' : ''],
     ['累计请求', requests.toLocaleString(), ''],
-    ['累计 Tokens', tokens.toLocaleString(), ''],
+    ['累计 Tokens<span title="精确 ' + tokens.toLocaleString() + '">', fmtBig(tokens), ''],
     ['月度成本', cost, ''],
     ['即将到期', counts.expiring ?? 0, counts.expiring ? 'warn' : ''],
   ];
