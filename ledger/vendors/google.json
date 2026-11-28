@@ -1,0 +1,29 @@
+{
+  "id": "google",
+  "name": "Google AI Studio",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://generativelanguage.googleapis.com/v1beta/openai"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "gemini-3.5-flash-lite",
+      "tier": "free"
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "tier": "paid"
+    }
+  ],
+  "notes": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天（速率限制，非 token 额度）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://ai.google.dev/pricing"
+  ]
+}

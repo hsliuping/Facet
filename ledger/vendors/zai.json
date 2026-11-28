@@ -1,0 +1,33 @@
+{
+  "id": "zai",
+  "name": "Z.AI（智谱海外）",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://api.z.ai/api/paas/v4"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "glm-4.7-flash",
+      "tier": "free"
+    },
+    {
+      "id": "glm-4.5-flash",
+      "tier": "free"
+    },
+    {
+      "id": "glm-4.6v-flash",
+      "tier": "free"
+    }
+  ],
+  "notes": "GLM Flash 系列完全免费；GLM Coding Plan $18 起",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.z.ai/devpack/overview"
+  ]
+}

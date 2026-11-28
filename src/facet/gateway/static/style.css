@@ -766,3 +766,19 @@ select.auto-model { background: var(--bg); color: var(--text); border: 1px solid
 .source-badge.aggregator { border-style: dashed; }
 .compare-channels { margin-top: 14px; }
 .compare-channels .tag { margin: 0 6px 6px 0; }
+
+/* 消息页：中心同步消息列表（设计 3.7.1） */
+.msg-item {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin: 8px 0;
+  background: var(--panel-2, rgba(255, 255, 255, .02));
+}
+.msg-item.unread { border-color: var(--accent); }
+.msg-head { display: flex; align-items: center; gap: 10px; }
+.msg-head .tag { margin-left: auto; }
+.msg-head .tag.withdrawn { margin-left: 0; background: rgba(220, 38, 38, .15); color: #f87171; border-color: rgba(220, 38, 38, .4); }
+.msg-body { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+.msg-actions { display: flex; gap: 8px; margin-top: 8px; }
+.msg-actions .btn { text-decoration: none; }
+.center-toggle { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+#messages-list .kv input.filter-input { width: 60%; max-width: 420px; }

@@ -1,0 +1,25 @@
+{
+  "id": "modelscope",
+  "name": "魔搭 ModelScope",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api-inference.modelscope.cn/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "Qwen/Qwen3-235B-A22B",
+      "tier": "free"
+    }
+  ],
+  "notes": "免费靠魔粒抵扣：每日登录领 250 魔粒（约 250–500 次调用，当日有效），需绑定阿里云账号；模型清单以控制台为准",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://modelscope.cn/docs"
+  ]
+}

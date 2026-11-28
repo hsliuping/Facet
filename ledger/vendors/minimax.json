@@ -1,0 +1,25 @@
+{
+  "id": "minimax",
+  "name": "MiniMax",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api.minimax.cn/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "minimax-m3",
+      "tier": "paid"
+    }
+  ],
+  "notes": "无免费额度",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://www.minimaxi.com/document/Price"
+  ]
+}

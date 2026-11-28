@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ledger/schema.json",
+  "title": "Facet 情报账本结构定义",
+  "description": "M1 唯一数据源的结构契约（设计文档 3.1–3.5）。改动结构必须升 version；客户端与中心遇到未知字段一律忽略不报错（设计文档 3.6 / 5.2）。跨文件引用（活动引用厂家、changelog 引用活动）由 validate.py 校验，JSON Schema 表达不了。",
+  "version": 1,
+
+  "$defs": {
+    "vendorId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "小写字母/数字/连字符，同时是 vendors/<id>.json 的文件名"
+    },
+    "activityId": {
+      "type": "string",
+      "pattern": "^act-\\d{8}-[a-z0-9-]+$",
+      "description": "act-<发现日 YYYYMMDD>-<厂家 slug>-<短标识>"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "YYYY-MM-DD；null 表示不限期"
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 带时区，统一 +08:00"
+    },
+    "source": {
+      "type": "string",
+      "description": "来源说明：URL、user-screenshot、user-submission#12 等"
+    },
+
+    "vendor": {
+      "type": "object",
+      "description": "vendors/<id>.json（设计文档 3.2）",
+      "required": ["id", "name", "region", "endpoints", "auth", "free_quota", "models", "verified_at", "sources"],
+      "properties": {
+        "id": { "$ref": "#/$defs/vendorId" },
+        "name": { "type": "string", "description": "展示名，如「电信 teleAI」" },
+        "region": { "enum": ["cn", "global"], "description": "国内/海外，决定 L3 搜索通道与文案语言" },
+        "endpoints": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "协议名 → base_url。至少一个；协议名取 openai / anthropic 等",
+          "additionalProperties": { "type": "string", "format": "uri" }
+        },
+        "auth": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["bearer", "api_key", "oauth2", "none"], "description": "现有预置渠道只出现 bearer / api_key" }
+          }
+        },
+        "free_quota": {
+          "type": "object",
+          "description": "长驻额度。无免费额度的厂家给空对象",
+          "properties": {
+            "per_model": {
+              "type": "object",
+              "description": "模型 id → { tokens, expires }。只有免费模型才出现",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["tokens", "expires"],
+                "properties": {
+                  "tokens": { "type": "integer", "minimum": 0, "description": "名义额度 tokens；实到因账户而异，推送文案须写明条件" },
+                  "expires": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }
+                }
+              }
+            }
+          }
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "tier"],
+            "properties": {
+              "id": { "type": "string", "description": "上游真实模型 id，如 xing4.1-preview（实证口径，不抄文档笔误）" },
+              "tier": { "enum": ["free", "paid", "preview"], "description": "免费/付费/预览，决定总览与推荐排序" },
+              "context": { "type": "integer", "minimum": 1, "description": "上下文长度；厂家未公布时省略" }
+            }
+          }
+        },
+        "notes": { "type": "string", "description": "限流、领取条件等人读备注" },
+        "status": { "enum": ["active", "deprecated"], "description": "已下线厂家标 deprecated，客户端标记提醒不删除（设计文档 3.7）" },
+        "verified_at": { "$ref": "#/$defs/dateTime", "description": "最后一次人工核对时间；超过 90 天标「待复核」（设计文档 10 节）" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/source" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "activity": {
+      "type": "object",
+      "description": "activities/<id>.json（设计文档 3.3）。「新活动」与「长驻额度」分开存：活动有时效、有领取动作，需单独推送",
+      "required": ["id", "vendor", "title", "grant", "window", "action", "status", "discovered_at", "sources"],
+      "properties": {
+        "id": { "$ref": "#/$defs/activityId" },
+        "vendor": { "$ref": "#/$defs/vendorId", "description": "必须指向已存在的厂家（validate.py 跨文件校验）" },
+        "title": { "type": "string" },
+        "grant": {
+          "type": "object",
+          "description": "优惠力度统一口径（设计文档 3.6）。effective_tokens 由 render 计算，不落盘",
+          "required": ["type", "model", "tokens"],
+          "properties": {
+            "type": { "enum": ["per_model", "activity_package"], "description": "新模式 = 新增枚举 + version 升版（设计文档 3.6「模式即 schema 枚举进化」）" },
+            "model": { "type": "string", "description": "适用模型；全平台通用活动时填 vendor 级标识" },
+            "tokens": { "type": "integer", "minimum": 1 },
+            "rpm": { "type": "integer", "minimum": 1, "description": "限流 RPM；无限期不限时省略" },
+            "tpm": { "type": "integer", "minimum": 1, "description": "限流 TPM" },
+            "conditions": { "type": "string", "description": "领取条件（实名/新户/限地区…）" },
+            "method": { "type": "string", "description": "领取方式一句话，对应 action 的展开" }
+          },
+          "additionalProperties": false
+        },
+        "window": {
+          "type": "object",
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "$ref": "#/$defs/date" },
+            "end": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }], "description": "null = 长期有效" }
+          },
+          "additionalProperties": false
+        },
+        "action": { "type": "string", "description": "领取动作，如「控制台 → 资源包 → 0 元购买」" },
+        "status": {
+          "enum": ["discovered", "verifying", "verified", "published", "expired", "retracted"],
+          "description": "生命周期（设计文档 3.6 状态机）：discovered → verifying → verified → published → expiring → expired；不符即 retracted"
+        },
+        "discovered_at": { "$ref": "#/$defs/dateTime" },
+        "verified_at": { "anyOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] },
+        "published_at": { "anyOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] },
+        "retracted_reason": { "type": "string", "description": "撤回原因；撤回时向已收到该情报的客户端下发更正（设计文档 10 节）" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "evidence": { "type": "string", "description": "证据文件相对路径（截图/文章链接），必填于 discovered 转 verified" }
+      },
+      "additionalProperties": false
+    },
+
+    "changelog_entry": {
+      "type": "object",
+      "description": "changelog.jsonl 每行一条（设计文档 3.4）：③ 模板同步与周报的唯一依据",
+      "required": ["ts", "vendor", "kind", "field"],
+      "properties": {
+        "ts": { "$ref": "#/$defs/dateTime" },
+        "vendor": { "$ref": "#/$defs/vendorId" },
+        "kind": {
+          "enum": ["vendor_added", "vendor_removed", "model_added", "model_removed",
+                   "quota_changed", "endpoint_changed", "activity_added", "vendor_deprecated"],
+          "description": "变更类型枚举"
+        },
+        "field": { "type": "string", "description": "点分路径，如 free_quota.per_model.xing4.1-preview.tokens" },
+        "from": { "description": "旧值，数字/字符串/null 皆可" },
+        "to": { "description": "新值，数字/字符串/null 皆可" },
+        "ref": { "anyOf": [{ "$ref": "#/$defs/activityId" }, { "type": "null" }], "description": "关联活动 id；非活动类变更为 null" }
+      },
+      "additionalProperties": false
+    },
+
+    "sources_file": {
+      "type": "object",
+      "description": "sources.json（设计文档 3.1）：采集源清单",
+      "required": ["announcement_pages", "probe_endpoints"],
+      "properties": {
+        "announcement_pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["vendor", "url"],
+            "properties": {
+              "vendor": { "$ref": "#/$defs/vendorId" },
+              "url": { "type": "string", "format": "uri" },
+              "parser": { "enum": ["dom", "vlm"], "description": "dom = HTML 文本提取；vlm = 横幅图读图（设计文档 3.6 L2）" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "probe_endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["vendor", "url"],
+            "properties": {
+              "vendor": { "$ref": "#/$defs/vendorId" },
+              "url": { "type": "string", "format": "uri" },
+              "needs_key": { "type": "boolean", "description": "true = 额度接口，需运营者账号（设计文档 3.6 L1 已决）" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

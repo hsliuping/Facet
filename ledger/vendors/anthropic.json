@@ -1,0 +1,29 @@
+{
+  "id": "anthropic",
+  "name": "Anthropic 直连",
+  "region": "global",
+  "endpoints": {
+    "anthropic": "https://api.anthropic.com"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "claude-haiku-4-5",
+      "tier": "paid"
+    },
+    {
+      "id": "claude-opus-4-6",
+      "tier": "paid"
+    }
+  ],
+  "notes": "新账号一次性 $5 试用额度（15 天内用完）；Max/Ultra 订阅绑 Console 每月送 API credits",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.anthropic.com/en/docs/about-lambda/pricing"
+  ]
+}

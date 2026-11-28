@@ -1,0 +1,24 @@
+{
+  "id": "act-20261127-teleai-0yuan",
+  "vendor": "teleai",
+  "title": "teleAI Xing4.1-Preview 0 元购资源包（10 亿 tokens）",
+  "grant": {
+    "type": "activity_package",
+    "model": "xing4.1-preview",
+    "tokens": 1000000000,
+    "method": "控制台 0 元购买"
+  },
+  "window": {
+    "start": "2026-11-27",
+    "end": "2026-12-27"
+  },
+  "action": "控制台 → 一次性额度包 → 0 元购买（Xing4.1-Preview 专用）",
+  "status": "verified",
+  "discovered_at": "2026-11-27T12:00:00+08:00",
+  "verified_at": "2026-11-27T14:00:00+08:00",
+  "sources": [
+    "https://www.teleai.com.cn/product/teleagent",
+    "https://www.ctyun.cn/document/11085484/11085932"
+  ],
+  "evidence": "免费额度总览.md（2026-11-27 控制台实领确认）"
+}

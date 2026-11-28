@@ -1,0 +1,207 @@
+{
+  "id": "hunyuan",
+  "name": "腾讯元宝（混元）",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://tokenhub.tencentmaas.com/plan/v3"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {
+      "hunyuan-a13b": {
+        "tokens": 1000000,
+        "expires": null
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "hunyuan-a13b",
+      "tier": "paid"
+    },
+    {
+      "id": "hy4-flash",
+      "tier": "free"
+    },
+    {
+      "id": "hy4",
+      "tier": "free"
+    },
+    {
+      "id": "hy4-preview",
+      "tier": "free"
+    },
+    {
+      "id": "hy3",
+      "tier": "free"
+    },
+    {
+      "id": "hy-mt2-pro",
+      "tier": "free"
+    },
+    {
+      "id": "hy-mt2-plus",
+      "tier": "free"
+    },
+    {
+      "id": "hy-mt2-lite",
+      "tier": "free"
+    },
+    {
+      "id": "hunyuan-role-latest",
+      "tier": "free"
+    },
+    {
+      "id": "hy-role",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-flash",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4-flash-202605",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4-pro-202606",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4.1-flash-1017",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "tier": "free"
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "tier": "free"
+    },
+    {
+      "id": "glm-5.3-flash",
+      "tier": "free"
+    },
+    {
+      "id": "glm-5.3-flashx",
+      "tier": "free"
+    },
+    {
+      "id": "glm-5.3",
+      "tier": "free"
+    },
+    {
+      "id": "glm-5.2",
+      "tier": "free"
+    },
+    {
+      "id": "glm-5v-turbo",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k2.7-code-highspeed",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k3.1-pro-highspeed",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k3.1-pro",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k3",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k2.8-preview",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "tier": "free"
+    },
+    {
+      "id": "kimi-k2.6",
+      "tier": "free"
+    },
+    {
+      "id": "minimax-m3.1-flash",
+      "tier": "free"
+    },
+    {
+      "id": "minimax-m3",
+      "tier": "free"
+    },
+    {
+      "id": "minimax-m2.7",
+      "tier": "free"
+    },
+    {
+      "id": "mimo-v2.6-pro",
+      "tier": "free"
+    },
+    {
+      "id": "mimo-v2.6-flash",
+      "tier": "free"
+    },
+    {
+      "id": "mimo-v2.5-pro",
+      "tier": "free"
+    },
+    {
+      "id": "step-5-preview",
+      "tier": "free"
+    },
+    {
+      "id": "youtu-vita",
+      "tier": "free"
+    },
+    {
+      "id": "hy-vision-2.0-instruct",
+      "tier": "free"
+    },
+    {
+      "id": "hunyuan-t1-vision-20250916",
+      "tier": "free"
+    },
+    {
+      "id": "hunyuan-turbos-vision-video-20250728",
+      "tier": "free"
+    }
+  ],
+  "notes": "开通即送 100 万 tokens（8 款模型共享，1 年）；TokenHub 新人体验包覆盖 34 个语言/多模态模型 × 100 万/模型（1 年，2026-12-31 前领，清单以控制台为准）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://cloud.tencent.com/document/product/1823/130060",
+    "https://cloud.tencent.com/document/product/1729/97732"
+  ]
+}

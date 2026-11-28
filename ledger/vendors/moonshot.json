@@ -1,0 +1,25 @@
+{
+  "id": "moonshot",
+  "name": "Kimi",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api.moonshot.cn/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "kimi-k3.1-pro",
+      "tier": "paid"
+    }
+  ],
+  "notes": "注册实名赠 ¥15 代金券（3 个月内用完，仅按量抵扣）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://platform.moonshot.cn/docs/pricing"
+  ]
+}

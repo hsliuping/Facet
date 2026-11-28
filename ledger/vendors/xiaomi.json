@@ -1,0 +1,25 @@
+{
+  "id": "xiaomi",
+  "name": "小米 MiMo",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api.xiaomimimo.com/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "mimo-v2.6-pro",
+      "tier": "paid"
+    }
+  ],
+  "notes": "大陆新用户实名赠 ¥10 体验金（40 天）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://mimo.xiaomi.com/docs/zh-CN/pricing"
+  ]
+}

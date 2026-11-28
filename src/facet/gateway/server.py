@@ -55,6 +55,8 @@ from .core import (
 )
 from .keys import KeyStore
 from .notifier import ReminderService
+from .center import CenterClient
+from .. import __version__
 from .persistence import StatePersistence
 from .probe import (MAX_CHANNELS, TEST_TIMEOUT, is_free_model, pick_model,
                     pick_probe_model, probe_channel, probe_models)
@@ -1317,6 +1319,23 @@ class App:
             on_write_error=self._note_write_failure,
             on_write_ok=self._note_write_ok,
         ) if notifications_file else None
+        # 中心服务客户端：同步注册表/情报、更新检查、心跳、预填、消息中心。
+        # center.json（设置）与 center.state.json（状态/缓存）放在配置目录；
+        # 无配置文件（如测试直接构造 App）时不启用，客户端相关功能整体
+        # 降级为"未配置中心"。
+        if self.config_path:
+            self.center = CenterClient(
+                self.config_path.parent / "center.json",
+                self.config_path.parent / "center.state.json",
+                config_path=self.config_path,
+                get_raw=lambda: self.raw,
+                apply_config=lambda raw: self.apply_config(raw, persist=True),
+                get_webhook=lambda: self.subscription_settings,
+                version=__version__,
+                log=self._note_center,
+            )
+        else:
+            self.center = None
         self.audit = RequestLog(audit_file) if audit_file else None
         # Member keys for small-team attribution; absent file -> no members,
         # and the gateway behaves exactly as before.
@@ -1394,6 +1413,17 @@ class App:
     def log_request(self, **fields) -> None:
         if self.audit:
             self.audit.record(**fields)
+        # 诊断计数（T4.3）：失败请求按厂家聚合错误类型，只记厂家 id + 错误
+        # 类型 + 次数，不含 key 与地址；随心跳聚合上报（用户显式开启）。
+        if self.center is not None and fields.get("status") not in (None, "ok"):
+            try:
+                self.center.note_upstream_error(
+                    fields.get("channel") or "",
+                    str(fields.get("status") or ""),
+                    fields.get("http_status"),
+                )
+            except Exception:
+                pass
 
     def request_log_payload(self, limit: int = 50, channel: str | None = None) -> dict:
         if not self.audit:
@@ -1426,6 +1456,10 @@ class App:
             self.usage.start()
         if self.notifier:
             self.notifier.start()
+        # 中心服务客户端：注册表同步/情报/更新/心跳/预填（默认开启，
+        # 失败静默降级，不影响网关转发）。
+        if self.center:
+            self.center.start()
         # The task objects exist even when a sweep is switched off, so the
         # console can still list it (and show the last manual run).
         self.catalog_refresher = CatalogRefresher(self)
@@ -1472,6 +1506,8 @@ class App:
             self.health_prober.stop()
         if self.notifier:
             self.notifier.stop()
+        if self.center:
+            self.center.stop()
         if self.usage:
             self.usage.stop()
         if self.persistence:
@@ -1638,6 +1674,17 @@ class App:
             row["count"] = int(row.get("count") or 0) + 1
             row["last_at"] = time.time()
             row["last_error"] = str(exc)[:160]
+
+    def _note_center(self, text: str) -> None:
+        """中心服务同步失败（断网/超时/验签失败）的告警通道。
+
+        约定与 CenterClient.log 一致：空文本 = 同步恢复，清除告警；
+        非空文本按写失败计入 runtime_alerts，坏中心看得见，恢复不用手清。
+        """
+        if text:
+            self._note_write_failure("center", OSError(text))
+        else:
+            self._note_write_ok("center")
 
     def _note_write_ok(self, kind: str) -> None:
         """A successful write clears the alarm for that artefact."""

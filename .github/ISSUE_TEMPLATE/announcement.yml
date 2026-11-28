@@ -1,0 +1,39 @@
+name: 情报投稿 · 公告
+title: "[情报] 公告："
+labels: ["intake:announcement", "triage"]
+description: 发现值得通知全体用户的公告（如维护、涨价、政策变化）
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢投稿！公告核实后会推送给全体用户（或指定受众）。
+        只接受公开可查的公告；无法提供来源链接的投稿会被驳回。
+  - type: input
+    id: title
+    attributes:
+      label: 公告标题
+      description: 一句话概括公告内容
+      required: true
+  - type: textarea
+    id: content
+    attributes:
+      label: 公告正文
+      description: 公告要点、影响范围、生效时间等
+      required: true
+  - type: textarea
+    id: source_url
+    attributes:
+      label: 来源链接
+      description: 官方页面或公告原文链接（必填，用于核实）
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: 建议受众
+      description: 谁需要看到这条公告
+      options:
+        - 全部用户
+        - 仅 Windows 用户
+        - 仅 Docker 用户
+        - 仅 pip 用户
+      default: 全部用户

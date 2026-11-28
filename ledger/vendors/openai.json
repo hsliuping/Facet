@@ -1,0 +1,29 @@
+{
+  "id": "openai",
+  "name": "OpenAI 直连",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://api.openai.com/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "tier": "paid"
+    },
+    {
+      "id": "text-embedding-3-small",
+      "tier": "paid"
+    }
+  ],
+  "notes": "新账号无赠送 credits（历史 $5 试用已取消）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://platform.openai.com/docs/pricing"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "bailian",
+  "name": "阿里云百炼",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {
+      "qwen3.5-plus": {
+        "tokens": 1000000,
+        "expires": null
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "qwen3.5-plus",
+      "tier": "paid"
+    }
+  ],
+  "notes": "新人每模型 100 万 tokens（70+ 模型，90 天，仅华北 2；历史口径 7000 万已过期）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://help.aliyun.com/zh/model-studio/"
+  ]
+}

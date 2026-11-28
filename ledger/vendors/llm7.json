@@ -1,0 +1,25 @@
+{
+  "id": "llm7",
+  "name": "LLM7",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://api.llm7.io/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "turbo",
+      "tier": "free"
+    }
+  ],
+  "notes": "免费注册即领：60 次/分、250 次/时、10 万 tokens/24h（每日循环）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.llm7.io"
+  ]
+}

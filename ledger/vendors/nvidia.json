@@ -1,0 +1,25 @@
+{
+  "id": "nvidia",
+  "name": "NVIDIA NIM",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://integrate.api.nvidia.com/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "nvidia/nemotron-3.5-nano-30b-a3b",
+      "tier": "free"
+    }
+  ],
+  "notes": "免费层=速率限制（个人上限约 40 RPM），非 credits，无期限",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.api.nvidia.com/nim/"
+  ]
+}

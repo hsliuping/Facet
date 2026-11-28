@@ -1,0 +1,39 @@
+name: 情报投稿 · 额度 / 优惠活动
+title: "[情报] 额度/优惠活动："
+labels: ["intake:activity", "triage"]
+description: 发现某厂家的新额度、优惠或活动，投稿给中心核实
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢投稿！填写下面的信息，中心核实后会推送给所有用户。
+        只接受公开可查的活动；无法提供来源链接的投稿会被驳回。
+  - type: input
+    id: vendor
+    attributes:
+      label: 厂家
+      description: 活动所属的模型厂家（如 DeepSeek、Kimi、智谱）
+      required: true
+  - type: input
+    id: title
+    attributes:
+      label: 活动标题
+      description: 一句话概括活动内容
+      required: true
+  - type: textarea
+    id: content
+    attributes:
+      label: 活动内容
+      description: 额度规则、有效期、适用模型、限制条件等
+      required: true
+  - type: textarea
+    id: source_url
+    attributes:
+      label: 来源链接
+      description: 官方页面或公告原文链接（必填，用于核实）
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: 备注
+      description: 其他需要核实员注意的信息（可选）

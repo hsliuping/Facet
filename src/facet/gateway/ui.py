@@ -1015,5 +1015,129 @@ def handle(app, h, method: str, path: str, raw: bytes) -> bool:
         _json(h, 200, {"ok": True, "wizard_done": existing["setup"].get("wizard_done")})
         return True
 
+    if path == "/api/center/sync" and method == "POST":
+        # 手动触发一次同步（也用于消息页的"立即同步"按钮）。
+        if getattr(app, "center", None):
+            try:
+                _json(h, 200, app.center.sync_now())
+            except Exception as exc:
+                _json(h, 500, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, {"ok": False, "note": "center 客户端未启用（无配置文件）"})
+        return True
+
+    if path == "/api/center/settings" and method == "POST":
+        # 中心设置与隐私开关（设计 5.1）：坏值回退默认并回报 errors。
+        if getattr(app, "center", None):
+            try:
+                incoming = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                _json(h, 400, {"error": {"message": "invalid JSON body"}})
+                return True
+            if not isinstance(incoming, dict):
+                _json(h, 400, {"error": {"message": "body must be an object"}})
+                return True
+            settings, errors = app.center.save_settings(incoming)
+            if errors:
+                _json(h, 200, {"settings": settings, "errors": errors})
+            else:
+                _json(h, 200, {"settings": settings})
+        else:
+            _json(h, 200, {"settings": {}, "errors": ["center 客户端未启用"]})
+        return True
+
+    if path.startswith("/api/center/prefill/") and method == "GET":
+        # 一键预填：只接受验签过的注册表里的厂家（伪造拒绝，api_key 永空）。
+        vendor_id = unquote(path[len("/api/center/prefill/"):])
+        if not vendor_id or "/" in vendor_id:
+            _json(h, 400, {"error": {"message": "invalid vendor id"}})
+            return True
+        if getattr(app, "center", None):
+            try:
+                _json(h, 200, app.center.prefill(vendor_id))
+            except ValueError as exc:
+                _json(h, 404, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, {"error": {"message": "center 客户端未启用"}})
+        return True
+
+    if path.startswith("/api/center/prefill/") and method == "POST":
+        # 用户确认后的预填落盘。body {"vendor": id}。
+        vendor_id = unquote(path[len("/api/center/prefill/"):])
+        if not vendor_id or "/" in vendor_id:
+            _json(h, 400, {"error": {"message": "invalid vendor id"}})
+            return True
+        try:
+            incoming = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            _json(h, 400, {"error": {"message": "invalid JSON body"}})
+            return True
+        if not isinstance(incoming, dict):
+            _json(h, 400, {"error": {"message": "body must be an object"}})
+            return True
+        if getattr(app, "center", None):
+            try:
+                _json(h, 200, app.center.confirm_prefill(incoming.get("vendor") or vendor_id))
+            except (ValueError, RuntimeError) as exc:
+                _json(h, 400, {"error": {"message": str(exc)}})
+            except OSError as exc:
+                _json(h, 500, {"error": {"message": f"cannot write config: {exc}"}})
+        else:
+            _json(h, 200, {"error": {"message": "center 客户端未启用"}})
+        return True
+
+    if path == "/api/messages" and method == "GET":
+        # 消息中心（设计 3.7.1）：未读/归档/查找/同步状态/空状态。
+        if getattr(app, "center", None):
+            _json(h, 200, app.center.ui_payload())
+        else:
+            _json(h, 200, {"enabled": False, "messages": [], "sync": {},
+                           "note": "center 客户端未启用"})
+        return True
+
+    if path == "/api/messages/read" and method == "POST":
+        # 未读 → 已读归档。
+        if getattr(app, "center", None):
+            try:
+                _json(h, 200, {"read": app.center.mark_all_read()})
+            except Exception as exc:
+                _json(h, 500, {"error": {"message": str(exc)}})
+        else:
+            _json(h, 200, {"read": 0})
+        return True
+
+    if path == "/api/messages/dismiss" and method == "POST":
+        # {"id": ...} 忽略某条（vendor_new 同时加入忽略名单）。
+        if getattr(app, "center", None):
+            try:
+                body = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                _json(h, 400, {"error": {"message": "invalid JSON body"}})
+                return True
+            item_id = str((body or {}).get("id") or "")
+            _json(h, 200, {"ok": app.center.dismiss_item(item_id)})
+        else:
+            _json(h, 200, {"ok": False})
+        return True
+
+    if path == "/api/messages/apply" and method == "POST":
+        # {"id": ...} 用户确认后的合并动作（vendor_new / preset_modified）。
+        if getattr(app, "center", None):
+            try:
+                body = json.loads(raw) if raw.strip() else {}
+            except ValueError:
+                _json(h, 400, {"error": {"message": "invalid JSON body"}})
+                return True
+            item_id = str((body or {}).get("id") or "")
+            try:
+                _json(h, 200, app.center.apply_item(item_id))
+            except (ValueError, RuntimeError) as exc:
+                _json(h, 400, {"error": {"message": str(exc)}})
+            except OSError as exc:
+                _json(h, 500, {"error": {"message": f"cannot write config: {exc}"}})
+        else:
+            _json(h, 200, {"error": {"message": "center 客户端未启用"}})
+        return True
+
     _json(h, 404, {"error": {"message": "not found", "path": path}})
     return True

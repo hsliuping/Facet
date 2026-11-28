@@ -1,0 +1,29 @@
+{
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api.deepseek.com/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "deepseek-flash",
+      "tier": "paid"
+    },
+    {
+      "id": "deepseek-chat",
+      "tier": "paid"
+    }
+  ],
+  "notes": "无明确免费额度；仅活动性赠送余额机制（如社区活动送余额）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://api-docs.deepseek.com/quick_start/pricing"
+  ]
+}

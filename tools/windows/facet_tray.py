@@ -142,6 +142,40 @@ def already_running() -> bool:
     return False
 
 
+def watch_messages(icon) -> None:
+    """中心服务情报的托盘气泡（设计 5.3）：轮询消息页，未读情报增加时弹气泡。
+
+    网关进程与托盘是两个进程，情报推送经 /api/messages 桥接；每 60 秒
+    轮询一次，只在未读条数变多时弹，最多连弹 3 条，避免风暴。
+    """
+    import urllib.error
+    import urllib.request
+
+    titles = {
+        "vendor_new": "新厂家渠道",
+        "channel_update": "渠道更新",
+        "preset_modified": "预置模板已改动",
+        "offline": "厂家下线",
+        "update": "新版本可用",
+        "notice": "通知",
+    }
+    seen = 0
+    while True:
+        time.sleep(60)
+        try:
+            with urllib.request.urlopen(BASE_URL + "/api/messages", timeout=5) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except (OSError, ValueError):
+            continue  # 网关没起来/还没同步：下轮再试
+        items = [i for i in (data.get("items") or []) if i.get("unread")]
+        if len(items) <= seen:
+            continue
+        for item in items[seen:][:3]:
+            icon.notify(f"Facet · {titles.get(item.get('kind'), '新消息')}",
+                       str(item.get("summary") or "")[:120])
+        seen = len(items)
+
+
 def main() -> int:
     if already_running():
         webbrowser.open(BASE_URL + "/")
@@ -188,6 +222,8 @@ def main() -> int:
         pystray.MenuItem("退出", quit_app),
     )
     icon = pystray.Icon(MUTEX_NAME, icon_image, "Facet 网关", menu)
+
+    threading.Thread(target=watch_messages, args=(icon,), daemon=True).start()
 
     def boot() -> None:
         # The gateway may need a few seconds on the first start (config seed).

@@ -1,0 +1,62 @@
+name: intake
+
+# T4.2 投稿入口：带 intake:* 标签的 issue 创建时，把正文写入中心待审队列。
+# 核实由中心管理后台「情报核实」页人工完成（T4.1）。
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  enqueue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: derive kind from labels
+        id: kind
+        run: |
+          KIND=""
+          if [[ "${{ contains(github.event.issue.labels.*.name, 'intake:activity') }}" == "true" ]]; then
+            KIND="activity"
+          elif [[ "${{ contains(github.event.issue.labels.*.name, 'intake:announcement') }}" == "true" ]]; then
+            KIND="announcement"
+          elif [[ "${{ contains(github.event.issue.labels.*.name, 'intake:change') }}" == "true" ]]; then
+            KIND="change"
+          fi
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+
+      - name: enqueue to center
+        if: steps.kind.outputs.kind != ''
+        env:
+          CENTER_INTAKE_URL: ${{ secrets.CENTER_INTAKE_URL }}
+          CENTER_INTAKE_TOKEN: ${{ secrets.CENTER_INTAKE_TOKEN }}
+          INTAKE_KIND: ${{ steps.kind.outputs.kind }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          # 正文经环境变量传递，避免正文里的引号/反引号被 shell 解释
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: python tools/intake.py
+
+      - name: mark queued
+        if: success() && steps.kind.outputs.kind != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" --add-label "queued" --repo "${{ github.repository }}"
+          gh issue comment "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --body "✅ 已进入中心待审队列（#${{ github.event.issue.number }}），核实员处理后推送。"
+
+      - name: mark failed
+        if: failure() && steps.kind.outputs.kind != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" --add-label "intake-failed" --repo "${{ github.repository }}"
+          gh issue comment "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --body "❌ 投稿写入中心失败（配置缺失或中心不可达），请检查 CENTER_INTAKE_URL / CENTER_INTAKE_TOKEN。"

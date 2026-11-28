@@ -1,0 +1,31 @@
+{
+  "id": "volcengine",
+  "name": "火山引擎方舟",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://ark.cn-beijing.volces.com/api/coding/v3"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {
+      "doubao-seed-1.6": {
+        "tokens": 500000,
+        "expires": null
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "doubao-seed-1.6",
+      "tier": "paid"
+    }
+  ],
+  "notes": "开通即领各模型约 50 万 tokens（按量抵扣）；11.11 活动另可领 2500 万（至 2026-11-30，限时营销）；协作奖励计划每日最高 500 万/模型（活动期）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://www.volcengine.com/docs/82379/1159200",
+    "https://ark.volcengine.com/region:cn-beijing/docs/free-inference-quota"
+  ]
+}

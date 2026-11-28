@@ -1,0 +1,25 @@
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://opencode.ai/inference/openai/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "big-pickle",
+      "tier": "free"
+    }
+  ],
+  "notes": "Models 端点含 12+ 免费模型（Big Pickle、Exo Free 等，以控制台清单为准）；Go 订阅另含 DeepSWE 选定的付费模型",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://opencode.ai/docs"
+  ]
+}

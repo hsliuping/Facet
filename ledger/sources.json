@@ -1,0 +1,231 @@
+{
+  "announcement_pages": [
+    {
+      "vendor": "volcengine",
+      "url": "https://console.volcengine.com/ark/region:cn-beijing/docs/coding-plan-personal-get-started",
+      "parser": "dom"
+    },
+    {
+      "vendor": "bailian",
+      "url": "https://help.aliyun.com/zh/model-studio/",
+      "parser": "dom"
+    },
+    {
+      "vendor": "zhipu",
+      "url": "https://docs.bigmodel.cn",
+      "parser": "dom"
+    },
+    {
+      "vendor": "modelscope",
+      "url": "https://modelscope.cn/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "siliconflow",
+      "url": "https://docs.siliconflow.cn",
+      "parser": "dom"
+    },
+    {
+      "vendor": "hunyuan",
+      "url": "https://cloud.tencent.com/document/product/1823/130060",
+      "parser": "dom"
+    },
+    {
+      "vendor": "qianfan",
+      "url": "https://cloud.baidu.com/product/codingplan.html",
+      "parser": "dom"
+    },
+    {
+      "vendor": "moonshot",
+      "url": "https://platform.moonshot.cn/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "xiaomi",
+      "url": "https://platform.xiaomimimo.com/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "deepseek",
+      "url": "https://api-docs.deepseek.com",
+      "parser": "dom"
+    },
+    {
+      "vendor": "minimax",
+      "url": "https://platform.minimaxi.com/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "teleai",
+      "url": "https://www.ctyun.cn/document/11061839/11097250",
+      "parser": "dom"
+    },
+    {
+      "vendor": "google",
+      "url": "https://ai.google.dev/gemini-api/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "openrouter",
+      "url": "https://openrouter.ai/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "nvidia",
+      "url": "https://docs.api.nvidia.com/nim/",
+      "parser": "dom"
+    },
+    {
+      "vendor": "llm7",
+      "url": "https://docs.llm7.io",
+      "parser": "dom"
+    },
+    {
+      "vendor": "opencode",
+      "url": "https://opencode.ai/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "commandcode",
+      "url": "https://docs.commandcode.ai",
+      "parser": "dom"
+    },
+    {
+      "vendor": "openai",
+      "url": "https://platform.openai.com/docs",
+      "parser": "dom"
+    },
+    {
+      "vendor": "anthropic",
+      "url": "https://docs.anthropic.com",
+      "parser": "dom"
+    },
+    {
+      "vendor": "xai",
+      "url": "https://docs.x.ai/docs/models",
+      "parser": "dom"
+    },
+    {
+      "vendor": "zai",
+      "url": "https://docs.z.ai",
+      "parser": "dom"
+    }
+  ],
+  "probe_endpoints": [
+    {
+      "vendor": "bailian",
+      "url": "https://dashscope.aliyuncs.com/api/v1/models",
+      "needs_key": true
+    },
+    {
+      "vendor": "bailian",
+      "url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models",
+      "needs_key": true
+    },
+    {
+      "vendor": "modelscope",
+      "url": "https://api-inference.modelscope.cn/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "siliconflow",
+      "url": "https://api.siliconflow.cn/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "hunyuan",
+      "url": "https://tokenhub.tencentmaas.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "qianfan",
+      "url": "https://qianfan.baidubce.com/v2/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "moonshot",
+      "url": "https://api.moonshot.cn/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "xiaomi",
+      "url": "https://api.xiaomimimo.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "xiaomi",
+      "url": "https://token-plan-cn.xiaomimimo.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "deepseek",
+      "url": "https://api.deepseek.com/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "minimax",
+      "url": "https://api.minimax.cn/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "teleai",
+      "url": "https://api-maas.teleai.com.cn/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "google",
+      "url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "openrouter",
+      "url": "https://openrouter.ai/api/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "nvidia",
+      "url": "https://integrate.api.nvidia.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "llm7",
+      "url": "https://api.llm7.io/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "opencode",
+      "url": "https://opencode.ai/inference/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "opencode",
+      "url": "https://opencode.ai/inference/go/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "commandcode",
+      "url": "https://api.commandcode.ai/provider/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "openai",
+      "url": "https://api.openai.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "anthropic",
+      "url": "https://api.anthropic.com/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "xai",
+      "url": "https://api.x.ai/v1/models",
+      "needs_key": false
+    },
+    {
+      "vendor": "zai",
+      "url": "https://api.z.ai/api/paas/v4/models",
+      "needs_key": false
+    }
+  ]
+}

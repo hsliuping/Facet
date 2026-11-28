@@ -1,0 +1,37 @@
+{
+  "id": "siliconflow",
+  "name": "硅基流动 SiliconFlow",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api.siliconflow.cn/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "XingChenAGI/Xing4.0-29B",
+      "tier": "free"
+    },
+    {
+      "id": "THUDM/GLM-Z1-9B-0414",
+      "tier": "free"
+    },
+    {
+      "id": "tencent/Hunyuan-MT-7B",
+      "tier": "free"
+    },
+    {
+      "id": "Qwen/Qwen3.5-9B",
+      "tier": "paid"
+    }
+  ],
+  "notes": "3 个永久免费模型（0 元计费、不扣赠金）；注册实名赠 ¥14 体验金（一次性）；限速账户级约 1000–10000 RPM",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.siliconflow.cn"
+  ]
+}

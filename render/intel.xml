@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GENERATED — do not edit by hand; rendered from ledger/ by tools/ledger/render.py -->
+<rss version="2.0">
+  <channel>
+    <title>Facet 情报</title>
+    <link>https://facet.skillgo.cn/</link>
+    <description>账本渲染的活动与变更（同 intel.json）</description>
+    <lastBuildDate>Fri, 27 Nov 2026 14:07:39 GMT</lastBuildDate>
+    <item>
+      <title>teleAI Xing4.1-Preview 0 元购资源包（10 亿 tokens）</title>
+      <link>https://www.teleai.com.cn/product/teleagent</link>
+      <description>teleAI Xing4.1-Preview 0 元购资源包（10 亿 tokens）｜1,000,000,000 tokens（控制台 0 元购买）｜控制台 → 一次性额度包 → 0 元购买（Xing4.1-Preview 专用）</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">act-20261127-teleai-0yuan</guid>
+    </item>
+    <item>
+      <title>modelscope：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>siliconflow：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>hunyuan：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>qianfan：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>moonshot：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>xiaomi：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>deepseek：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>minimax：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>teleai：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>google：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>openrouter：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>nvidia：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>llm7：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>opencode：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>commandcode：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>openai：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>anthropic：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>xai：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>zai：vendor_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>$</description>
+      <pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T12:00:00+08:00/$</guid>
+    </item>
+    <item>
+      <title>teleai：activity_added</title>
+      <link>https://facet.skillgo.cn/intel</link>
+      <description>act-20261127-teleai-0yuan</description>
+      <pubDate>Fri, 27 Nov 2026 06:00:00 GMT</pubDate>
+      <guid isPermaLink="false">2026-11-27T14:00:00+08:00/act-20261127-teleai-0yuan</guid>
+    </item>
+  </channel>
+</rss>

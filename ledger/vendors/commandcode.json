@@ -1,0 +1,33 @@
+{
+  "id": "commandcode",
+  "name": "Command Code",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://api.commandcode.ai/provider/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "glyph-cluster:free",
+      "tier": "free"
+    },
+    {
+      "id": "crouton-alpha",
+      "tier": "free"
+    },
+    {
+      "id": "inkling-2-small:free",
+      "tier": "free"
+    }
+  ],
+  "notes": "glyph-cluster:free / crouton-alpha 各约 1000 请求/天，inkling-2-small:free 约 200/天（速率限制）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.commandcode.ai"
+  ]
+}

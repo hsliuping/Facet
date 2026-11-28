@@ -42,4 +42,6 @@ docs/demo-video-plan.md
 
 # marketing content (not for public repo)
 docs/marketing/
+# private platform design docs (see design/README intent) — kept on disk only
+design/
 

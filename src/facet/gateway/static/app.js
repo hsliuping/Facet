@@ -36,6 +36,7 @@ const PAGE_TITLES = {
   apikeys: 'API Keys', adminkey: '管理密钥',
   status: '运行状态', maintenance: '自维护', usage: '用量报表', compare: '模型对比', requests: '请求日志',
   members: '成员用量',
+  messages: '消息',
   quickstart: '快速开始',
   integration: '接入文档',
 };
@@ -1257,6 +1258,7 @@ function switchPage(name) {
   }
   if (name === 'compare') loadCompare().catch((e) => markLoadError('compare-body', e, () => loadCompare()));
   if (name === 'requests') loadRequests().catch((e) => markLoadError('requests-body', e, () => loadRequests()));
+  if (name === 'messages') loadMessages().catch((e) => toast(e.message, 'bad'));
   if (name === 'members') {
     loadMembers().catch((e) => markLoadError('member-usage-body', e, () => loadMembers()));
     loadMemberCost($('member-cost-month').value)
@@ -3216,6 +3218,136 @@ async function checkNotifications() {
   } catch (err) { toast(err.message, 'bad'); }
 }
 
+// ---- 消息页：中心服务同步消息中心（设计 3.7.1） ----
+
+const MESSAGE_KINDS = {
+  vendor_new: '新厂家渠道',
+  channel_update: '渠道更新',
+  preset_modified: '预置模板已改动',
+  offline: '厂家下线',
+  update: '新版本可用',
+  notice: '通知',
+};
+
+async function loadMessages() {
+  const data = await api('/api/messages');
+  state.messages = data;
+  renderMessages();
+  renderMessagesSettings(data);
+}
+
+function renderMessages() {
+  const box = $('messages-list');
+  if (!box) return;
+  const data = state.messages;
+  if (!data) { box.innerHTML = '<p class="hint">加载中…</p>'; return; }
+  if (data.enabled === false) {
+    box.innerHTML = '<p class="hint">中心客户端未启用（网关以无配置文件方式运行）。</p>';
+    return;
+  }
+  const items = data.items || [];
+  const sync = data.status || {};
+  const unread = items.filter((i) => i.unread).length;
+  $('messages-sync').innerHTML = `
+    <div class="kv"><span>同步状态</span><b>${
+      sync.ok === null || sync.ok === undefined ? '尚未同步'
+        : (sync.ok ? '正常' : '失败')}</b></div>
+    <div class="kv"><span>上次同步</span><b>${
+      sync.last_sync_at ? esc(sync.last_sync_at) : '—'}</b></div>
+    <div class="kv"><span>上次错误</span><b>${
+      sync.error ? esc(sync.error) : '无'}</b></div>
+    <div class="kv"><span>归档消息</span><b>${data.archive_count || 0} 条</b></div>`;
+  if (!items.length) {
+    box.innerHTML = '<p class="hint">暂无消息：一切正常，或新消息还没同步到（每 6 小时一次，可用「立即同步」手动触发）。</p>';
+  } else {
+    box.innerHTML = items.map((item) => `
+      <div class="msg-item ${item.unread ? 'unread' : ''}">
+        <div class="msg-head">
+          <b>${esc(MESSAGE_KINDS[item.kind] || item.kind)}</b>
+          <span class="tag ${item.unread ? 'active' : ''}">${item.unread ? '未读' : '已读'}</span>
+          ${item.withdrawn ? '<span class="tag withdrawn" title="' + esc(item.withdrawn_reason || '') + '">已撤回</span>' : ''}
+        </div>
+        <div class="msg-body">${esc(item.summary || '')}</div>
+        ${item.actionable ? `<div class="msg-actions">
+          ${item.kind === 'vendor_new' ? '<button class="btn small" data-msg-action="apply" data-msg-id="' + esc(item.id) + '">添加渠道</button>' : ''}
+          ${item.kind === 'preset_modified' ? '<button class="btn small" data-msg-action="apply" data-msg-id="' + esc(item.id) + '">采用新模板</button>' : ''}
+          ${item.kind === 'channel_update' ? '<button class="btn small" data-msg-action="goto-channels" data-msg-id="' + esc(item.id) + '">查看渠道</button>' : ''}
+          ${item.kind === 'offline' ? '<button class="btn small" data-msg-action="apply" data-msg-id="' + esc(item.id) + '">标记已读</button>' : ''}
+          <button class="btn small ghost" data-msg-action="dismiss" data-msg-id="' + esc(item.id) + '">忽略</button>
+        </div>` : ''}
+      </div>`).join('');
+    if (!box.dataset.bound) {
+      box.dataset.bound = 'yes';
+      box.addEventListener('click', async (event) => {
+        const btn = event.target.closest('[data-msg-action]');
+        if (!btn) return;
+        const id = btn.dataset.msgId;
+        const action = btn.dataset.msgAction;
+        if (action === 'goto-channels') { switchPage('channels'); return; }
+        try {
+          if (action === 'apply') {
+            await api('/api/messages/apply', { method: 'POST', body: { id } });
+            toast('已处理');
+          } else if (action === 'dismiss') {
+            await api('/api/messages/dismiss', { method: 'POST', body: { id } });
+            toast('已忽略');
+          }
+          await loadMessages();
+        } catch (err) { toast(err.message, 'bad'); }
+      });
+    }
+  }
+  const badge = $('messages-badge');
+  if (badge) { badge.hidden = unread === 0; badge.textContent = unread; }
+}
+
+function renderMessagesSettings(data) {
+  const box = $('messages-settings');
+  if (!box) return;
+  const settings = (data && data.settings) || {};
+  const boolFields = [
+    ['enabled', '启用中心同步（默认开启）'],
+    ['sync_registry', '同步注册表（新厂家/额度/下线）'],
+    ['push_intel', '接收情报推送'],
+    ['check_updates', '检查新版本'],
+    ['report_anonymous', '上报匿名统计（版本/渠道数/模型数）'],
+    ['report_actions', '上报使用行动计数'],
+    ['report_diagnostics', '上报诊断信息'],
+    ['notice_ack', '已阅读隐私声明'],
+  ];
+  box.innerHTML = `
+    <div class="kv"><span>中心地址</span><input id="center-url" class="filter-input"
+      value="${esc(settings.url || '')}" placeholder="https://api.aifacet.cn"></div>
+    <div class="kv"><span>签名公钥（高级，一般留空用内置）</span><input id="center-key" class="filter-input"
+      value="${esc(settings.public_key || '')}" placeholder="留空使用内置公钥"></div>
+    ${boolFields.map(([key, label]) => `
+      <label class="check center-toggle" title="${esc(label)}">
+        <input type="checkbox" data-center-setting="${key}" ${settings[key] ? 'checked' : ''}>${esc(label)}
+      </label>`).join('')}
+    <div class="actions" style="margin-top:10px">
+      <button class="btn small" id="btn-save-center-settings">保存设置</button>
+    </div>`;
+  const save = $('btn-save-center-settings');
+  if (save && !save.dataset.bound) {
+    save.dataset.bound = 'yes';
+    save.addEventListener('click', async () => {
+      const body = { url: $('center-url').value.trim(), public_key: $('center-key').value.trim() };
+      for (const input of box.querySelectorAll('[data-center-setting]')) {
+        body[input.dataset.centerSetting] = input.checked;
+      }
+      try {
+        const result = await api('/api/center/settings', { method: 'POST', body });
+        if (result.errors && result.errors.length) {
+          toast('部分选项无效，已回退默认：' + result.errors.join('；'), 'bad');
+        } else {
+          toast('中心设置已保存');
+        }
+        await loadMessages();
+      } catch (err) { toast(err.message, 'bad'); }
+    });
+  }
+}
+
 // ---- 模型接入：名字落点可视化、链内展开、最近请求联动 ----
 
 const FREE_CHANNEL_MACRO = '$free';
@@ -3954,6 +4086,25 @@ async function exportDiagnostics() {
 }
 
 $('btn-refresh-requests').onclick = () => loadRequests().catch((e) => toast(e.message, 'bad'));
+// 消息页：手动同步 / 全部已读 / 刷新。
+$('btn-sync-now').onclick = async (event) => {
+  const btn = event.currentTarget;
+  btn.disabled = true;
+  try {
+    const result = await api('/api/center/sync', { method: 'POST' });
+    toast(result.ok ? '同步完成' : '同步失败：' + (result.errors || []).join('；'), result.ok ? 'ok' : 'bad');
+    await loadMessages();
+  } catch (err) { toast(err.message, 'bad'); }
+  finally { btn.disabled = false; }
+};
+$('btn-messages-read').onclick = async () => {
+  try {
+    const result = await api('/api/messages/read', { method: 'POST' });
+    toast(`已归档 ${result.read} 条消息`);
+    await loadMessages();
+  } catch (err) { toast(err.message, 'bad'); }
+};
+$('btn-refresh-messages').onclick = () => loadMessages().catch((e) => toast(e.message, 'bad'));
 $('btn-export-diagnostics').onclick = exportDiagnostics;
 $('btn-export-requests').onclick = exportRequests;
 $('requests-status-filter').addEventListener('change', (e) => {

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 反馈 Bug 或提建议
+    url: https://github.com/hsliuping/Facet/issues/new/choose
+    about: Bug 报告与功能建议走常规 issue，不进情报待审队列

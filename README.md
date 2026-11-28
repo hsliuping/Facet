@@ -51,23 +51,24 @@ Facet 把它们收敛成三件事：
 | 控制台 | 渠道/路由编辑、API Key 与管理员密钥管理、请求日志、维护日志、接入文档、热加载 |
 | 认证 | 多成员 API Key、管理员密钥、`env:VAR` 密钥引用（明文不落配置） |
 | 运营 | 按天用量统计、订阅到期提醒、通知投递、请求审计日志（`requests.jsonl`）、渠道出站代理 |
+| 中心同步 | 注册表同步（新厂家/额度/下线四类合并 + 预置指纹）、情报推送（webhook + 托盘气泡）、更新检查、匿名心跳与控制台「消息」页（Ed25519 验签，缓存断网可用，全部开关可关） |
 
 ## 安装
 
 需要 Python 3.10+（Windows 安装包与 macOS/Linux 一键脚本会自动处理，无需自备）。
 网关与事实表都是纯标准库实现，**零第三方依赖**。
 
-当前版本 **1.0.4**：正式版，功能完整，可日常使用。按需选一种渠道：
+当前版本 **1.1.0**：新增中心同步与消息中心，功能完整，可日常使用。按需选一种渠道：
 
 | 渠道 | 适合谁 | 怎么装 |
 |---|---|---|
-| **Windows 安装包** | Windows 桌面用户 | 到 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `Facet-Setup-1.0.4.exe` 双击安装，自带托盘与开机自启，数据在 `%LOCALAPPDATA%\Facet`。安装包未代码签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
-| **Docker 镜像** | 服务器 / NAS | `docker pull hsliup/facet:latest`（锁定版本用 `:1.0.4`），详见 [Docker 部署](#docker-部署) |
+| **Windows 安装包** | Windows 桌面用户 | 到 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `Facet-Setup-1.1.0.exe` 双击安装，自带托盘与开机自启，数据在 `%LOCALAPPDATA%\Facet`。安装包未代码签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
+| **Docker 镜像** | 服务器 / NAS | `docker pull hsliup/facet:latest`（锁定版本用 `:1.1.0`），详见 [Docker 部署](#docker-部署) |
 | **macOS / Linux 一键脚本** | 有 shell 环境 | 克隆仓库后执行 `tools/macos/install.sh` 或 `tools/linux/install.sh`，自动装 Python 并注册常驻服务 |
-| **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.4-py3-none-any.whl`，再 `pip install` 该文件 |
+| **pip wheel** | Python 用户 | 从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.1.0-py3-none-any.whl`，再 `pip install` 该文件 |
 | **源码** | 开发者 | `git clone https://github.com/hsliuping/Facet.git && cd Facet && pip install -e .` |
 
-> ⚠️ `pip install facet-models` 默认解析到 PyPI 上的 **2026.9.1** 旧版（日期版号在 PEP 440 排序里更高），若要安装最新版 **1.0.4**，请使用 `pip install facet-models==1.0.4`，或从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.0.4-py3-none-any.whl` 进行安装。
+> ⚠️ `pip install facet-models` 默认解析到 PyPI 上的 **2026.9.1** 旧版（日期版号在 PEP 440 排序里更高），若要安装最新版 **1.1.0**，请使用 `pip install facet-models==1.1.0`，或从 [Releases](https://github.com/hsliuping/Facet/releases) 下载 `facet_models-1.1.0-py3-none-any.whl` 进行安装。
 
 ### macOS 一键安装（launchd 服务）
 

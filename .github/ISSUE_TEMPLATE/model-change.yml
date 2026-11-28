@@ -1,0 +1,33 @@
+name: 情报投稿 · 模型变更
+title: "[情报] 模型变更："
+labels: ["intake:change", "triage"]
+description: 发现模型上下线、版本更新、上下架等变更
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢投稿！模型变更核实后会更新到模型清单并通知用户。
+        只接受公开可查的变更；无法提供来源链接的投稿会被驳回。
+  - type: input
+    id: model
+    attributes:
+      label: 模型名称
+      description: 发生变更的模型（如 deepseek-chat、glm-4.6）
+      required: true
+  - type: textarea
+    id: content
+    attributes:
+      label: 变更内容
+      description: 上线/下线/版本更新、价格调整、上下文变化等
+      required: true
+  - type: textarea
+    id: source_url
+    attributes:
+      label: 来源链接
+      description: 官方页面或公告原文链接（必填，用于核实）
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: 备注
+      description: 其他需要核实员注意的信息（可选）

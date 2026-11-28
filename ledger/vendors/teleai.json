@@ -1,0 +1,55 @@
+{
+  "id": "teleai",
+  "name": "中国电信（天翼 AI / 息壤 / TokenHub）",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://api-maas.teleai.com.cn/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {
+      "xing4.1-preview": {
+        "tokens": 100000000,
+        "expires": null
+      },
+      "xing4.0-29b-a4b": {
+        "tokens": 100000000,
+        "expires": null
+      },
+      "xing4.0-29b-intent": {
+        "tokens": 100000000,
+        "expires": null
+      },
+      "telechat3-438b-a24b": {
+        "tokens": 100000000,
+        "expires": null
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "xing4.1-preview",
+      "tier": "free"
+    },
+    {
+      "id": "xing4.0-29b-a4b",
+      "tier": "free"
+    },
+    {
+      "id": "xing4.0-29b-intent",
+      "tier": "free"
+    },
+    {
+      "id": "telechat3-438b-a24b",
+      "tier": "free"
+    }
+  ],
+  "notes": "一次性试用包，无剩余额度 API；息壤 DeepSeek 系每模型各赠 2500 万（约 2 周）、电信 TokenHub 各试用模型 50 万/14 天——模型清单以各平台试用页为准，未逐一登记；控制台 2026-11-27 实领确认",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://www.teleai.com.cn/product/teleagent",
+    "https://www.ctyun.cn/document/11085484/11085932"
+  ]
+}

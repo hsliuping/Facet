@@ -1,0 +1,25 @@
+{
+  "id": "xai",
+  "name": "Grok（xAI）",
+  "region": "global",
+  "endpoints": {
+    "openai": "https://api.x.ai/v1"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {}
+  },
+  "models": [
+    {
+      "id": "grok-4.7",
+      "tier": "paid"
+    }
+  ],
+  "notes": "无标准免费层（历史活动：数据共享换 $150/月 credits）",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://docs.x.ai/docs/models"
+  ]
+}

@@ -1,0 +1,894 @@
+{
+  "_generated": "GENERATED — do not edit by hand; rendered from ledger/ by tools/ledger/render.py",
+  "schema_version": 1,
+  "seq": 23,
+  "generated_at": "2026-11-27T22:07:39+08:00",
+  "vendors": [
+    {
+      "id": "anthropic",
+      "name": "Anthropic 直连",
+      "region": "global",
+      "endpoints": {
+        "anthropic": "https://api.anthropic.com"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "claude-haiku-4-5",
+          "tier": "paid"
+        },
+        {
+          "id": "claude-opus-4-6",
+          "tier": "paid"
+        }
+      ],
+      "notes": "新账号一次性 $5 试用额度（15 天内用完）；Max/Ultra 订阅绑 Console 每月送 API credits",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.anthropic.com/en/docs/about-lambda/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "bailian",
+      "name": "阿里云百炼",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "qwen3.5-plus": {
+            "tokens": 1000000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "qwen3.5-plus",
+          "tier": "paid"
+        }
+      ],
+      "notes": "新人每模型 100 万 tokens（70+ 模型，90 天，仅华北 2；历史口径 7000 万已过期）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://help.aliyun.com/zh/model-studio/"
+      ],
+      "activities": []
+    },
+    {
+      "id": "commandcode",
+      "name": "Command Code",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://api.commandcode.ai/provider/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "glyph-cluster:free",
+          "tier": "free"
+        },
+        {
+          "id": "crouton-alpha",
+          "tier": "free"
+        },
+        {
+          "id": "inkling-2-small:free",
+          "tier": "free"
+        }
+      ],
+      "notes": "glyph-cluster:free / crouton-alpha 各约 1000 请求/天，inkling-2-small:free 约 200/天（速率限制）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.commandcode.ai"
+      ],
+      "activities": []
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api.deepseek.com/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "tier": "paid"
+        },
+        {
+          "id": "deepseek-chat",
+          "tier": "paid"
+        }
+      ],
+      "notes": "无明确免费额度；仅活动性赠送余额机制（如社区活动送余额）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "google",
+      "name": "Google AI Studio",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://generativelanguage.googleapis.com/v1beta/openai"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "gemini-3.5-flash-lite",
+          "tier": "free"
+        },
+        {
+          "id": "gemini-3.5-flash",
+          "tier": "paid"
+        }
+      ],
+      "notes": "免费层随模型浮动：约 5–15 次/分、20–1,500 次/天（速率限制，非 token 额度）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://ai.google.dev/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "hunyuan",
+      "name": "腾讯元宝（混元）",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://tokenhub.tencentmaas.com/plan/v3"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "hunyuan-a13b": {
+            "tokens": 1000000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "hunyuan-a13b",
+          "tier": "paid"
+        },
+        {
+          "id": "hy4-flash",
+          "tier": "free"
+        },
+        {
+          "id": "hy4",
+          "tier": "free"
+        },
+        {
+          "id": "hy4-preview",
+          "tier": "free"
+        },
+        {
+          "id": "hy3",
+          "tier": "free"
+        },
+        {
+          "id": "hy-mt2-pro",
+          "tier": "free"
+        },
+        {
+          "id": "hy-mt2-plus",
+          "tier": "free"
+        },
+        {
+          "id": "hy-mt2-lite",
+          "tier": "free"
+        },
+        {
+          "id": "hunyuan-role-latest",
+          "tier": "free"
+        },
+        {
+          "id": "hy-role",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-flash",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4-flash-202605",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-v4-flash-0731",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4-pro-202606",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-v4-pro-0813",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-v4-pro",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek/deepseek-v4-flash-vision-exp",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4.1-flash-1017",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4.1-flash",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4-pro-0813",
+          "tier": "free"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5.3-flashx",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5.3",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5.2",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5v-turbo",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k2.7-code-highspeed",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k3.1-pro-highspeed",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k3.1-pro",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k3",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k2.8-preview",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k2.7-code",
+          "tier": "free"
+        },
+        {
+          "id": "kimi-k2.6",
+          "tier": "free"
+        },
+        {
+          "id": "minimax-m3.1-flash",
+          "tier": "free"
+        },
+        {
+          "id": "minimax-m3",
+          "tier": "free"
+        },
+        {
+          "id": "minimax-m2.7",
+          "tier": "free"
+        },
+        {
+          "id": "mimo-v2.6-pro",
+          "tier": "free"
+        },
+        {
+          "id": "mimo-v2.6-flash",
+          "tier": "free"
+        },
+        {
+          "id": "mimo-v2.5-pro",
+          "tier": "free"
+        },
+        {
+          "id": "step-5-preview",
+          "tier": "free"
+        },
+        {
+          "id": "youtu-vita",
+          "tier": "free"
+        },
+        {
+          "id": "hy-vision-2.0-instruct",
+          "tier": "free"
+        },
+        {
+          "id": "hunyuan-t1-vision-20250916",
+          "tier": "free"
+        },
+        {
+          "id": "hunyuan-turbos-vision-video-20250728",
+          "tier": "free"
+        }
+      ],
+      "notes": "开通即送 100 万 tokens（8 款模型共享，1 年）；TokenHub 新人体验包覆盖 34 个语言/多模态模型 × 100 万/模型（1 年，2026-12-31 前领，清单以控制台为准）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://cloud.tencent.com/document/product/1823/130060",
+        "https://cloud.tencent.com/document/product/1729/97732"
+      ],
+      "activities": []
+    },
+    {
+      "id": "llm7",
+      "name": "LLM7",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://api.llm7.io/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "turbo",
+          "tier": "free"
+        }
+      ],
+      "notes": "免费注册即领：60 次/分、250 次/时、10 万 tokens/24h（每日循环）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.llm7.io"
+      ],
+      "activities": []
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api.minimax.cn/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "minimax-m3",
+          "tier": "paid"
+        }
+      ],
+      "notes": "无免费额度",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://www.minimaxi.com/document/Price"
+      ],
+      "activities": []
+    },
+    {
+      "id": "modelscope",
+      "name": "魔搭 ModelScope",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api-inference.modelscope.cn/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "Qwen/Qwen3-235B-A22B",
+          "tier": "free"
+        }
+      ],
+      "notes": "免费靠魔粒抵扣：每日登录领 250 魔粒（约 250–500 次调用，当日有效），需绑定阿里云账号；模型清单以控制台为准",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://modelscope.cn/docs"
+      ],
+      "activities": []
+    },
+    {
+      "id": "moonshot",
+      "name": "Kimi",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api.moonshot.cn/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "kimi-k3.1-pro",
+          "tier": "paid"
+        }
+      ],
+      "notes": "注册实名赠 ¥15 代金券（3 个月内用完，仅按量抵扣）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://platform.moonshot.cn/docs/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://integrate.api.nvidia.com/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "nvidia/nemotron-3.5-nano-30b-a3b",
+          "tier": "free"
+        }
+      ],
+      "notes": "免费层=速率限制（个人上限约 40 RPM），非 credits，无期限",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.api.nvidia.com/nim/"
+      ],
+      "activities": []
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI 直连",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://api.openai.com/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "tier": "paid"
+        },
+        {
+          "id": "text-embedding-3-small",
+          "tier": "paid"
+        }
+      ],
+      "notes": "新账号无赠送 credits（历史 $5 试用已取消）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://platform.openai.com/docs/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://opencode.ai/inference/openai/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "big-pickle",
+          "tier": "free"
+        }
+      ],
+      "notes": "Models 端点含 12+ 免费模型（Big Pickle、Exo Free 等，以控制台清单为准）；Go 订阅另含 DeepSWE 选定的付费模型",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://opencode.ai/docs"
+      ],
+      "activities": []
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://openrouter.ai/api/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "flint-v1.0:free",
+          "tier": "free"
+        },
+        {
+          "id": "inkling-2-small:free",
+          "tier": "free"
+        }
+      ],
+      "notes": "25+ 个 :free 模型；未充值 20 RPM/50 次每天，充 $10 后 1000 次/天（速率限制）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://openrouter.ai/docs/guides/intro"
+      ],
+      "activities": []
+    },
+    {
+      "id": "qianfan",
+      "name": "百度千帆",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://qianfan.baidubce.com/v2/tokenplan/personal"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "ernie-5.5-flash-preview": {
+            "tokens": 1000000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "ernie-5.5-flash-preview",
+          "tier": "paid"
+        }
+      ],
+      "notes": "新人免费额度以控制台领取页为准（历史活动口径 17 模型 × 100 万）；历史 8000 万/90 天活动已于 2026-07-14 结束",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html"
+      ],
+      "activities": []
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api.siliconflow.cn/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "XingChenAGI/Xing4.0-29B",
+          "tier": "free"
+        },
+        {
+          "id": "THUDM/GLM-Z1-9B-0414",
+          "tier": "free"
+        },
+        {
+          "id": "tencent/Hunyuan-MT-7B",
+          "tier": "free"
+        },
+        {
+          "id": "Qwen/Qwen3.5-9B",
+          "tier": "paid"
+        }
+      ],
+      "notes": "3 个永久免费模型（0 元计费、不扣赠金）；注册实名赠 ¥14 体验金（一次性）；限速账户级约 1000–10000 RPM",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.siliconflow.cn"
+      ],
+      "activities": []
+    },
+    {
+      "id": "teleai",
+      "name": "中国电信（天翼 AI / 息壤 / TokenHub）",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api-maas.teleai.com.cn/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "xing4.1-preview": {
+            "tokens": 100000000,
+            "expires": null
+          },
+          "xing4.0-29b-a4b": {
+            "tokens": 100000000,
+            "expires": null
+          },
+          "xing4.0-29b-intent": {
+            "tokens": 100000000,
+            "expires": null
+          },
+          "telechat3-438b-a24b": {
+            "tokens": 100000000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "xing4.1-preview",
+          "tier": "free"
+        },
+        {
+          "id": "xing4.0-29b-a4b",
+          "tier": "free"
+        },
+        {
+          "id": "xing4.0-29b-intent",
+          "tier": "free"
+        },
+        {
+          "id": "telechat3-438b-a24b",
+          "tier": "free"
+        }
+      ],
+      "notes": "一次性试用包，无剩余额度 API；息壤 DeepSeek 系每模型各赠 2500 万（约 2 周）、电信 TokenHub 各试用模型 50 万/14 天——模型清单以各平台试用页为准，未逐一登记；控制台 2026-11-27 实领确认",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://www.teleai.com.cn/product/teleagent",
+        "https://www.ctyun.cn/document/11085484/11085932"
+      ],
+      "activities": [
+        {
+          "id": "act-20261127-teleai-0yuan",
+          "title": "teleAI Xing4.1-Preview 0 元购资源包（10 亿 tokens）",
+          "grant": {
+            "type": "activity_package",
+            "model": "xing4.1-preview",
+            "tokens": 1000000000,
+            "method": "控制台 0 元购买"
+          },
+          "window": {
+            "start": "2026-11-27",
+            "end": "2026-12-27"
+          },
+          "action": "控制台 → 一次性额度包 → 0 元购买（Xing4.1-Preview 专用）",
+          "status": "verified",
+          "discovered_at": "2026-11-27T12:00:00+08:00",
+          "verified_at": "2026-11-27T14:00:00+08:00",
+          "sources": [
+            "https://www.teleai.com.cn/product/teleagent",
+            "https://www.ctyun.cn/document/11085484/11085932"
+          ],
+          "evidence": "免费额度总览.md（2026-11-27 控制台实领确认）",
+          "effective_tokens": 1100000000
+        }
+      ]
+    },
+    {
+      "id": "volcengine",
+      "name": "火山引擎方舟",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://ark.cn-beijing.volces.com/api/coding/v3"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "doubao-seed-1.6": {
+            "tokens": 500000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "doubao-seed-1.6",
+          "tier": "paid"
+        }
+      ],
+      "notes": "开通即领各模型约 50 万 tokens（按量抵扣）；11.11 活动另可领 2500 万（至 2026-11-30，限时营销）；协作奖励计划每日最高 500 万/模型（活动期）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://www.volcengine.com/docs/82379/1159200",
+        "https://ark.volcengine.com/region:cn-beijing/docs/free-inference-quota"
+      ],
+      "activities": []
+    },
+    {
+      "id": "xai",
+      "name": "Grok（xAI）",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://api.x.ai/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "grok-4.7",
+          "tier": "paid"
+        }
+      ],
+      "notes": "无标准免费层（历史活动：数据共享换 $150/月 credits）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.x.ai/docs/models"
+      ],
+      "activities": []
+    },
+    {
+      "id": "xiaomi",
+      "name": "小米 MiMo",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://api.xiaomimimo.com/v1"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "mimo-v2.6-pro",
+          "tier": "paid"
+        }
+      ],
+      "notes": "大陆新用户实名赠 ¥10 体验金（40 天）",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://mimo.xiaomi.com/docs/zh-CN/pricing"
+      ],
+      "activities": []
+    },
+    {
+      "id": "zai",
+      "name": "Z.AI（智谱海外）",
+      "region": "global",
+      "endpoints": {
+        "openai": "https://api.z.ai/api/paas/v4"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {}
+      },
+      "models": [
+        {
+          "id": "glm-4.7-flash",
+          "tier": "free"
+        },
+        {
+          "id": "glm-4.5-flash",
+          "tier": "free"
+        },
+        {
+          "id": "glm-4.6v-flash",
+          "tier": "free"
+        }
+      ],
+      "notes": "GLM Flash 系列完全免费；GLM Coding Plan $18 起",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.z.ai/devpack/overview"
+      ],
+      "activities": []
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "region": "cn",
+      "endpoints": {
+        "openai": "https://open.bigmodel.cn/api/coding/paas/v4"
+      },
+      "auth": {
+        "type": "bearer"
+      },
+      "free_quota": {
+        "per_model": {
+          "glm-4-flash": {
+            "tokens": 20000000,
+            "expires": null
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "glm-4-flash",
+          "tier": "free"
+        },
+        {
+          "id": "glm-4.7-flash",
+          "tier": "free"
+        },
+        {
+          "id": "glm-5.3",
+          "tier": "paid"
+        }
+      ],
+      "notes": "注册送 2000 万 tokens 体验包（全模型共享，未单列各模型）；GLM-4-Flash 长期免费、GLM-4.7-Flash/FlashX 限时免费",
+      "verified_at": "2026-11-27T12:00:00+08:00",
+      "sources": [
+        "https://docs.bigmodel.cn/cn/guide/start/quick-start"
+      ],
+      "activities": []
+    }
+  ]
+}

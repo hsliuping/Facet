@@ -1,0 +1,30 @@
+{
+  "id": "qianfan",
+  "name": "百度千帆",
+  "region": "cn",
+  "endpoints": {
+    "openai": "https://qianfan.baidubce.com/v2/tokenplan/personal"
+  },
+  "auth": {
+    "type": "bearer"
+  },
+  "free_quota": {
+    "per_model": {
+      "ernie-5.5-flash-preview": {
+        "tokens": 1000000,
+        "expires": null
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "ernie-5.5-flash-preview",
+      "tier": "paid"
+    }
+  ],
+  "notes": "新人免费额度以控制台领取页为准（历史活动口径 17 模型 × 100 万）；历史 8000 万/90 天活动已于 2026-07-14 结束",
+  "verified_at": "2026-11-27T12:00:00+08:00",
+  "sources": [
+    "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html"
+  ]
+}
