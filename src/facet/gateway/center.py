@@ -45,9 +45,9 @@ __all__ = [
     "phase_fraction", "semver_newer", "selftest",
 ]
 
-DEFAULT_URL = "https://api.aifacet.cn"
+DEFAULT_URL = "https://center.skillgo.cn"
 # T0.1 登记的项目公钥（Ed25519 SPKI DER base64）；自建中心换成自己的即可。
-DEFAULT_PUBLIC_KEY = "MCowBQYDK2VwAyEA2rFXMAXI5WRc1V86g8WEdiBGrvSVYkI9PeiXEjlQSDI="
+DEFAULT_PUBLIC_KEY = "MCowBQYDK2VwAyEA9t6kEpGgIvqNuFYqesO1gpN9miM51hxf6lzOn9LRjik="
 
 SYNC_INTERVAL = 6 * 3600.0   # 设计 5.2：每 6 小时同步一次
 SYNC_JITTER = 0.10           # ±10% 随机偏移，避免整点雷群
