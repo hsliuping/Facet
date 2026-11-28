@@ -393,6 +393,11 @@ class DshUrlTest(unittest.TestCase):
         self.assertEqual(dsh.URL_LINE.search(line).group(1),
                          "http://127.0.0.1:3080/?token=abc123")
 
+    def test_startup_line_accepts_https_public_url(self):
+        line = "dsh web: https://facet.skillgo.cn/dsh/?token=abc123"
+        self.assertEqual(dsh.URL_LINE.search(line).group(1),
+                         "https://facet.skillgo.cn/dsh/?token=abc123")
+
     def test_unrelated_lines_are_ignored(self):
         self.assertIsNone(dsh.URL_LINE.search("dsh: loaded 12 plugins"))
 

@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 WEB_PROFILE = "facet-web"
-URL_LINE = re.compile(r"dsh web: (http://\S+)")
+URL_LINE = re.compile(r"dsh web: (https?://\S+)")
 BASE_URL_LINE = re.compile(r"^\s*baseURL:\s*(\S+)\s*$", re.MULTILINE)
 MODELS_LINE = re.compile(r"^\s*models:\s*$")
 PORT_IN_USE = re.compile(r"EADDRINUSE.*:(\d+)")
