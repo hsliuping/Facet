@@ -2,7 +2,7 @@
   "_generated": "GENERATED — do not edit by hand; rendered from ledger/ by tools/ledger/render.py",
   "schema_version": 1,
   "seq": 23,
-  "generated_at": "2026-11-27T22:07:39+08:00",
+  "generated_at": "2026-11-28T15:10:02+08:00",
   "vendors": [
     {
       "id": "anthropic",
