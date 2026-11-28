@@ -405,8 +405,13 @@ const WIZARD_STEPS = [
       }
       const mode = p.mode || {};
       const modelList = (mode.models || []).slice(0, 20);
+      // 厂家 id 与已种下的预置渠道同名时直接复用：向导就是给该渠道填
+      // Key 的入口，替换它比再造一个 teleai-2 更符合预期；保存时原地
+      // 替换（wizardSaveChannel）。配置还没加载完时才回退重名避让。
+      const existing = (state.config && state.config.channels) || [];
       const draft = {
-        name: wizardChannelName(p.id),
+        name: existing.some((c) => c && c.name === p.id)
+          ? p.id : wizardChannelName(p.id),
         protocol: mode.protocol,
         provider: p.id,
         mode: p.modeKey,
@@ -443,14 +448,17 @@ const WIZARD_STEPS = [
         // 一次真实目录（渠道配置页「拉取模型清单」同款接口），以目录为
         // 候选池；目录拉不出来再回退注册表清单。
         let catalog = [];
+        let catalogError = '';
         status.innerHTML = '正在拉取该厂家的模型目录…';
         try {
           const cat = await api('/api/probe/models',
             { method: 'POST', body: { channel: draft } });
           if (cat && cat.ok && Array.isArray(cat.models)) {
             catalog = cat.models.slice();
+          } else {
+            catalogError = (cat && (cat.error || cat.hint)) || '目录接口不可用';
           }
-        } catch (_) { /* 目录失败不致命：回退注册表清单 */ }
+        } catch (e) { catalogError = e.message; }
 
         // 候选排序：厂家自有模型（如 nvidia/…）优先，免费偏好下 :free 再
         // 优先；明显非对话模型（embed/asr/tts/rerank…）不参与对话测试。
@@ -483,9 +491,18 @@ const WIZARD_STEPS = [
           others.forEach(push);
         }
         if (!ids.length) modelList.forEach(push);
+        // 第三级回退：替换同名渠道（M5 预置）时，沿用其现有模型映射——目录接口
+        // 可能 401/不开放（teleai 试用 Key 即如此），但种子配置已带可用清单。
         if (!ids.length) {
-          throw new Error('上游未返回模型清单，无法自动选型；'
-            + '可在「渠道配置」页手动添加渠道并填写模型映射。');
+          const live = existing.find((c) => c && c.name === draft.name);
+          Object.keys((live && live.models) || {}).forEach((m) => {
+            if (m !== 'auto') push(m);
+          });
+        }
+        if (!ids.length) {
+          throw new Error('上游未返回模型清单，无法自动选型'
+            + (catalogError ? '：' + catalogError : '')
+            + '；可在「渠道配置」页手动添加渠道并填写模型映射。');
         }
 
         // 逐个试到打通为止：404/429/5xx 这类模型级失败换下一个模型继续；
@@ -776,14 +793,20 @@ function wizardRouteAppend(draft) {
     route.channels = route.channels || [];
     return route;
   };
+  const join = (protocol, name) => {
+    const route = ensure(protocol, name);
+    // 种子路由链可能已引用同名渠道（原地替换场景）；重复挂两次会让一次
+    // 请求被同一渠道排程两遍。链接在「移动渠道」编辑处由用户手动调整。
+    if (!route.channels.includes(draft.name)) route.channels.push(draft.name);
+  };
   if (draft.protocol === 'anthropic') {
-    ensure('anthropic', 'default').channels.push(draft.name);
+    join('anthropic', 'default');
     return;
   }
-  ensure('openai', 'default').channels.push(draft.name);
+  join('openai', 'default');
   if (draft.tier === 'free') {
-    ensure('openai', 'cheap').channels.push(draft.name);
-    ensure('openai', 'free').channels.push(draft.name);
+    join('openai', 'cheap');
+    join('openai', 'free');
   }
 }
 
@@ -799,7 +822,17 @@ async function wizardSaveChannel(draft) {
       state.config.channels = state.config.channels || [];
       state.config.routes = state.config.routes || [];
     }
-    state.config.channels.push(draft);
+    // 预置渠道（M5 厂家种子）与向导 draft 可能同名：向导就是给已种下
+    // 的渠道填 Key 的入口，同名时原地更新，不能追加出第二个同名渠道
+    // （后端 load_config 会以「渠道名重复」拒绝整份配置）。合并而非整
+    // 体覆盖：draft 不携带 model_quota/note 等种子字段，直接赋值会把
+    // 额度账本抹掉。
+    const idx = state.config.channels.findIndex((c) => c && c.name === draft.name);
+    if (idx >= 0) {
+      state.config.channels[idx] = { ...state.config.channels[idx], ...draft };
+    } else {
+      state.config.channels.push(draft);
+    }
     wizardRouteAppend(draft);
     try {
       await api('/api/config', { method: 'POST', body: state.config });
