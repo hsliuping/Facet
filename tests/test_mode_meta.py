@@ -1,7 +1,7 @@
 """mode_meta 单一分类实现点的回归测试。
 
 设计文档：docs/免费与接入模式统一建模设计.md。第二步（本阶段）注册表
-32 个 mode 已全部声明显式 ``free_kind``（口径 = PPT 四类 + 主类规则
+33 个 mode 已全部声明显式 ``free_kind``（口径 = PPT 四类 + 主类规则
 forever > daily > one_time > voucher），下面的 32-mode 锁定表锁的就是
 显式分类结果；推断规则只为用户自定义厂家兜底。
 
@@ -66,6 +66,7 @@ EXPECTED = {
     "llm7/payg": ("daily", ["daily"], "key", False, "none"),
     "opencode/payg": ("forever", ["forever"], "key", False, "none"),
     "opencode/agent": ("none", ["none"], "key", False, "none"),
+    "commandcode/payg": ("daily", ["daily"], "key", False, "none"),
     "commandcode/agent": ("daily", ["daily"], "key", False, "none"),
     "openai/payg": ("none", ["none"], "key", False, "none"),
     "anthropic/payg": ("voucher", ["voucher"], "key", False, "none"),
@@ -82,7 +83,7 @@ def _builtin_modes():
 
 
 def test_builtin_modes_inference_locked():
-    """31 个 mode 的推断结果逐项锁定；注册表增删 mode 时必须同步此表。"""
+    """33 个 mode 的推断结果逐项锁定；注册表增删 mode 时必须同步此表。"""
     seen = set()
     for pid, key, mode in _builtin_modes():
         name = f"{pid}/{key}"
