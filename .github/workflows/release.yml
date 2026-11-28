@@ -13,6 +13,9 @@ on:
         description: "要发布的版本号（如 1.1.0），留空则用当天日期"
         required: false
 
+permissions:
+  contents: write
+
 jobs:
   render-sign-publish:
     # 情报账本发布流水线（dev-plan T1.3）：渲染 -> 签名 -> GitHub Release。
