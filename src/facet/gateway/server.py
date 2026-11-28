@@ -7622,6 +7622,10 @@ class App:
         return None
 
 
+class _BodyTooLarge(Exception):
+    """Chunked body exceeded MAX_BODY_BYTES mid-stream."""
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "PlanRouter/0.1"
@@ -7640,27 +7644,93 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):  # noqa: N802
         self._run("DELETE")
 
+    def _read_chunked_body(self) -> bytes:
+        """Read a Transfer-Encoding: chunked body (RFC 9112 §7.1).
+
+        Dart's HttpClientRequest sends chunked whenever contentLength is left
+        unset, and HTTP/1.1 allows any client to do the same — so a chunked
+        request must be assembled here instead of reading a zero-length
+        body and failing with "invalid JSON body". Trailer lines after the
+        final 0-chunk are consumed and discarded.
+        """
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            line = self.rfile.readline(1024)
+            if not line:
+                raise ValueError("truncated chunk header")
+            if not line.endswith(b"\n"):
+                raise ValueError("chunk header too long")
+            try:
+                size = int(line.split(b";", 1)[0].strip() or b"0", 16)
+            except ValueError:
+                raise ValueError("invalid chunk size") from None
+            if size == 0:
+                break  # final chunk; trailers follow
+            if total + size > MAX_BODY_BYTES:
+                raise _BodyTooLarge()
+            chunk = self.rfile.read(size)
+            if len(chunk) < size:
+                raise ValueError("truncated chunk")
+            total += size
+            chunks.append(chunk)
+            if self.rfile.read(2) != b"\r\n":
+                raise ValueError("missing chunk terminator")
+        # Trailers may follow the final chunk; consume them up to the blank
+        # line so those bytes don't leak into the next keep-alive request.
+        budget = 16384
+        while True:
+            line = self.rfile.readline(budget)
+            if not line:
+                raise ValueError("truncated chunk trailers")
+            if line in (b"\r\n", b"\n"):
+                break
+            if not line.endswith(b"\n"):
+                raise ValueError("chunk trailer too long")
+            budget -= len(line)
+            if budget <= 0:
+                raise ValueError("chunk trailers too large")
+        return b"".join(chunks)
+
     def _run(self, method: str):
+        # RFC 9110 §8.6: a chunked request must be assembled even when a
+        # Content-Length is also present; TE takes precedence.
+        chunked = "chunked" in (self.headers.get("Transfer-Encoding") or "").lower()
         try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            # The body is left unread on the socket: under keep-alive those
-            # bytes would be parsed as the next request, so close instead.
-            _json(self, 400, {"error": {"message": "invalid Content-Length"}}, close=True)
-            return
-        if length > MAX_BODY_BYTES:
-            # Same as above: the oversize body is never consumed, so the
-            # connection must end here (send_header also sets close_connection).
+            if chunked:
+                raw = self._read_chunked_body()
+            else:
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    # The body is left unread on the socket: under keep-alive those
+                    # bytes would be parsed as the next request, so close instead.
+                    _json(self, 400, {"error": {"message": "invalid Content-Length"}}, close=True)
+                    return
+                if length > MAX_BODY_BYTES:
+                    # Same as above: the oversize body is never consumed, so the
+                    # connection must end here (send_header also sets close_connection).
+                    _json(self, 413, {"error": {"message": "request body too large"}}, close=True)
+                    return
+                raw = self.rfile.read(length) if length else b""
+        except _BodyTooLarge:
+            # Unread chunks remain on the socket; keep-alive would misparse
+            # them as the next request, so close instead of answering 413.
+            self.close_connection = True
             _json(self, 413, {"error": {"message": "request body too large"}}, close=True)
             return
-        try:
-            raw = self.rfile.read(length) if length else b""
         except TimeoutError:
             # The socket timeout (Handler.timeout) fired mid-body: answer and
             # drop the connection instead of leaving the client hanging.
             self.close_connection = True
             _json(self, 408, {"error": {"message": "request body read timed out"}},
                   close=True)
+            return
+        except ValueError:
+            # Malformed chunk stream; the same unread-body-on-socket rule
+            # applies, so close rather than try keep-alive.
+            self.close_connection = True
+            _json(self, 400, {"error": {"message": "invalid chunked body"}}, close=True)
             return
         self.server.app.dispatch(self, method, urlsplit(self.path).path, raw)
 
